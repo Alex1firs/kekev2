@@ -11,7 +11,7 @@ export enum DriverStatus {
 @Entity()
 export class DriverProfile {
     @PrimaryColumn()
-    userId!: string;
+    userId!: string; // References User.id
 
     @Column()
     firstName!: string;

@@ -7,7 +7,8 @@ import { SocketHandler } from './sockets/socket_handler';
 import { AppDataSource } from './config/data_source';
 import financeRoutes from './routes/finance_routes';
 import adminRoutes from './routes/admin_routes';
-import driverRoutes from './routes/driver_routes';
+import driverRoutes from "./routes/driver_routes";
+import authRoutes, { driverAuthRouter } from "./routes/auth_routes";
 
 dotenv.config();
 
@@ -20,6 +21,8 @@ app.get('/health', (req, res) => {
 });
 
 // Main Routes
+app.use('/api/v1/auth', authRoutes);
+app.use('/api/v1/driver/auth', driverAuthRouter);
 app.use('/api/v1/finance', financeRoutes);
 app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/drivers', driverRoutes);

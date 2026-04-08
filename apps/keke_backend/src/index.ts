@@ -36,6 +36,14 @@ new SocketHandler(io);
 
 const PORT = process.env.PORT || 3000;
 
+// Global Error Handler
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (err instanceof Error) {
+    return res.status(400).json({ error: err.message });
+  }
+  res.status(500).json({ error: "Internal Server Error" });
+});
+
 // Initialize Database then Start Server
 AppDataSource.initialize()
   .then(() => {

@@ -14,6 +14,10 @@ dotenv.config();
 const app = express();
 app.use(cors());
 app.use(express.json());
+// Healthcheck endpoint
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+});
 
 // Main Routes
 app.use('/api/v1/finance', financeRoutes);

@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Keke Admin | Dashboard</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+</head>
+<body class="dark-theme">
+    <div class="admin-container">
+        <!-- Sidebar -->
+        <nav class="sidebar">
+            <div class="logo">
+                <i class="fas fa-taxi"></i>
+                <span>KEKE OPS</span>
+            </div>
+            <ul class="nav-links">
+                <li class="active" data-section="overview">
+                    <i class="fas fa-chart-line"></i> <span>Overview</span>
+                </li>
+                <li data-section="drivers">
+                    <i class="fas fa-users-cog"></i> <span>Driver Review</span>
+                </li>
+                <li data-section="active-rides">
+                    <i class="fas fa-broadcast-tower"></i> <span>Active Rides</span>
+                </li>
+                <li data-section="history">
+                    <i class="fas fa-history"></i> <span>Ride History</span>
+                </li>
+                <li data-section="finance">
+                    <i class="fas fa-money-bill-wave"></i> <span>Finance</span>
+                </li>
+                <li data-section="online-drivers">
+                    <i class="fas fa-toggle-on"></i> <span>Online Drivers</span>
+                </li>
+            </ul>
+        </nav>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <header class="top-bar">
+                <h1 id="section-title">Overview</h1>
+                <div class="admin-profile">
+                    <span id="api-status" class="status-indicator online"></span>
+                    <span>System Admin</span>
+                </div>
+            </header>
+
+            <!-- Sections Container -->
+            <div id="content-area">
+                <!-- Overview Section -->
+                <section id="overview" class="content-section">
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <h3>Live Rides</h3>
+                            <p id="stat-active-rides">0</p>
+                        </div>
+                        <div class="stat-card">
+                            <h3>Online Drivers</h3>
+                            <p id="stat-online-drivers">0</p>
+                        </div>
+                        <div class="stat-card">
+                            <h3>Daily Revenue</h3>
+                            <p id="stat-revenue">₦0</p>
+                        </div>
+                    </div>
+                    <div class="alerts-section">
+                        <h2>Operational Warnings</h2>
+                        <div id="ops-alerts-list" class="alerts-list">
+                            <div class="empty-state">No critical alerts. System healthy.</div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Drivers Section -->
+                <section id="drivers" class="content-section hidden">
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Vehicle</th>
+                                    <th>Submitted</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="pending-drivers-list">
+                                <!-- Dynamic content -->
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <!-- Active Rides Section -->
+                <section id="active-rides" class="content-section hidden">
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Ride ID</th>
+                                    <th>Status</th>
+                                    <th>Passenger</th>
+                                    <th>Driver</th>
+                                    <th>Fare</th>
+                                </tr>
+                            </thead>
+                            <tbody id="active-rides-list">
+                                <!-- Dynamic content -->
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <!-- Finance Section -->
+                <section id="finance" class="content-section hidden">
+                    <div class="finance-grid">
+                        <div class="stat-card">
+                            <h3>Total Commission Debt</h3>
+                            <p id="finance-total-debt">₦0</p>
+                        </div>
+                        <div class="stat-card">
+                            <h3>Total Payout Ready</h3>
+                            <p id="finance-payout-ready">₦0</p>
+                        </div>
+                    </div>
+                    <h2>Highest Debt Drivers</h2>
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Driver ID</th>
+                                    <th>Commission Debt</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="debt-leaderboard">
+                                <!-- Dynamic content -->
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+                
+                <!-- Online Drivers Section -->
+                <section id="online-drivers" class="content-section hidden">
+                     <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Driver ID</th>
+                                    <th>Location (Lat, Lng)</th>
+                                </tr>
+                            </thead>
+                            <tbody id="online-drivers-list">
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+                
+                <!-- History Section -->
+                <section id="history" class="content-section hidden">
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Ride ID</th>
+                                    <th>Status</th>
+                                    <th>Fare</th>
+                                </tr>
+                            </thead>
+                            <tbody id="ride-history-list">
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+            </div>
+        </main>
+    </div>
+
+    <!-- Review Modal -->
+    <div id="review-modal" class="modal hidden">
+        <div class="modal-content">
+            <h2>Driver Application Review</h2>
+            <div id="modal-body"></div>
+            <div class="modal-actions">
+                <button id="btn-approve" class="btn-primary">Approve</button>
+                <button id="btn-reject" class="btn-danger">Reject</button>
+                <button id="btn-close" class="btn-secondary">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Global Loading Overlay -->
+    <div id="loading-overlay" class="loading-overlay hidden">
+        <div class="spinner"></div>
+        <p>Syncing Keke Ops...</p>
+    </div>
+
+    <!-- Toast Notifications -->
+    <div id="toast-container" class="toast-container"></div>
+
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

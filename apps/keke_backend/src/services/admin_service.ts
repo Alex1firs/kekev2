@@ -1,0 +1,172 @@
+import { AppDataSource } from "../config/data_source";
+import { DriverProfile, DriverStatus } from "../models/DriverProfile";
+import { Ride, RideStatus } from "../models/Ride";
+import { Wallet } from "../models/Wallet";
+import { PayoutRecord } from "../models/PayoutRecord";
+import { redis } from "../config/redis";
+
+export class AdminService {
+    /**
+     * Get overview stats (Daily Revenue, Live Rides, Online Drivers)
+     */
+    static async getOverview() {
+        const activeRideCount = (await redis.keys("ride:*:lock")).length;
+        const onlineDriverCount = (await redis.zcount("drivers:locations", "-inf", "+inf")) || 0;
+        
+        // Simple daily revenue from today's completed rides
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+
+        const dailyRevenue = await AppDataSource.getRepository(Ride)
+            .createQueryBuilder("ride")
+            .where("ride.status = :status", { status: RideStatus.COMPLETED })
+            .andWhere("ride.completedAt >= :todayStart", { todayStart })
+            .select("SUM(ride.fare * 0.10)", "total")
+            .getRawOne();
+
+        return {
+            activeRides: activeRideCount,
+            onlineDrivers: onlineDriverCount,
+            dailyRevenue: parseFloat(dailyRevenue?.total || "0"),
+            systemStatus: "healthy"
+        };
+    }
+
+    /**
+     * Get specific driver details
+     */
+    static async getDriverProfile(userId: string) {
+        return await AppDataSource.getRepository(DriverProfile).findOneBy({ userId });
+    }
+
+    /**
+     * Get pending driver approval queue
+     */
+    static async getPendingDrivers() {
+        return await AppDataSource.getRepository(DriverProfile).find({
+            where: { status: DriverStatus.PENDING_REVIEW },
+            order: { createdAt: "ASC" }
+        });
+    }
+
+    /**
+     * Approve or Reject a driver
+     * Logic: Mutation first, Audit Log second.
+     */
+    static async updateDriverStatus(userId: string, status: DriverStatus, reason?: string) {
+        const repo = AppDataSource.getRepository(DriverProfile);
+        const profile = await repo.findOneBy({ userId });
+        if (!profile) throw new Error("Driver profile not found");
+
+        if (status === DriverStatus.APPROVED) {
+            const allDocsPresent = profile.licenseUrl && profile.idCardUrl && profile.vehiclePaperUrl;
+            if (!allDocsPresent) {
+                throw new Error("Cannot approve driver without all required documents (License, ID, Vehicle Papers)");
+            }
+        }
+
+        const oldStatus = profile.status;
+        profile.status = status;
+        if (reason) profile.rejectionReason = reason;
+        
+        const saved = await repo.save(profile);
+        
+        // --- Audit Logging (Successful Mutation) ---
+        try {
+          const auditRepo = AppDataSource.getRepository(require("../models").AuditLog);
+          await auditRepo.save({
+            adminId: "SYSTEM_ADMIN",
+            action: status === DriverStatus.APPROVED ? "APPROVE_DRIVER" : "REJECT_DRIVER",
+            entityType: "DRIVER_PROFILE",
+            entityId: userId,
+            details: {
+              oldStatus,
+              newStatus: status,
+              reason: reason || "none"
+            }
+          });
+        } catch (err) {
+          console.error("Audit logging failed (Operation Succeeded):", err);
+        }
+
+        return saved;
+    }
+
+    /**
+     * Get active rides from Redis state (Hybrid)
+     */
+    static async getActiveRides() {
+        // In a real system, we'd fetch detail from Redis hashes or memory.
+        // For this phase, we'll list the locks as a proxy, 
+        // and ideally query the Ride entity for matching 'active' statuses.
+        return await AppDataSource.getRepository(Ride).find({
+            where: [
+                { status: RideStatus.ACCEPTED },
+                { status: RideStatus.STARTED },
+                { status: RideStatus.SEARCHING }
+            ],
+            order: { updatedAt: "DESC" }
+        });
+    }
+
+    /**
+     * Get Ride History (Last 100)
+     */
+    static async getRideHistory() {
+        return await AppDataSource.getRepository(Ride).find({
+            order: { createdAt: "DESC" },
+            take: 100
+        });
+    }
+
+    /**
+     * Get Finance Summary
+     */
+    static async getFinanceSummary() {
+        const wallets = await AppDataSource.getRepository(Wallet).find();
+        
+        const totalCommissionDebt = wallets.reduce((acc, w) => acc + Number(w.driverCommissionDebt), 0);
+        const totalAvailableBalance = wallets.reduce((acc, w) => acc + Number(w.driverAvailableBalance), 0);
+
+        return {
+            totalCommissionDebt,
+            totalAvailableBalance,
+            activeWallets: wallets.length
+        };
+    }
+
+    /**
+     * Get Debt Leaderboard
+     */
+    static async getDebtLeaderboard() {
+        return await AppDataSource.getRepository(Wallet).find({
+            order: { driverCommissionDebt: "DESC" },
+            take: 20
+        });
+    }
+
+    /**
+     * Get Online Drivers (Redis + Profile Join)
+     */
+    static async getOnlineDrivers() {
+        const locations = await redis.zrange("drivers:locations", 0, -1, "WITHSCORES");
+        const results = [];
+        
+        // ZRANGE returns [member, score, member, score, ...]
+        for (let i = 0; i < locations.length; i += 2) {
+            const userId = locations[i];
+            results.push({ userId, location: locations[i+1] });
+        }
+        return results;
+    }
+
+    /**
+     * Get Payout Records
+     */
+    static async getPayouts() {
+        return await AppDataSource.getRepository(PayoutRecord).find({
+            order: { createdAt: "DESC" },
+            take: 50
+        });
+    }
+}

@@ -1,0 +1,50 @@
+import multer from "multer";
+import path from "path";
+import fs from "fs";
+
+/**
+ * Configure storage for driver documents
+ * Files are kept private in the local 'uploads' directory
+ */
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        const uploadPath = path.join(__dirname, "../../uploads");
+        if (!fs.existsSync(uploadPath)) {
+            fs.mkdirSync(uploadPath, { recursive: true });
+        }
+        cb(null, uploadPath);
+    },
+    filename: (req, file, cb) => {
+        // Filename format: {userId}_{docType}_{timestamp}{ext}
+        const userId = req.body.userId || "anonymous";
+        const docType = req.body.docType || "unknown";
+        const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+        cb(null, `${userId}_${docType}_${uniqueSuffix}${path.extname(file.originalname).toLowerCase()}`);
+    }
+});
+
+/**
+ * File filter to enforce strict MIME/extension rules
+ */
+const fileFilter = (req: any, file: Express.Multer.File, cb: any) => {
+    const allowedMimeTypes = ["image/jpeg", "image/png"];
+    const allowedExtensions = [".jpg", ".jpeg", ".png"];
+    const ext = path.extname(file.originalname).toLowerCase();
+
+    if (allowedMimeTypes.includes(file.mimetype) && allowedExtensions.includes(ext)) {
+        cb(null, true);
+    } else {
+        cb(new Error("Invalid file type. Only JPEG and PNG are allowed."), false);
+    }
+};
+
+/**
+ * Multer Instance
+ */
+export const upload = multer({
+    storage,
+    fileFilter,
+    limits: {
+        fileSize: 5 * 1024 * 1024, // 5MB limit
+    }
+});

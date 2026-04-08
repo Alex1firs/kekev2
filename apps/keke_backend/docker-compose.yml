@@ -50,13 +50,13 @@ services:
   api_staging:
     build: .
     restart: always
-    mem_limit: 200m
+    mem_limit: 270m
     environment:
       NODE_ENV: staging
       PORT: 3000
       DATABASE_URL: postgresql://postgres:securepassword123@postgres_shared:5432/keke_staging_db
       REDIS_URL: redis://redis_shared:6379/1
-      NODE_OPTIONS: "--max-old-space-size=150"
+      NODE_OPTIONS: "--max-old-space-size=220"
     depends_on:
       postgres_shared:
         condition: service_healthy

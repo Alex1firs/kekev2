@@ -68,7 +68,7 @@ router.get("/drivers/:userId", async (req: Request, res: Response) => {
 router.get("/drivers/:userId/documents/:docType", async (req: Request, res: Response) => {
     try {
         const { userId, docType } = req.params;
-        const profile = await AdminService.getDriverProfile(userId);
+        const profile = await AdminService.getDriverProfile(userId as string);
         if (!profile) return res.status(404).json({ error: "Profile not found" });
 
         let filename = "";

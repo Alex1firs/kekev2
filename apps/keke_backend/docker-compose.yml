@@ -83,8 +83,12 @@ services:
     volumes:
       - /opt/kekev2/nginx.conf:/etc/nginx/nginx.conf:ro
       - /opt/kekev2/htpasswd:/etc/nginx/.htpasswd:ro
+      - /opt/kekev2/apps/keke_admin:/usr/share/nginx/html/admin:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - /var/www/certbot:/var/www/certbot:ro
     ports:
       - "80:80"
+      - "443:443"
     depends_on:
       - api_prod
       - api_staging

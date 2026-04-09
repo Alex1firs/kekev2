@@ -1,5 +1,5 @@
-const API_BASE = 'http://localhost:3000/api/v1/admin';
-const ADMIN_KEY = 'keke_admin_secret_2025';
+const API_BASE = 'https://api.kekeride.ng/api/v1/admin';
+let ADMIN_KEY = localStorage.getItem('KEKE_ADMIN_KEY') || '';
 
 // --- State Management ---
 let currentSection = 'overview';
@@ -7,28 +7,51 @@ let pendingDrivers = [];
 let activeRides = [];
 let selectedDriverId = null;
 
-// --- DOM Elements ---
-const navLinks = document.querySelectorAll('.nav-links li');
-const sections = document.querySelectorAll('.content-section');
-const sectionTitle = document.getElementById('section-title');
+// --- DOM Elements (Loaded Defensively) ---
+let navLinks = [];
+let sections = [];
+let sectionTitle = null;
+
+function captureElements() {
+    navLinks = document.querySelectorAll('.nav-links li');
+    sections = document.querySelectorAll('.content-section');
+    sectionTitle = document.getElementById('section-title');
+}
 
 // --- Initialization ---
 async function init() {
+    if (!ADMIN_KEY) {
+        showLoginScreen();
+        return;
+    }
+    
+    // Switch to Dashboard UI Instantly
+    document.body.classList.remove('auth-loading');
+    document.body.classList.add('authenticated');
+    
     setupNavigation();
-    await refreshOverview();
+    setupAuthListeners();
+
+    // Background Sync (Non-blocking)
+    refreshOverview().catch(e => console.error('Overview sync failed', e));
     setupSocket();
     
-    // Initial fetch for background tabs
-    fetchPendingDrivers();
-    fetchActiveRides();
-    fetchFinanceSummary();
-    fetchRideHistory();
-    fetchOnlineDrivers();
-    fetchPayouts();
+    fetchPendingDrivers().catch(e => console.error('Drivers sync failed', e));
+    fetchActiveRides().catch(e => console.error('Rides sync failed', e));
+    fetchFinanceSummary().catch(e => console.error('Finance sync failed', e));
+    fetchDebtLeaderboard().catch(e => console.error('Debt sync failed', e));
+    fetchRideHistory().catch(e => console.error('History sync failed', e));
+    fetchOnlineDrivers().catch(e => console.error('Online sync failed', e));
+    fetchPayouts().catch(e => console.error('Payouts sync failed', e));
 
     // Auto-refresh stats every 30s
     setInterval(refreshOverview, 30000);
 }
+
+// Global Failsafe
+window.onerror = (msg) => {
+    console.error('[Diagnostic] Global Error:', msg);
+};
 
 // --- Navigation ---
 function setupNavigation() {
@@ -38,6 +61,58 @@ function setupNavigation() {
             switchSection(section);
         });
     });
+}
+
+// --- Auth & Session ---
+function showLoginScreen() {
+    document.body.classList.add('auth-loading');
+    document.body.classList.remove('authenticated');
+    
+    const form = document.getElementById('login-form');
+    form.onsubmit = async (e) => {
+        e.preventDefault();
+        const keyInput = document.getElementById('admin-key-input');
+        const btn = document.getElementById('btn-login');
+        const key = keyInput.value.trim();
+        
+        if (!key) return;
+
+        btn.disabled = true;
+        btn.querySelector('.btn-spinner').classList.remove('hidden');
+        
+        try {
+            // Verify key by attempting to fetch overview
+            const options = {
+                headers: { 'x-admin-key': key }
+            };
+            const res = await fetch(`${API_BASE}/overview`, options);
+            if (res.ok) {
+                localStorage.setItem('KEKE_ADMIN_KEY', key);
+                ADMIN_KEY = key;
+                showToast('Workstation authorized', 'success');
+                init(); // Re-initialize
+            } else {
+                showToast('Invalid Admin Key', 'error');
+            }
+        } catch (err) {
+            showToast('Connection failed', 'error');
+        } finally {
+            btn.disabled = false;
+            btn.querySelector('.btn-spinner').classList.add('hidden');
+        }
+    };
+}
+
+function setupAuthListeners() {
+    const logoutBtn = document.getElementById('btn-logout');
+    if (logoutBtn) {
+        logoutBtn.onclick = handleLogout;
+    }
+}
+
+function handleLogout() {
+    localStorage.removeItem('KEKE_ADMIN_KEY');
+    location.reload();
 }
 
 function switchSection(id) {
@@ -60,14 +135,6 @@ function switchSection(id) {
 
 // --- UI Indicators ---
 
-function showLoading() {
-    document.getElementById('loading-overlay').classList.remove('hidden');
-}
-
-function hideLoading() {
-    document.getElementById('loading-overlay').classList.add('hidden');
-}
-
 function showToast(message, type = 'info') {
     const container = document.getElementById('toast-container');
     const toast = document.createElement('div');
@@ -83,7 +150,6 @@ function showToast(message, type = 'info') {
 
 // --- API Helpers ---
 async function adminFetch(endpoint, method = 'GET', body = null) {
-    showLoading();
     try {
         const options = {
             method,
@@ -110,11 +176,9 @@ async function adminFetch(endpoint, method = 'GET', body = null) {
         return data;
     } catch (e) {
         if (e.message !== 'Rate Limited') {
-            showToast('Connection error. Check your server.', 'error');
+            console.error('Fetch Error:', e);
         }
         throw e;
-    } finally {
-        hideLoading();
     }
 }
 
@@ -208,7 +272,6 @@ async function fetchDebtLeaderboard() {
 async function fetchPayouts() {
     // Logic for payouts could go here if UI exists, for now just fetch
     const payouts = await adminFetch('/finance/payouts');
-    console.log('Payouts fetched:', payouts);
 }
 
 // --- Operational Logic ---
@@ -219,7 +282,7 @@ function updateOperationalAlerts(rides) {
     const alerts = [];
 
     rides.forEach(ride => {
-        const ageInMins = (now - new Date(ride.updatedAt)) / 60000;
+        const ageInMins = (now - new Date(ride.updatedAt || ride.createdAt)) / 60000;
         
         if (ride.status === 'searching' && ageInMins > 3) {
             alerts.push({ text: `Ride ${ride.rideId} searching for ${Math.round(ageInMins)}m`, type: 'danger' });
@@ -347,10 +410,9 @@ function closeModal() {
 // --- WebSocket Setup ---
 
 function setupSocket() {
-    const socket = io('http://localhost:3000');
+    const socket = io('https://api.kekeride.ng');
     
     socket.on('connect', () => {
-        console.log('Connected to WebSocket');
         socket.emit('join', { userId: 'dashboard', role: 'admin' });
         document.getElementById('api-status').classList.add('online');
     });
@@ -371,4 +433,7 @@ function setupSocket() {
     socket.on('ride:assigned', () => fetchActiveRides());
 }
 
-init();
+document.addEventListener('DOMContentLoaded', () => {
+    captureElements();
+    init();
+});

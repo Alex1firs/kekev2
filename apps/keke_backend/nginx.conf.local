@@ -1,0 +1,99 @@
+events {
+    worker_connections 1024;
+}
+
+http {
+    include       /etc/nginx/mime.types;
+    default_type  application/octet-stream;
+
+    # Shared security settings
+    auth_basic "Staging Area - Restricted";
+    auth_basic_user_file /etc/nginx/.htpasswd;
+    
+    resolver 127.0.0.11 valid=30s ipv6=off;
+
+    # SSL Settings
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 10m;
+
+    # Redirect all HTTP to HTTPS
+    server {
+        listen 80;
+        server_name api.kekeride.ng staging.kekeride.ng admin.kekeride.ng;
+
+        location /.well-known/acme-challenge/ {
+            auth_basic off;
+            root /var/www/certbot;
+        }
+
+        location / {
+            return 301 https://$host$request_uri;
+        }
+    }
+
+    # Production API (HTTPS)
+    server {
+        listen 443 ssl;
+        server_name api.kekeride.ng;
+        auth_basic off;
+
+        ssl_certificate /etc/letsencrypt/live/api.kekeride.ng/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/api.kekeride.ng/privkey.pem;
+
+        location / {
+            set $prod_app http://api_prod:4000;
+            proxy_pass $prod_app;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+        }
+    }
+
+    # Staging API (HTTPS)
+    server {
+        listen 443 ssl;
+        server_name staging.kekeride.ng;
+
+        ssl_certificate /etc/letsencrypt/live/api.kekeride.ng/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/api.kekeride.ng/privkey.pem;
+
+        location / {
+            set $staging_app http://api_staging:3000;
+            proxy_pass $staging_app;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+        }
+    }
+
+    # Admin Dashboard (HTTPS)
+    server {
+        listen 443 ssl;
+        server_name admin.kekeride.ng;
+        
+        ssl_certificate /etc/letsencrypt/live/api.kekeride.ng/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/api.kekeride.ng/privkey.pem;
+
+        # Disable Basic Auth here to allow the custom app-level login screen to handle security
+        auth_basic off;
+
+        root /usr/share/nginx/html/admin;
+        index index.html;
+
+        location / {
+            try_files $uri $uri/ /index.html;
+        }
+
+        # Ensure correct mime types for assets
+        location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg)$ {
+            expires max;
+            log_not_found off;
+        }
+    }
+}

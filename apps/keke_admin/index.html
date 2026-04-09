@@ -7,8 +7,33 @@
     <link rel="stylesheet" href="styles.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 </head>
-<body class="dark-theme">
-    <div class="admin-container">
+<body class="dark-theme auth-loading">
+    <!-- Login Screen -->
+    <div id="login-container" class="login-container">
+        <div class="login-card">
+            <div class="logo">
+                <i class="fas fa-taxi"></i>
+                <span>KEKE OPS</span>
+            </div>
+            <h2>Mission Control Access</h2>
+            <p>Enter your Admin API Key to authorize this workstation.</p>
+            <form id="login-form">
+                <div class="input-group">
+                    <i class="fas fa-key"></i>
+                    <input type="password" id="admin-key-input" placeholder="Admin API Key" required>
+                </div>
+                <button type="submit" id="btn-login" class="btn-primary full-width">
+                    <span>Authorize</span>
+                    <div class="btn-spinner hidden"></div>
+                </button>
+            </form>
+            <div class="login-footer">
+                <i class="fas fa-shield-alt"></i> Protected by AES-256 Encryption
+            </div>
+        </div>
+    </div>
+
+    <div class="admin-container hidden">
         <!-- Sidebar -->
         <nav class="sidebar">
             <div class="logo">
@@ -35,6 +60,11 @@
                     <i class="fas fa-toggle-on"></i> <span>Online Drivers</span>
                 </li>
             </ul>
+            <div class="sidebar-footer">
+                <button id="btn-logout" class="btn-logout">
+                    <i class="fas fa-sign-out-alt"></i> <span>Logout Session</span>
+                </button>
+            </div>
         </nav>
 
         <!-- Main Content -->
@@ -191,10 +221,6 @@
         </div>
     </div>
 
-    <!-- Global Loading Overlay -->
-    <div id="loading-overlay" class="loading-overlay hidden">
-        <div class="spinner"></div>
-        <p>Syncing Keke Ops...</p>
     </div>
 
     <!-- Toast Notifications -->

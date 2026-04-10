@@ -11,7 +11,7 @@ class AuthRepository {
     // Note: Using absolute path resolution from core api client
     // For Phase 2, we simulate deterministic backend auth.
     try {
-      final response = await _apiClient.dio.post('/api/v1/auth/login', data: {
+      final response = await _apiClient.dio.post('/auth/login', data: {
         'phone': phone,
         'password': password,
       });
@@ -27,7 +27,7 @@ class AuthRepository {
 
   Future<String> signup(String phone, String password, String firstName, String lastName) async {
     try {
-      final response = await _apiClient.dio.post('/api/v1/auth/signup', data: {
+      final response = await _apiClient.dio.post('/auth/signup', data: {
         'phone': phone,
         'password': password,
         'first_name': firstName,

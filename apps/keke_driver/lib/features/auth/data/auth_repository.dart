@@ -9,7 +9,7 @@ class AuthRepository {
 
   Future<String> login(String phone, String password) async {
     try {
-      final response = await _apiClient.dio.post('/api/v1/driver/auth/login', data: {
+      final response = await _apiClient.dio.post('/driver/auth/login', data: {
         'phone': phone,
         'password': password,
       });
@@ -24,7 +24,7 @@ class AuthRepository {
 
   Future<String> signup(String phone, String password, String firstName, String lastName) async {
     try {
-      final response = await _apiClient.dio.post('/api/v1/driver/auth/signup', data: {
+      final response = await _apiClient.dio.post('/driver/auth/signup', data: {
         'phone': phone,
         'password': password,
         'first_name': firstName,

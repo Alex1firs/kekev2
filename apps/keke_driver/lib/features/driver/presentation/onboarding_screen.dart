@@ -114,7 +114,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     final driverState = ref.watch(driverControllerProvider);
     // Simple state-based indicator: in this phase we'd ideally have a more granular check,
     // but for now we look at general status.
-    final bool isUploaded = driverState.profile.status == DriverStatus.pendingReview;
+    final bool isUploaded = driverState.profile.status == DriverStatus.pendingApproval;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),

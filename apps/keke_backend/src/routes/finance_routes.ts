@@ -3,13 +3,14 @@ import { WalletService } from "../services/wallet_service";
 import { PaystackService } from "../services/paystack_service";
 import { AppDataSource } from "../config/data_source";
 import { LedgerEntry } from "../models/LedgerEntry";
+import { authMiddleware, AuthRequest } from "../middleware/auth_middleware";
 
 const router = Router();
 
 /**
  * Get Wallet Balance & History
  */
-router.get("/balance/:userId", async (req: Request, res: Response) => {
+router.get("/balance/:userId", authMiddleware, async (req: AuthRequest, res: Response) => {
     try {
         const userId = req.params.userId as string;
         const wallet = await WalletService.getOrCreateWallet(userId);
@@ -31,7 +32,7 @@ router.get("/balance/:userId", async (req: Request, res: Response) => {
 /**
  * Initialize Top-up
  */
-router.post("/topup/init", async (req: Request, res: Response) => {
+router.post("/topup/init", authMiddleware, async (req: AuthRequest, res: Response) => {
     try {
         const { userId, email, amount } = req.body;
         const result = await PaystackService.initializeTopup(userId, email, amount);

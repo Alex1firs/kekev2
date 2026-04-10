@@ -191,7 +191,7 @@ td {
     border-bottom: 1px solid var(--border-color);
 }
 
-.hidden { display: none; }
+.hidden { display: none !important; }
 
 /* Buttons */
 .btn-primary { 

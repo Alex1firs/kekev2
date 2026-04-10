@@ -2,8 +2,6 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../config/env_config.dart';
 import '../storage/secure_storage.dart';
-// Will dynamically inject token and trigger force logout on 401s
-import '../../features/auth/application/auth_controller.dart';
 
 class ApiClient {
   final Dio _dio;
@@ -33,10 +31,10 @@ final dioProvider = Provider<Dio>((ref) {
         }
         return handler.next(options);
       },
-      onError: (DioException e, handler) {
+      onError: (DioException e, handler) async {
         if (e.response?.statusCode == 401) {
-          // Trigger unauthorized handling safely
-          ref.read(authControllerProvider.notifier).forceUnauthorizedCleanup();
+          // Clear storage safely to trigger re-auth without circular imports
+          await ref.read(secureStorageServiceProvider).clearAll();
         }
         return handler.next(e);
       },

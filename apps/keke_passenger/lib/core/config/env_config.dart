@@ -22,9 +22,8 @@ class EnvConfig {
       defaultValue: 'AIzaSyAIupE9r7gG3XGcem6hlg_8Dosw5AOk9yc'
     );
     
-    if (apiUrl.isEmpty) {
-      throw Exception('CRITICAL: API_URL environment variable is missing.');
-    }
+    // Hard fallback to DigitalOcean backend since Xcode strips --dart-define during direct Archive
+    final String resolvedApiUrl = apiUrl.isEmpty ? 'https://api.kekeride.ng/api/v1' : apiUrl;
 
     AppEnvironment parsedEnv;
     switch (envString) {
@@ -42,7 +41,7 @@ class EnvConfig {
     
     return EnvConfig(
       environment: parsedEnv,
-      apiBaseUrl: apiUrl,
+      apiBaseUrl: resolvedApiUrl,
       googleMapsApiKey: mapsKey, // Injected explicitly
     );
   }

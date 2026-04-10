@@ -66,7 +66,7 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
         myLocationEnabled: true,
         myLocationButtonEnabled: false,
         onMapCreated: (controller) => _mapController = controller,
-        mapType: MapType.dark,
+        mapType: MapType.normal,
       ),
     );
   }
@@ -91,10 +91,10 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
               padding: const EdgeInsets.only(left: 20),
               child: IconButton(
                 icon: const Icon(Icons.account_balance_wallet, color: Colors.white),
-                onPressed: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const EarningsScreen()),
-                ),
+                onPressed: () {
+                  // TODO: Implement EarningsScreen
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Earnings screen coming soon')));
+                },
               ),
             ),
             Expanded(

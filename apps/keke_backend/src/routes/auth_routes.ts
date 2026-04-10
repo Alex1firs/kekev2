@@ -3,6 +3,7 @@ import { AppDataSource } from "../config/data_source";
 import { User, UserRole } from "../models/User";
 import { AuthService } from "../services/auth_service";
 import { DriverProfile } from "../models/DriverProfile";
+import { authMiddleware, AuthRequest } from "../middleware/auth_middleware";
 
 const router = Router();
 
@@ -87,10 +88,30 @@ router.post("/signup", (req, res) => handleSignup(req, res, UserRole.PASSENGER))
 router.post("/login", handleLogin);
 
 // --- Identity Endpoint ---
-router.get("/me", async (req: Request, res: Response) => {
-    // This expects a token middleware eventually, 
-    // for now we'll leave the skeleton or a simple header-based check if passed.
-    res.status(501).json({ message: "Auth identity middleware pending Phase 11" });
+router.get("/me", authMiddleware, async (req: AuthRequest, res: Response) => {
+    try {
+        if (!req.user) {
+            return res.status(401).json({ error: "Unauthorized" });
+        }
+
+        const userRepo = AppDataSource.getRepository(User);
+        const user = await userRepo.findOneBy({ id: req.user.userId });
+
+        if (!user) {
+            return res.status(404).json({ error: "User not found" });
+        }
+
+        // Return profile info expected by the app
+        res.json({
+            id: user.id,
+            phone: user.phone,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            role: user.role
+        });
+    } catch (err: any) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 export default router;

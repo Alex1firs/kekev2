@@ -187,6 +187,7 @@ async function adminFetch(endpoint, method = 'GET', body = null) {
 async function refreshOverview() {
     try {
         const stats = await adminFetch('/overview');
+        console.log('[Sync] Received stats:', stats);
         document.getElementById('stat-active-rides').innerText = stats.activeRides;
         document.getElementById('stat-online-drivers').innerText = stats.onlineDrivers;
         document.getElementById('stat-revenue').innerText = `₦${stats.dailyRevenue.toLocaleString()}`;
@@ -353,7 +354,8 @@ window.reviewDriver = async function(userId) {
         </div>
     `;
 
-    document.getElementById('review-modal').classList.remove('hidden');
+    const modal = createReviewModal();
+    modal.classList.remove('hidden');
 
     // Load Documents as Blobs (Authenticated)
     loadDocThumbnail(userId, 'license', 'thumb-license');
@@ -382,25 +384,49 @@ async function loadDocThumbnail(userId, docType, containerId) {
     }
 }
 
-document.getElementById('btn-approve').onclick = async () => {
-    if (!selectedDriverId) return;
-    await adminFetch(`/drivers/${selectedDriverId}/approve`, 'POST');
-    closeModal();
-    fetchPendingDrivers();
-};
+function createReviewModal() {
+    let modal = document.getElementById('review-modal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'review-modal';
+        modal.className = 'modal hidden';
+        modal.innerHTML = `
+            <div class="modal-content">
+                <h2>Driver Application Review</h2>
+                <div id="modal-body"></div>
+                <div class="modal-actions">
+                    <button id="btn-approve" class="btn-primary">Approve</button>
+                    <button id="btn-reject" class="btn-danger">Reject</button>
+                    <button id="btn-close" class="btn-secondary">Close</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+        
+        // Bind events to the newly created buttons
+        document.getElementById('btn-approve').onclick = async () => {
+            if (!selectedDriverId) return;
+            await adminFetch(`/drivers/${selectedDriverId}/approve`, 'POST');
+            closeModal();
+            fetchPendingDrivers();
+        };
 
-document.getElementById('btn-reject').onclick = async () => {
-    if (!selectedDriverId) return;
-    const reason = document.getElementById('reject-reason').value;
-    await adminFetch(`/drivers/${selectedDriverId}/reject`, 'POST', { reason });
-    closeModal();
-    fetchPendingDrivers();
-};
+        document.getElementById('btn-reject').onclick = async () => {
+            if (!selectedDriverId) return;
+            const reason = document.getElementById('reject-reason').value;
+            await adminFetch(`/drivers/${selectedDriverId}/reject`, 'POST', { reason });
+            closeModal();
+            fetchPendingDrivers();
+        };
 
-document.getElementById('btn-close').onclick = closeModal;
+        document.getElementById('btn-close').onclick = closeModal;
+    }
+    return modal;
+}
 
 function closeModal() {
-    document.getElementById('review-modal').classList.add('hidden');
+    const modal = document.getElementById('review-modal');
+    if (modal) modal.classList.add('hidden');
     selectedDriverId = null;
     // Cleanup Blob URLs
     activeDocUrls.forEach(url => URL.revokeObjectURL(url));

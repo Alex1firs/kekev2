@@ -1,7 +1,7 @@
 enum DriverStatus {
   unregistered,
   pendingDocuments,
-  pendingReview,
+  pendingApproval,
   approved,
   suspended,
   rejected

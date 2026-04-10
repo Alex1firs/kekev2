@@ -16,10 +16,8 @@ class EnvConfig {
     const String envString = String.fromEnvironment('ENV', defaultValue: 'dev');
     const String apiUrl = String.fromEnvironment('API_URL');
     
-    if (apiUrl.isEmpty) {
-      throw Exception('CRITICAL: API_URL environment variable is missing. '
-          'Please build using: flutter build <target> --dart-define=ENV=prod --dart-define=API_URL=https://<your-real-api-domain>');
-    }
+    // Hard fallback to DigitalOcean backend since Xcode strips --dart-define during direct Archive
+    final String resolvedApiUrl = apiUrl.isEmpty ? 'https://api.kekeride.ng/api/v1' : apiUrl;
 
     AppEnvironment parsedEnv;
     switch (envString) {
@@ -37,7 +35,7 @@ class EnvConfig {
     
     return EnvConfig(
       environment: parsedEnv,
-      apiBaseUrl: apiUrl,
+      apiBaseUrl: resolvedApiUrl,
     );
   }
 }

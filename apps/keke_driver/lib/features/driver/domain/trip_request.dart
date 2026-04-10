@@ -1,5 +1,7 @@
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
+class TripRequest {
+  final String id;
   final String passengerId;
   final bool isCash;
   final String passengerName;

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:dio/dio.dart' as dio;
@@ -87,6 +88,22 @@ class DriverController extends StateNotifier<DriverState> {
     _startCountdown();
   }
 
+  // Debug mock
+  void simulateIncomingRequest() {
+    _handleIncomingRequest({
+      'rideId': 'req_${DateTime.now().millisecondsSinceEpoch}',
+      'passengerName': 'John Doe',
+      'pickupAddress': 'Nnamdi Azikiwe University Main Gate',
+      'pickupLat': 6.242,
+      'pickupLng': 7.118,
+      'destinationAddress': 'Arroma Junction, Awka',
+      'destinationLat': 6.220,
+      'destinationLng': 7.070,
+      'fare': 1500.0,
+      'isCash': true,
+    });
+  }
+
   Future<void> _initDriver() async {
     state = state.copyWith(isLoading: true);
     try {
@@ -117,12 +134,16 @@ class DriverController extends StateNotifier<DriverState> {
   DriverStatus _mapStatus(String status) {
     switch (status) {
       case 'pending_documents': return DriverStatus.pendingDocuments;
-      case 'pending_review': return DriverStatus.pendingReview;
+      case 'pending_review': return DriverStatus.pendingApproval;
       case 'approved': return DriverStatus.approved;
       case 'rejected': return DriverStatus.rejected;
       case 'suspended': return DriverStatus.suspended;
       default: return DriverStatus.unregistered;
     }
+  }
+
+  void setDriverStatus(DriverStatus status) {
+    state = state.copyWith(profile: state.profile.copyWith(status: status));
   }
 
   // --- Onboarding & Status ---
@@ -133,7 +154,7 @@ class DriverController extends StateNotifier<DriverState> {
   }) async {
     state = state.copyWith(isLoading: true);
     try {
-      final response = await _apiClient.dio.post('/drivers/onboarding', {
+      final response = await _apiClient.dio.post('/drivers/onboarding', data: {
         'userId': _userId,
         'firstName': 'Driver', // Placeholder until Auth update
         'lastName': 'User',

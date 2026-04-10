@@ -37,6 +37,7 @@ services:
       REDIS_URL: redis://redis_shared:6379/0
       NODE_OPTIONS: "--max-old-space-size=200"
       ADMIN_API_KEY: keke_harden_test_2025
+      JWT_SECRET: default_secret_change_me_in_prod
       RATE_LIMIT_WINDOW: 900000
       ADMIN_RATE_LIMIT_MAX: 100
       ONBOARDING_RATE_LIMIT_MAX: 5

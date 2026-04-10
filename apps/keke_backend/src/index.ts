@@ -15,6 +15,16 @@ dotenv.config();
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// Request logging middleware for production debugging
+app.use((req, res, next) => {
+    const start = Date.now();
+    res.on('finish', () => {
+        const duration = Date.now() - start;
+        console.log(`${req.method} ${req.originalUrl} ${res.statusCode} ${duration}ms`);
+    });
+    next();
+});
 // Healthcheck endpoint
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });

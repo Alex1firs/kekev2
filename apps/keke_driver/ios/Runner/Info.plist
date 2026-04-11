@@ -80,5 +80,9 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>io.flutter.embedded_views_preview</key>
+	<true/>
+	<key>com.google.android.geo.API_KEY</key>
+	<string>AIzaSyAIupE9r7gG3XGcem6hlg_8Dosw5AOk9yc</string>
 </dict>
 </plist>

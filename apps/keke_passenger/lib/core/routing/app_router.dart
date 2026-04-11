@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import '../../features/auth/presentation/login_screen.dart';
 import '../../features/auth/presentation/signup_screen.dart';
 import '../../features/auth/presentation/splash_screen.dart';
-import '../../features/passenger/home_map_screen.dart';
+import '../../features/passenger/presentation/home_map_screen.dart';
 import 'auth_guard.dart';
 
 // Provides standard Navigator key to manage app wide redirects safely

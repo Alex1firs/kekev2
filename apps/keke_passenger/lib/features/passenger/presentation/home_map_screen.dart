@@ -65,13 +65,17 @@ class _HomeMapScreenState extends ConsumerState<HomeMapScreen> {
                 zoom: 15,
               ),
               myLocationEnabled: true,
-              myLocationButtonEnabled: false, // Custom UI handles this structurally if needed
+              myLocationButtonEnabled: false,
               zoomControlsEnabled: false,
-              onMapCreated: (controller) => _mapController = controller,
+              onMapCreated: (controller) {
+                print("DEBUG: Google Map successfully created!");
+                _mapController = controller;
+              },
               onCameraMove: (position) {
                 ref.read(bookingControllerProvider.notifier).onCameraMove(position);
               },
               onCameraIdle: () {
+                print("DEBUG: Map Camera is Idle at: ${state.mapCenter}");
                 ref.read(bookingControllerProvider.notifier).onCameraIdle();
               },
               markers: _buildMarkers(state),

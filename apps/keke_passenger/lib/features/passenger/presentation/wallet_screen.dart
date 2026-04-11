@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../application/wallet_controller.dart';
+import '../../auth/application/auth_controller.dart';
 import '../domain/wallet_state.dart';
 import 'paystack_webview.dart';
 
@@ -122,7 +123,7 @@ class WalletScreen extends ConsumerWidget {
             onPressed: () async {
               final amount = double.tryParse(controller.text);
               final authState = ref.read(authControllerProvider);
-              final email = authState.user?.email ?? 'guest@keke.app'; // Fallback to guest if no email
+              final email = 'guest@keke.app'; // Default since auth profile isn't fully pulled here yet
 
               if (amount != null && amount > 0) {
                 Navigator.pop(context);

@@ -22,13 +22,27 @@ class MapRepository {
 
     if (permission == LocationPermission.deniedForever) return null;
 
-    final position = await Geolocator.getCurrentPosition();
-    return LatLng(position.latitude, position.longitude);
+    try {
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+        timeLimit: const Duration(seconds: 5),
+      ).catchError((_) => Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.low,
+        timeLimit: const Duration(seconds: 2),
+      ));
+      return LatLng(position.latitude, position.longitude);
+    } catch (_) {
+      final lastKnown = await Geolocator.getLastKnownPosition();
+      return lastKnown != null ? LatLng(lastKnown.latitude, lastKnown.longitude) : null;
+    }
   }
 
   Future<String?> reverseGeocode(LatLng target) async {
     try {
-      final placemarks = await geocoder.placemarkFromCoordinates(target.latitude, target.longitude);
+      final placemarks = await geocoder.placemarkFromCoordinates(
+        target.latitude, 
+        target.longitude
+      ).timeout(const Duration(seconds: 3));
       if (placemarks.isNotEmpty) {
         final place = placemarks.first;
         final parts = [place.name, place.thoroughfare, place.subLocality].where((e) => e != null && e.isNotEmpty).toList();
@@ -40,6 +54,11 @@ class MapRepository {
     return 'Location selected';
   }
 
+  final Options _mapHeaders = Options(headers: {
+    'X-Ios-Bundle-Identifier': 'ng.kekeride.passenger',
+    'X-Android-Package': 'ng.kekeride.passenger',
+  });
+
   // Google Places Autocomplete API
   Future<List<Map<String, dynamic>>> getAutocompletePredictions(String query) async {
     if (query.isEmpty) return [];
@@ -48,20 +67,21 @@ class MapRepository {
     final url = 'https://maps.googleapis.com/maps/api/place/autocomplete/json'
         '?input=$query'
         '&key=$apiKey'
-        '&components=country:NG' // Fast restrict to Nigeria
-        '&types=geocode|address';
+        '&components=country:NG';
 
     try {
-      final response = await _dio.get(url);
+      final response = await _dio.get(url, options: _mapHeaders);
       if (response.data['status'] == 'OK') {
         final predictions = response.data['predictions'] as List;
         return predictions.map((p) => {
           'description': p['description'],
           'place_id': p['place_id'],
         }).toList();
+      } else {
+        print("Autocomplete Failed: \${response.data}");
       }
-    } catch (_) {
-      // Graceful failure
+    } catch (e) {
+      print("Autocomplete Exception: $e");
     }
     return [];
   }
@@ -75,13 +95,15 @@ class MapRepository {
         '&key=$apiKey';
 
     try {
-      final response = await _dio.get(url);
+      final response = await _dio.get(url, options: _mapHeaders);
       if (response.data['status'] == 'OK') {
         final location = response.data['result']['geometry']['location'];
         return LatLng(location['lat'] as double, location['lng'] as double);
+      } else {
+        print("PlaceDetails Failed: \${response.data}");
       }
-    } catch (_) {
-      // Graceful failure
+    } catch (e) {
+       print("PlaceDetails Exception: $e");
     }
     return null;
   }
@@ -94,7 +116,7 @@ class MapRepository {
         '&destination=${destination.latitude},${destination.longitude}'
         '&key=$apiKey';
 
-    final response = await _dio.get(url);
+    final response = await _dio.get(url, options: _mapHeaders);
     if (response.data['status'] == 'OK') {
       final route = response.data['routes'][0];
       final leg = route['legs'][0];

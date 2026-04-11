@@ -5,7 +5,8 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import '../data/map_repository.dart';
 
 class DestinationSearchScreen extends ConsumerStatefulWidget {
-  const DestinationSearchScreen({super.key});
+  final String hintText;
+  const DestinationSearchScreen({super.key, this.hintText = 'Where to?'});
 
   @override
   ConsumerState<DestinationSearchScreen> createState() => _DestinationSearchScreenState();
@@ -61,8 +62,8 @@ class _DestinationSearchScreenState extends ConsumerState<DestinationSearchScree
         title: TextField(
           controller: _searchController,
           autofocus: true,
-          decoration: const InputDecoration(
-            hintText: 'Where to?',
+          decoration: InputDecoration(
+            hintText: widget.hintText,
             border: InputBorder.none,
           ),
           onChanged: _onSearchChanged,

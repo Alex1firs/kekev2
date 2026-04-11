@@ -3,10 +3,12 @@ enum AppEnvironment { dev, staging, prod }
 class EnvConfig {
   final AppEnvironment environment;
   final String apiBaseUrl;
+  final String googleMapsApiKey;
 
   const EnvConfig({
     required this.environment,
     required this.apiBaseUrl,
+    required this.googleMapsApiKey,
   });
 
   /// The active environment variables configured dynamically at compile/build time
@@ -18,6 +20,11 @@ class EnvConfig {
     
     // Hard fallback to DigitalOcean backend since Xcode strips --dart-define during direct Archive
     final String resolvedApiUrl = apiUrl.isEmpty ? 'https://api.kekeride.ng/api/v1' : apiUrl;
+
+    const String mapsKey = String.fromEnvironment(
+      'GOOGLE_MAPS_API_KEY', 
+      defaultValue: 'AIzaSyAIupE9r7gG3XGcem6hlg_8Dosw5AOk9yc'
+    );
 
     AppEnvironment parsedEnv;
     switch (envString) {
@@ -36,6 +43,7 @@ class EnvConfig {
     return EnvConfig(
       environment: parsedEnv,
       apiBaseUrl: resolvedApiUrl,
+      googleMapsApiKey: mapsKey,
     );
   }
 }

@@ -29,6 +29,8 @@ class BookingState {
   final List<LatLng> activeRoutePolyline; // Explicit accurate paths
 
   final String? errorMessage;
+  final Map<String, dynamic>? assignedDriver;
+  final String paymentMethod;
 
   const BookingState({
     this.step = BookingStep.loading,
@@ -43,6 +45,7 @@ class BookingState {
     this.estimatedTime,
     this.activeRoutePolyline = const [],
     this.assignedDriver,
+    this.paymentMethod = 'cash',
     this.errorMessage,
   });
 
@@ -59,6 +62,7 @@ class BookingState {
     String? estimatedTime,
     List<LatLng>? activeRoutePolyline,
     Map<String, dynamic>? assignedDriver,
+    String? paymentMethod,
     String? errorMessage,
   }) {
     return BookingState(
@@ -74,6 +78,7 @@ class BookingState {
       estimatedTime: estimatedTime ?? this.estimatedTime,
       activeRoutePolyline: activeRoutePolyline ?? this.activeRoutePolyline,
       assignedDriver: assignedDriver ?? this.assignedDriver,
+      paymentMethod: paymentMethod ?? this.paymentMethod,
       errorMessage: errorMessage ?? this.errorMessage,
     );
   }

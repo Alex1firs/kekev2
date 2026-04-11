@@ -73,22 +73,37 @@ class BookingSheet extends ConsumerWidget {
       children: [
         const Text('Confirm Your Pickup', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
         const SizedBox(height: 12),
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(8)),
-          child: Row(
-            children: [
-              const Icon(Icons.circle, color: Colors.amber, size: 16),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  isMoving ? 'Moving map...' : address,
-                  style: const TextStyle(fontSize: 16),
-                  maxLines: 1, 
-                  overflow: TextOverflow.ellipsis,
+        InkWell(
+          onTap: isMoving ? null : () async {
+            final result = await Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const DestinationSearchScreen(hintText: 'Enter Pickup Location')),
+            );
+            if (result != null && result is Map<String, dynamic>) {
+              ref.read(bookingControllerProvider.notifier).setPickup(
+                    result['location'] as LatLng,
+                    result['address'] as String,
+                  );
+            }
+          },
+          borderRadius: BorderRadius.circular(8),
+          child: Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(8)),
+            child: Row(
+              children: [
+                const Icon(Icons.circle, color: Colors.amber, size: 16),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    isMoving ? 'Moving map...' : address,
+                    style: const TextStyle(fontSize: 16),
+                    maxLines: 1, 
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
         const SizedBox(height: 16),

@@ -3,8 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import '../domain/booking_state.dart';
 import '../data/map_repository.dart';
-import '../../core/network/socket_service.dart';
-import '../../core/network/socket_provider.dart';
+import '../../../core/network/socket_service.dart';
+import '../../../core/network/socket_provider.dart';
 
 class BookingController extends StateNotifier<BookingState> {
   final MapRepository _mapRepo;
@@ -107,6 +107,14 @@ class BookingController extends StateNotifier<BookingState> {
     );
   }
 
+  void setPickup(LatLng location, String address) {
+    state = state.copyWith(
+      pickupLocation: location,
+      pickupAddress: address,
+      mapCenter: location, // Also visually recenter the map here if desired
+    );
+  }
+
   void setDestination(LatLng location, String address) async {
     state = state.copyWith(
       destinationLocation: location,
@@ -140,7 +148,7 @@ class BookingController extends StateNotifier<BookingState> {
     
     _socketService!.emit('ride:request', {
       'rideId': rideId,
-      'passengerId': _userId,
+      'passengerId': 'demo-passenger-id',
       'isCash': state.paymentMethod == 'cash',
       'passengerName': 'Ngozi Obi', 
       'pickupAddress': state.pickupAddress,

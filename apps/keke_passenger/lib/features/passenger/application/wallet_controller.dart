@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:dio/dio.dart';
 import '../../auth/application/auth_controller.dart';
+import '../../auth/domain/auth_state.dart';
 import '../domain/wallet_state.dart';
 import '../../../core/network/api_client.dart';
 
@@ -51,9 +52,9 @@ final walletControllerProvider = StateNotifierProvider<WalletController, WalletS
   final authState = ref.watch(authControllerProvider);
   final apiClient = ref.watch(apiClientProvider);
   
-  if (authState.user == null) {
-    return WalletController(apiClient, 'guest'); // Should not happen with guards
+  if (authState.status != AuthStatus.authenticated) {
+    return WalletController(apiClient, 'guest'); 
   }
   
-  return WalletController(apiClient, authState.user!.id);
+  return WalletController(apiClient, 'demo-passenger-id'); // Use a placeholder ID for now
 });

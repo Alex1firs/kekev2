@@ -16,7 +16,7 @@ class SocketService {
   }
 
   void _initSocket() {
-    final serverUrl = EnvConfig.current.apiUrl.replaceAll('/api/v1', ''); // Strip API path for socket root
+    final serverUrl = EnvConfig.current.apiBaseUrl.replaceAll('/api/v1', ''); // Strip API path for socket root
     
     _socket = IO.io(serverUrl, IO.OptionBuilder()
       .setTransports(['websocket'])

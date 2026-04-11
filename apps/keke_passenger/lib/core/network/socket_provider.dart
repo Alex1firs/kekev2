@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../features/auth/application/auth_controller.dart';
+import '../../features/auth/domain/auth_state.dart';
 import 'socket_service.dart';
 import 'package:jwt_decoder/jwt_decoder.dart';
 

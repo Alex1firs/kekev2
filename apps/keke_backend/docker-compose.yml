@@ -94,5 +94,13 @@ services:
       - api_prod
       - api_staging
 
+  adminer:
+    image: adminer
+    restart: always
+    mem_limit: 60m
+    depends_on:
+      postgres_shared:
+        condition: service_healthy
+
 volumes:
   pgdata:

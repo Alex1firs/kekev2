@@ -7,13 +7,19 @@ import '../../features/driver/application/driver_controller.dart';
 import '../../features/driver/domain/driver_profile.dart';
 import '../../features/driver/domain/driver_state.dart';
 
-class AuthGuard {
-  final AuthState authState;
-  final DriverState driverState;
+class AuthGuard extends ChangeNotifier {
+  final Ref _ref;
 
-  AuthGuard({required this.authState, required this.driverState});
+  AuthGuard(this._ref) {
+    // Notify GoRouter whenever these states change
+    _ref.listen(authControllerProvider, (_, __) => notifyListeners());
+    _ref.listen(driverControllerProvider, (_, __) => notifyListeners());
+  }
 
   String? redirectHook(BuildContext context, GoRouterState state) {
+    final authState = _ref.read(authControllerProvider);
+    final driverState = _ref.read(driverControllerProvider);
+
     final loc = state.matchedLocation;
     final isSplash = loc == '/splash';
     final isAuthRoute = loc == '/login' || loc == '/signup';
@@ -27,7 +33,7 @@ class AuthGuard {
 
     // 2. Unauthenticated state
     if (authState.status == AuthStatus.unauthenticated) {
-      if (!isAuthRoute && !isSplash) return '/login';
+      if (!isAuthRoute) return '/login';
       return null;
     }
 
@@ -59,10 +65,7 @@ class AuthGuard {
   }
 }
 
-// Observe both Auth and Driver states
 final authGuardProvider = Provider<AuthGuard>((ref) {
-  final authState = ref.watch(authControllerProvider);
-  final driverState = ref.watch(driverControllerProvider);
-  return AuthGuard(authState: authState, driverState: driverState);
+  return AuthGuard(ref);
 });
 

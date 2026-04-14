@@ -30,7 +30,19 @@ router.get("/overview", async (req: Request, res: Response) => {
  */
 router.get("/drivers/pending", async (req: Request, res: Response) => {
     try {
-        const drivers = await AdminService.getPendingDrivers();
+        const drivers = await AdminService.getDriversByStatus(DriverStatus.PENDING_REVIEW);
+        res.json(drivers);
+    } catch (err: any) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * GET /admin/drivers/incomplete
+ */
+router.get("/drivers/incomplete", async (req: Request, res: Response) => {
+    try {
+        const drivers = await AdminService.getDriversByStatus(DriverStatus.PENDING_DOCUMENTS);
         res.json(drivers);
     } catch (err: any) {
         res.status(500).json({ error: err.message });

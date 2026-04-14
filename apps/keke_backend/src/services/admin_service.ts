@@ -40,11 +40,11 @@ export class AdminService {
     }
 
     /**
-     * Get pending driver approval queue
+     * Get drivers by status (e.g., PENDING_REVIEW or PENDING_DOCUMENTS)
      */
-    static async getPendingDrivers() {
+    static async getDriversByStatus(status: DriverStatus) {
         return await AppDataSource.getRepository(DriverProfile).find({
-            where: { status: DriverStatus.PENDING_REVIEW },
+            where: { status },
             order: { createdAt: "ASC" }
         });
     }

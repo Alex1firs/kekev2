@@ -1,0 +1,13 @@
+{
+  "name": "keke_admin",
+  "version": "1.0.0",
+  "description": "Keke Operations Admin Dashboard",
+  "main": "app.js",
+  "scripts": {
+    "dev": "npx -y http-server -p 3001",
+    "start": "npx -y http-server -p 3001"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}

@@ -105,6 +105,8 @@ class DriverController extends StateNotifier<DriverState> {
   }
 
   Future<void> _initDriver() async {
+    // Small delay ensures Riverpod state finishes spreading before we hit the network
+    await Future.delayed(const Duration(milliseconds: 200));
     state = state.copyWith(isLoading: true);
     try {
       final response = await _apiClient.dio.get('/drivers/status/$_userId');
@@ -119,7 +121,10 @@ class DriverController extends StateNotifier<DriverState> {
             status: _mapStatus(data['status']),
             vehiclePlate: data['vehiclePlate'],
             vehicleModel: data['vehicleModel'],
-            debtAmount: 0.0, // Should be fetched from finance in a real app
+            licenseUrl: data['licenseUrl'],
+            idCardUrl: data['idCardUrl'],
+            vehiclePaperUrl: data['vehiclePaperUrl'],
+            debtAmount: 0.0,
           ),
           isLoading: false,
         );
@@ -127,7 +132,7 @@ class DriverController extends StateNotifier<DriverState> {
         state = state.copyWith(isLoading: false);
       }
     } catch (e) {
-      state = state.copyWith(isLoading: false, errorMessage: 'Failed to sync status');
+      state = state.copyWith(isLoading: false, errorMessage: 'Failed to sync status: ${e.toString()}');
     }
   }
 
@@ -152,7 +157,7 @@ class DriverController extends StateNotifier<DriverState> {
     required String plate,
     required String model,
   }) async {
-    state = state.copyWith(isLoading: true);
+    state = state.copyWith(isLoading: true, errorMessage: null);
     try {
       final response = await _apiClient.dio.post('/drivers/onboarding', data: {
         'userId': _userId,
@@ -162,10 +167,20 @@ class DriverController extends StateNotifier<DriverState> {
         'vehicleModel': model,
       });
 
-      final newStatus = _mapStatus(response.data['status']);
+      final rawData = response.data;
+      print('[DEBUG:ONBOARDING] Raw response: $rawData (Type: ${rawData.runtimeType})');
+
+      if (rawData == null || rawData is! Map) {
+        throw 'Invalid backend response: Expected Map, got ${rawData.runtimeType}';
+      }
+
+      final Map<String, dynamic> responseBody = Map<String, dynamic>.from(rawData);
+      final newStatusStr = responseBody['status']?.toString() ?? 'pending_documents';
+      final newStatus = _mapStatus(newStatusStr);
+
+      print('[DEBUG:ONBOARDING] Parsed status: $newStatus');
 
       state = state.copyWith(
-        isLoading: false,
         profile: state.profile.copyWith(
           id: _userId,
           status: newStatus,
@@ -174,12 +189,30 @@ class DriverController extends StateNotifier<DriverState> {
         ),
       );
     } catch (e) {
-      state = state.copyWith(isLoading: false, errorMessage: 'Onboarding failed');
+      String msg = 'Onboarding failed';
+      if (e is dio.DioException) {
+        final errData = e.response?.data;
+        print('[DEBUG:ONBOARDING] Raw error response: $errData (Type: ${errData.runtimeType})');
+        
+        if (errData is Map) {
+          msg = 'Onboarding failed: ${errData['error'] ?? e.message}';
+        } else if (errData is String && errData.isNotEmpty) {
+          msg = 'Onboarding failed: $errData';
+        } else {
+          msg = 'Onboarding failed: ${e.message}';
+        }
+      } else {
+        msg = 'Onboarding failed: ${e.toString()}';
+      }
+      print('[DEBUG:ONBOARDING] Final error message: $msg');
+      state = state.copyWith(errorMessage: msg);
+    } finally {
+      state = state.copyWith(isLoading: false);
     }
   }
 
   Future<void> uploadDocument(String filePath, String docType) async {
-    state = state.copyWith(isLoading: true);
+    state = state.copyWith(isLoading: true, errorMessage: null);
     try {
       final formData = dio.FormData.fromMap({
         'userId': _userId,
@@ -192,13 +225,54 @@ class DriverController extends StateNotifier<DriverState> {
         data: formData,
       );
 
-      final newStatus = _mapStatus(response.data['status']);
+      final rawData = response.data;
+      print('[DEBUG:UPLOAD] Raw response: $rawData (Type: ${rawData.runtimeType})');
+
+      if (rawData == null || rawData is! Map) {
+        throw 'Invalid backend response: Expected Map, got ${rawData.runtimeType}';
+      }
+
+      final Map<String, dynamic> responseBody = Map<String, dynamic>.from(rawData);
+      final newStatusStr = responseBody['status']?.toString() ?? 'pending_documents';
+      final newStatus = _mapStatus(newStatusStr);
+      final filename = responseBody['filename']?.toString() ?? 'uploaded';
+
+      print('[DEBUG:UPLOAD] Parsed status: $newStatus, Filename: $filename');
+
       state = state.copyWith(
-        isLoading: false,
-        profile: state.profile.copyWith(status: newStatus),
+        profile: state.profile.copyWith(
+          status: newStatus,
+          licenseUrl: docType == 'license' ? filename : state.profile.licenseUrl,
+          idCardUrl: docType == 'id_card' ? filename : state.profile.idCardUrl,
+          vehiclePaperUrl: docType == 'vehicle_paper' ? filename : state.profile.vehiclePaperUrl,
+        ),
       );
     } catch (e) {
-      state = state.copyWith(isLoading: false, errorMessage: 'Upload failed');
+      String msg = 'Upload failed';
+      if (e is dio.DioException) {
+        final errData = e.response?.data;
+        print('[DEBUG:UPLOAD] Raw error response: $errData (Type: ${errData.runtimeType})');
+        
+        if (errData is Map) {
+          msg = 'Upload failed: ${errData['error'] ?? e.message}';
+        } else if (errData is String && errData.isNotEmpty) {
+          if (errData.contains('413 Request Entity Too Large') || e.response?.statusCode == 413) {
+            msg = 'Upload failed: The selected photo is too large for upload. Please try again.';
+          } else if (errData.startsWith('<html>')) {
+            msg = 'Upload failed: Server error (${e.response?.statusCode ?? "Unknown"})';
+          } else {
+            msg = 'Upload failed: $errData';
+          }
+        } else {
+          msg = 'Upload failed: ${e.message}';
+        }
+      } else {
+        msg = 'Upload failed: ${e.toString()}';
+      }
+      print('[DEBUG:UPLOAD] Final error message: $msg');
+      state = state.copyWith(errorMessage: msg);
+    } finally {
+      state = state.copyWith(isLoading: false);
     }
   }
 

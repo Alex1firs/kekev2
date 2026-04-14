@@ -95,6 +95,7 @@ router.post("/upload", onboardingLimiter, upload.single("document"), async (req:
         res.json({ 
             message: "Document uploaded successfully",
             docType,
+            filename: processedFilename,
             status: profile.status
         });
     } catch (err: any) {

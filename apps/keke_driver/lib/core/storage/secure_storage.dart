@@ -20,7 +20,9 @@ class SecureStorageService {
 }
 
 final flutterSecureStorageProvider = Provider<FlutterSecureStorage>((ref) {
-  return const FlutterSecureStorage();
+  return const FlutterSecureStorage(
+    iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock),
+  );
 });
 
 final secureStorageServiceProvider = Provider<SecureStorageService>((ref) {

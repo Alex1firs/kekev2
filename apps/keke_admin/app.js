@@ -126,7 +126,7 @@ function switchSection(id) {
     sectionTitle.innerText = id.charAt(0).toUpperCase() + id.slice(1).replace('-', ' ');
 
     // Refresh data when switching
-    if (id === 'drivers') fetchPendingDrivers();
+    if (id === 'drivers') { fetchPendingDrivers(); fetchIncompleteDrivers(); }
     if (id === 'active-rides') fetchActiveRides();
     if (id === 'finance') { fetchFinanceSummary(); fetchDebtLeaderboard(); fetchPayouts(); }
     if (id === 'history') fetchRideHistory();
@@ -209,6 +209,20 @@ async function fetchPendingDrivers() {
         </tr>
     `).join('');
     if (drivers.length === 0) list.innerHTML = '<tr><td colspan="4">No pending applications.</td></tr>';
+}
+
+async function fetchIncompleteDrivers() {
+    const drivers = await adminFetch('/drivers/incomplete');
+    const list = document.getElementById('incomplete-drivers-list');
+    list.innerHTML = drivers.map(d => `
+        <tr>
+            <td>${d.firstName} ${d.lastName}</td>
+            <td>${d.vehicleModel} (${d.vehiclePlate})</td>
+            <td>${new Date(d.createdAt).toLocaleDateString()}</td>
+            <td><button class="btn-secondary" onclick="reviewDriver('${d.userId}')">View Progress</button></td>
+        </tr>
+    `).join('');
+    if (drivers.length === 0) list.innerHTML = '<tr><td colspan="4">No incomplete applications.</td></tr>';
 }
 
 async function fetchActiveRides() {
@@ -319,13 +333,15 @@ window.reviewDriver = async function(userId) {
     activeDocUrls.forEach(url => URL.revokeObjectURL(url));
     activeDocUrls = [];
 
+    const isPendingReview = driver.status === 'pending_review';
+
     document.getElementById('modal-body').innerHTML = `
         <div style="margin-top: 16px;">
             <div style="display:flex; justify-content:space-between; align-items:flex-start;">
                 <div>
                     <p><strong>Name:</strong> ${driver.firstName} ${driver.lastName}</p>
                     <p><strong>Vehicle:</strong> ${driver.vehicleModel} (${driver.vehiclePlate})</p>
-                    <p><strong>Status:</strong> <span class="status-indicator online"></span> ${driver.status.toUpperCase()}</p>
+                    <p><strong>Status:</strong> <span class="status-indicator ${isPendingReview ? 'online' : 'offline'}"></span> ${driver.status.toUpperCase().replace('_', ' ')}</p>
                 </div>
                 <div style="text-align:right;">
                     <p><strong>Submitted:</strong><br/>${new Date(driver.createdAt).toLocaleString()}</p>
@@ -335,20 +351,24 @@ window.reviewDriver = async function(userId) {
             <div class="doc-gallery" id="document-gallery">
                 <div class="doc-item">
                     <div class="doc-thumb loading" id="thumb-license"></div>
-                    <span>License</span>
+                    <span>License ${driver.licenseUrl ? '✅' : '❌'}</span>
                 </div>
                 <div class="doc-item">
                     <div class="doc-thumb loading" id="thumb-id"></div>
-                    <span>ID Card</span>
+                    <span>ID Card ${driver.idCardUrl ? '✅' : '❌'}</span>
                 </div>
                 <div class="doc-item">
                     <div class="doc-thumb loading" id="thumb-vehicle"></div>
-                    <span>Vehicle Paper</span>
+                    <span>Vehicle Paper ${driver.vehiclePaperUrl ? '✅' : '❌'}</span>
                 </div>
             </div>
 
+            ${!isPendingReview ? `<div style="margin: 10px 0; padding: 10px; background: #332200; border-radius: 8px; color: #ffaa00;">
+                <i class="fas fa-info-circle"></i> This driver is still uploading documents.
+            </div>` : ''}
+
             <div style="margin-top:24px; border-top: 1px solid #333; padding-top: 16px;">
-                <label>Rejection Reason (required for rejection):</label><br/>
+                <label>Review Notes / Rejection Reason:</label><br/>
                 <input type="text" id="reject-reason" placeholder="e.g. License expired, ID blurred..." style="width:100%; padding:10px; margin-top:8px; border-radius:8px; border:1px solid #333; background:#222; color:white;">
             </div>
         </div>
@@ -357,10 +377,19 @@ window.reviewDriver = async function(userId) {
     const modal = createReviewModal();
     modal.classList.remove('hidden');
 
-    // Load Documents as Blobs (Authenticated)
-    loadDocThumbnail(userId, 'license', 'thumb-license');
-    loadDocThumbnail(userId, 'id_card', 'thumb-id');
-    loadDocThumbnail(userId, 'vehicle_paper', 'thumb-vehicle');
+    // Load Documents as Blobs (Authenticated) - Only if URL exists
+    if (driver.licenseUrl) loadDocThumbnail(userId, 'license', 'thumb-license');
+    else document.getElementById('thumb-license').innerHTML = '<div class="doc-thumb missing"><i class="fas fa-minus"></i></div>';
+    
+    if (driver.idCardUrl) loadDocThumbnail(userId, 'id_card', 'thumb-id');
+    else document.getElementById('thumb-id').innerHTML = '<div class="doc-thumb missing"><i class="fas fa-minus"></i></div>';
+
+    if (driver.vehiclePaperUrl) loadDocThumbnail(userId, 'vehicle_paper', 'thumb-vehicle');
+    else document.getElementById('thumb-vehicle').innerHTML = '<div class="doc-thumb missing"><i class="fas fa-minus"></i></div>';
+
+    // Disable approval if not pending_review
+    document.getElementById('btn-approve').disabled = !isPendingReview;
+    document.getElementById('btn-approve').style.opacity = isPendingReview ? '1' : '0.5';
 };
 
 async function loadDocThumbnail(userId, docType, containerId) {

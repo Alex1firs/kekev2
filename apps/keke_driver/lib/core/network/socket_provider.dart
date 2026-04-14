@@ -12,8 +12,13 @@ final socketServiceProvider = Provider<SocketService?>((ref) {
   }
   
   // Extract userId from JWT for real-time channel identification
-  final Map<String, dynamic> decodedToken = JwtDecoder.decode(authState.token!);
-  final String? userId = decodedToken['userId'];
+  String? userId;
+  try {
+    final Map<String, dynamic> decodedToken = JwtDecoder.decode(authState.token!);
+    userId = decodedToken['userId'];
+  } catch (e) {
+    return null;
+  }
   
   if (userId == null) return null;
   

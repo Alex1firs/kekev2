@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import '../application/driver_controller.dart';
@@ -16,6 +17,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   final _plateController = TextEditingController();
   final _modelController = TextEditingController();
   int _currentStep = 0;
+  final Map<String, String> _uploadedDocs = {};
 
   @override
   void dispose() {
@@ -42,27 +44,47 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   @override
   Widget build(BuildContext context) {
     final driverState = ref.watch(driverControllerProvider);
+    final profile = driverState.profile;
+    
+    // Strict completion check: All 3 URLs must exist in the backend-synced profile
+    final bool allDocsUploaded = profile.licenseUrl != null && 
+                               profile.idCardUrl != null && 
+                               profile.vehiclePaperUrl != null;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Driver Onboarding')),
       body: Stepper(
         currentStep: _currentStep,
-        onStepContinue: _nextStep,
+        onStepContinue: () {
+          if (_currentStep == 1 && !allDocsUploaded) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Please upload all 3 required documents to continue.'),
+                backgroundColor: Colors.orange,
+              ),
+            );
+            return;
+          }
+          _nextStep();
+        },
         onStepCancel: () => setState(() => _currentStep--),
         controlsBuilder: (context, details) {
+          final isStep2 = _currentStep == 1;
+          final bool canContinue = !driverState.isLoading && (!isStep2 || allDocsUploaded);
+
           return Padding(
             padding: const EdgeInsets.only(top: 24.0),
             child: SizedBox(
               width: double.infinity,
               height: 50,
               child: ElevatedButton(
-                onPressed: driverState.isLoading ? null : details.onStepContinue,
+                onPressed: canContinue ? details.onStepContinue : null,
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.amber,
+                  backgroundColor: canContinue ? Colors.amber : Colors.grey,
                   foregroundColor: Colors.black,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
-                child: Text(driverState.isLoading ? 'Processing...' : 'Continue'),
+                child: Text(driverState.isLoading ? 'Processing...' : (allDocsUploaded && isStep2 ? 'Finalize & Submit' : 'Continue')),
               ),
             ),
           );
@@ -112,25 +134,37 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
   Widget _buildDocTile(String title, IconData icon, String type) {
     final driverState = ref.watch(driverControllerProvider);
-    // Simple state-based indicator: in this phase we'd ideally have a more granular check,
-    // but for now we look at general status.
-    final bool isUploaded = driverState.profile.status == DriverStatus.pendingApproval;
+    final profile = driverState.profile;
+    
+    // Check backend sync first
+    String? backendUrl;
+    if (type == 'license') backendUrl = profile.licenseUrl;
+    else if (type == 'id_card') backendUrl = profile.idCardUrl;
+    else if (type == 'vehicle_paper') backendUrl = profile.vehiclePaperUrl;
+
+    final bool isUploaded = backendUrl != null;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
         color: Colors.white10,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.white24),
+        border: Border.all(color: isUploaded ? Colors.green.withOpacity(0.5) : Colors.white24),
       ),
       child: ListTile(
-        leading: Icon(icon, color: Colors.amber),
+        leading: Icon(icon, color: isUploaded ? Colors.green : Colors.amber),
         title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
-        subtitle: isUploaded ? const Text('✓ Document Ready', style: TextStyle(color: Colors.green)) : null,
+        subtitle: isUploaded 
+            ? const Text('✓ Document Verified', style: TextStyle(color: Colors.green)) 
+            : const Text('Tap to capture', style: TextStyle(color: Colors.grey, fontSize: 12)),
         trailing: isUploaded 
-          ? const Icon(Icons.check_circle, color: Colors.green)
+          ? ActionChip(
+              label: const Text('Retake', style: TextStyle(fontSize: 12, color: Colors.black)),
+              backgroundColor: Colors.amber,
+              onPressed: driverState.isLoading ? null : () => _pickAndUpload(type),
+            )
           : const Icon(Icons.add_a_photo, color: Colors.amber),
-        onTap: isUploaded || driverState.isLoading ? null : () => _pickAndUpload(type),
+        onTap: driverState.isLoading ? null : () => _pickAndUpload(type),
       ),
     );
   }
@@ -140,7 +174,15 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     final XFile? image = await picker.pickImage(source: ImageSource.camera, imageQuality: 70);
     
     if (image != null) {
-      await ref.read(driverControllerProvider.notifier).uploadDocument(image.path, type);
+      try {
+        await ref.read(driverControllerProvider.notifier).uploadDocument(image.path, type);
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Upload failed: ${e.toString()}'), backgroundColor: Colors.red),
+          );
+        }
+      }
     }
   }
 }

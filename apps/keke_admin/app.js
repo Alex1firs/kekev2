@@ -1,4 +1,4 @@
-const API_BASE = 'https://api.kekeride.ng/api/v1/admin';
+const API_BASE = 'http://localhost:3000/api/v1/admin';
 let ADMIN_KEY = localStorage.getItem('KEKE_ADMIN_KEY') || '';
 
 // --- State Management ---
@@ -198,13 +198,16 @@ async function refreshOverview() {
 
 async function fetchPendingDrivers() {
     const drivers = await adminFetch('/drivers/pending');
+    console.log('[DEBUG:ADMIN] Pending drivers raw response:', drivers);
     pendingDrivers = drivers;
     const list = document.getElementById('pending-drivers-list');
+    if (!list) return;
+
     list.innerHTML = drivers.map(d => `
         <tr>
             <td>${d.firstName} ${d.lastName}</td>
             <td>${d.vehicleModel} (${d.vehiclePlate})</td>
-            <td>${new Date(d.createdAt).toLocaleDateString()}</td>
+            <td>${new Date(d.createdAt).toLocaleString()}</td>
             <td><button class="btn-primary" onclick="reviewDriver('${d.userId}')">Review</button></td>
         </tr>
     `).join('');
@@ -324,8 +327,33 @@ function updateOperationalAlerts(rides) {
 let activeDocUrls = [];
 
 window.reviewDriver = async function(userId) {
-    const driver = await adminFetch(`/drivers/${userId}`);
-    if (!driver) return;
+    console.log('[DEBUG:ADMIN] Reviewing driver:', userId);
+    
+    // 1. Initialize modal elements FIRST to prevent null pointer errors
+    const modal = createReviewModal();
+    const modalBody = document.getElementById('modal-body');
+    const btnApprove = document.getElementById('btn-approve');
+    
+    if (!modalBody) {
+        console.error('[CRITICAL] modal-body element not found after creation');
+        return;
+    }
+
+    // 2. Fetch driver details
+    let driver;
+    try {
+        driver = await adminFetch(`/drivers/${userId}`);
+    } catch (e) {
+        console.error('[ERROR] Failed to fetch driver details:', e);
+        return;
+    }
+    
+    if (!driver) {
+        console.error('[ERROR] No driver found for ID:', userId);
+        return;
+    }
+
+    console.log('[DEBUG:ADMIN] Clicked driver payload:', driver);
     
     selectedDriverId = userId;
     
@@ -335,7 +363,7 @@ window.reviewDriver = async function(userId) {
 
     const isPendingReview = driver.status === 'pending_review';
 
-    document.getElementById('modal-body').innerHTML = `
+    modalBody.innerHTML = `
         <div style="margin-top: 16px;">
             <div style="display:flex; justify-content:space-between; align-items:flex-start;">
                 <div>
@@ -374,7 +402,6 @@ window.reviewDriver = async function(userId) {
         </div>
     `;
 
-    const modal = createReviewModal();
     modal.classList.remove('hidden');
 
     // Load Documents as Blobs (Authenticated) - Only if URL exists
@@ -465,7 +492,7 @@ function closeModal() {
 // --- WebSocket Setup ---
 
 function setupSocket() {
-    const socket = io('https://api.kekeride.ng');
+    const socket = io('http://localhost:3000');
     
     socket.on('connect', () => {
         socket.emit('join', { userId: 'dashboard', role: 'admin' });

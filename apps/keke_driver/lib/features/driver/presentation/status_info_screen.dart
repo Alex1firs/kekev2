@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../auth/application/auth_controller.dart';
 import '../application/driver_controller.dart';
 import '../domain/driver_profile.dart';
 
@@ -28,7 +29,7 @@ class StatusInfoScreen extends ConsumerWidget {
               const Spacer(),
               TextButton(
                 onPressed: () {
-                  // Simulate logout if needed
+                  ref.read(authControllerProvider.notifier).logout();
                 },
                 child: const Text('Log Out', style: TextStyle(color: Colors.grey)),
               ),

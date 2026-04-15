@@ -11,6 +11,7 @@ import '../../../core/network/socket_provider.dart';
 import '../../../core/network/api_client.dart';
 import '../../auth/application/auth_controller.dart';
 import '../../auth/domain/auth_state.dart';
+import 'package:jwt_decoder/jwt_decoder.dart';
 
 class DriverController extends StateNotifier<DriverState> {
   final SocketService? _socketService;
@@ -51,8 +52,10 @@ class DriverController extends StateNotifier<DriverState> {
   void _startHeartbeat() {
     _heartbeatTimer?.cancel();
     _heartbeatTimer = Timer.periodic(const Duration(seconds: 12), (timer) async {
+      if (!mounted) return;
       if (state.operationStatus == OperationStatus.available && _socketService != null) {
         final position = await Geolocator.getCurrentPosition();
+        if (!mounted) return;
         _socketService!.emit('driver:heartbeat', {
           'driverId': _userId,
           'lat': position.latitude,
@@ -107,9 +110,13 @@ class DriverController extends StateNotifier<DriverState> {
   Future<void> _initDriver() async {
     // Small delay ensures Riverpod state finishes spreading before we hit the network
     await Future.delayed(const Duration(milliseconds: 200));
+    if (!mounted) return;
+
     state = state.copyWith(isLoading: true);
     try {
       final response = await _apiClient.dio.get('/drivers/status/$_userId');
+      if (!mounted) return;
+
       final data = response.data;
       
       if (data != null && data['status'] != 'unregistered') {
@@ -132,6 +139,7 @@ class DriverController extends StateNotifier<DriverState> {
         state = state.copyWith(isLoading: false);
       }
     } catch (e) {
+      if (!mounted) return;
       state = state.copyWith(isLoading: false, errorMessage: 'Failed to sync status: ${e.toString()}');
     }
   }
@@ -167,6 +175,8 @@ class DriverController extends StateNotifier<DriverState> {
         'vehicleModel': model,
       });
 
+      if (!mounted) return;
+
       final rawData = response.data;
       print('[DEBUG:ONBOARDING] Raw response: $rawData (Type: ${rawData.runtimeType})');
 
@@ -189,6 +199,7 @@ class DriverController extends StateNotifier<DriverState> {
         ),
       );
     } catch (e) {
+      if (!mounted) return;
       String msg = 'Onboarding failed';
       if (e is dio.DioException) {
         final errData = e.response?.data;
@@ -207,7 +218,9 @@ class DriverController extends StateNotifier<DriverState> {
       print('[DEBUG:ONBOARDING] Final error message: $msg');
       state = state.copyWith(errorMessage: msg);
     } finally {
-      state = state.copyWith(isLoading: false);
+      if (mounted) {
+        state = state.copyWith(isLoading: false);
+      }
     }
   }
 
@@ -220,10 +233,14 @@ class DriverController extends StateNotifier<DriverState> {
         'document': await dio.MultipartFile.fromFile(filePath),
       });
 
+      if (!mounted) return;
+
       final response = await _apiClient.dio.post(
         '/drivers/upload',
         data: formData,
       );
+
+      if (!mounted) return;
 
       final rawData = response.data;
       print('[DEBUG:UPLOAD] Raw response: $rawData (Type: ${rawData.runtimeType})');
@@ -248,6 +265,7 @@ class DriverController extends StateNotifier<DriverState> {
         ),
       );
     } catch (e) {
+      if (!mounted) return;
       String msg = 'Upload failed';
       if (e is dio.DioException) {
         final errData = e.response?.data;
@@ -272,7 +290,9 @@ class DriverController extends StateNotifier<DriverState> {
       print('[DEBUG:UPLOAD] Final error message: $msg');
       state = state.copyWith(errorMessage: msg);
     } finally {
-      state = state.copyWith(isLoading: false);
+      if (mounted) {
+        state = state.copyWith(isLoading: false);
+      }
     }
   }
 
@@ -327,6 +347,10 @@ class DriverController extends StateNotifier<DriverState> {
   void _startCountdown() {
     _countdownTimer?.cancel();
     _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
       if (state.countdown == null || state.countdown! <= 0) {
         timer.cancel();
         _handleTimeout();
@@ -389,9 +413,25 @@ final driverControllerProvider = StateNotifierProvider<DriverController, DriverS
   final authState = ref.watch(authControllerProvider);
   
   String userId = 'guest';
-  if (authState.status == AuthStatus.authenticated) {
-    // In this phase, we assume the token IS the userId or we extract it correctly
-    userId = authState.token!; 
+  if (authState.status == AuthStatus.authenticated && authState.token != null) {
+    try {
+      final decodedToken = JwtDecoder.decode(authState.token!);
+      final extractedId = decodedToken['userId'];
+      
+      if (extractedId == null || extractedId.toString().isEmpty) {
+        throw 'Missing userId in token';
+      }
+      
+      userId = extractedId.toString();
+    } catch (e) {
+      print('[CRITICAL:AUTH] JWT Decode failed or userId missing: $e');
+      // Force clean session since we have a malformed/invalid token
+      Future.microtask(() {
+        ref.read(authControllerProvider.notifier).forceUnauthorizedCleanup();
+      });
+      // Return a temporary controller that will be immediately replaced by provider refresh
+      return DriverController(socketService, apiClient, 'session_invalid');
+    }
   }
 
   return DriverController(socketService, apiClient, userId);

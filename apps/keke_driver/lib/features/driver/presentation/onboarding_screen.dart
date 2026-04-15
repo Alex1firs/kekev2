@@ -171,7 +171,12 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
   Future<void> _pickAndUpload(String type) async {
     final picker = ImagePicker();
-    final XFile? image = await picker.pickImage(source: ImageSource.camera, imageQuality: 70);
+    final XFile? image = await picker.pickImage(
+      source: ImageSource.camera, 
+      imageQuality: 70,
+      maxWidth: 1024,
+      maxHeight: 1024,
+    );
     
     if (image != null) {
       try {

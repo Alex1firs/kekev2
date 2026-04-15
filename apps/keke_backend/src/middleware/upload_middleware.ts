@@ -16,10 +16,22 @@ const storage = multer.diskStorage({
     },
     filename: (req, file, cb) => {
         // Filename format: {userId}_{docType}_{timestamp}{ext}
-        const userId = req.body.userId || "anonymous";
-        const docType = req.body.docType || "unknown";
+        // DEFENSIVE: Sanitize and truncate userId to prevent ENAMETOOLONG or path injection
+        let userId = req.body.userId || "anonymous";
+        
+        // Remove any non-alphanumeric or dash characters
+        userId = userId.toString().replace(/[^a-zA-Z0-9-]/g, "");
+        
+        // Truncate to safe length (UUID is 36, let's allow 48 for safety)
+        if (userId.length > 48) {
+            userId = userId.substring(0, 48);
+        }
+
+        const docType = (req.body.docType || "unknown").toString().replace(/[^a-z0-9_]/g, "");
         const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
-        cb(null, `${userId}_${docType}_${uniqueSuffix}${path.extname(file.originalname).toLowerCase()}`);
+        const ext = path.extname(file.originalname).toLowerCase();
+        
+        cb(null, `${userId}_${docType}_${uniqueSuffix}${ext}`);
     }
 });
 

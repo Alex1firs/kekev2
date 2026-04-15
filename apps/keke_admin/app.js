@@ -1,4 +1,4 @@
-const API_BASE = 'http://localhost:3000/api/v1/admin';
+const API_BASE = 'https://api.kekeride.ng/api/v1/admin';
 let ADMIN_KEY = localStorage.getItem('KEKE_ADMIN_KEY') || '';
 
 // --- State Management ---
@@ -492,7 +492,7 @@ function closeModal() {
 // --- WebSocket Setup ---
 
 function setupSocket() {
-    const socket = io('http://localhost:3000');
+    const socket = io('https://api.kekeride.ng');
     
     socket.on('connect', () => {
         socket.emit('join', { userId: 'dashboard', role: 'admin' });

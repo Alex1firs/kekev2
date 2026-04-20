@@ -167,10 +167,7 @@ export class SocketHandler {
   }
 
   private async isRideAssigned(rideId: string): Promise<boolean> {
-     const lock = await DispatchService.acquireRideLock(rideId, 'probe');
-     // If we can't acquire, it's ALREADY locked/assigned
-     // BUT we need to be careful with 'probe'. 
-     // For this MVP, we'll check the lock exists.
+     // A pure read check. We do NOT acquire the lock here, otherwise drivers are blocked from accepting.
      const lockVal = await require('../config/redis').redis.get(`ride:${rideId}:lock`);
      return lockVal !== null && lockVal !== 'probe';
   }

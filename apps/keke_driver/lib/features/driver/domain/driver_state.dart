@@ -1,5 +1,6 @@
 import 'driver_profile.dart';
 import 'trip_request.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 class DriverState {
   final DriverProfile profile;
@@ -9,6 +10,7 @@ class DriverState {
   final int? countdown;
   final bool isLoading;
   final String? errorMessage;
+  final LatLng? mockLocation;
 
   const DriverState({
     required this.profile,
@@ -18,6 +20,7 @@ class DriverState {
     this.countdown,
     this.isLoading = false,
     this.errorMessage,
+    this.mockLocation,
   });
 
   DriverState copyWith({
@@ -28,6 +31,8 @@ class DriverState {
     int? countdown,
     bool? isLoading,
     String? errorMessage,
+    LatLng? mockLocation,
+    bool clearMockLocation = false,
   }) {
     return DriverState(
       profile: profile ?? this.profile,
@@ -37,6 +42,7 @@ class DriverState {
       countdown: countdown ?? this.countdown,
       isLoading: isLoading ?? this.isLoading,
       errorMessage: errorMessage ?? this.errorMessage,
+      mockLocation: clearMockLocation ? null : (mockLocation ?? this.mockLocation),
     );
   }
 }

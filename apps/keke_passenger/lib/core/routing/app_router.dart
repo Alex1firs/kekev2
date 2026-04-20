@@ -8,7 +8,7 @@ import '../../features/passenger/presentation/home_map_screen.dart';
 import 'auth_guard.dart';
 
 // Provides standard Navigator key to manage app wide redirects safely
-final rootNavigatorKey = GlobalKey<NavigatorState>();
+final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
 
 final appRouterProvider = Provider<GoRouter>((ref) {
   final authStateListener = ref.watch(authGuardProvider);

@@ -126,7 +126,7 @@ class BookingController extends StateNotifier<BookingState> {
     state = state.copyWith(
       destinationAddress: address,
       destinationLocation: location,
-      step: BookingStep.confirming,
+      step: BookingStep.previewEstimate,
     );
     if (state.pickupLocation != null) _calculateFare();
   }
@@ -136,7 +136,7 @@ class BookingController extends StateNotifier<BookingState> {
   }
 
   Future<void> _calculateFare() async {
-    state = state.copyWith(isLoading: true, errorMessage: null);
+    state = state.copyWith(errorMessage: null, estimatedFareAmount: null);
     
     try {
       final estimate = await _mapRepo.calculateRouteAndFare(state.pickupLocation!, state.destinationLocation!);
@@ -145,10 +145,9 @@ class BookingController extends StateNotifier<BookingState> {
         estimatedTime: estimate['time'] as String,
         estimatedFareAmount: estimate['fare'] as int,
         activeRoutePolyline: List<LatLng>.from(estimate['polyline']),
-        isLoading: false,
       );
     } catch (e) {
-      state = state.copyWith(errorMessage: 'Failed to calculate fare.', isLoading: false);
+      state = state.copyWith(errorMessage: 'Failed to calculate fare.');
     }
   }
 
@@ -170,6 +169,9 @@ class BookingController extends StateNotifier<BookingState> {
       'destinationLng': state.destinationLocation!.longitude,
       'fare': state.estimatedFareAmount,
     });
+    
+    // Join a ride-specific room to receive backend acknowledgements
+    _socketService!.emit('join', {'userId': rideId, 'role': 'passenger'});
     
     state = state.copyWith(step: BookingStep.searching);
   }

@@ -81,8 +81,8 @@ class BookingSheet extends ConsumerWidget {
             );
             if (result != null && result is Map<String, dynamic>) {
               ref.read(bookingControllerProvider.notifier).setPickup(
-                    result['location'] as LatLng,
                     result['address'] as String,
+                    result['location'] as LatLng,
                   );
             }
           },
@@ -145,8 +145,8 @@ class BookingSheet extends ConsumerWidget {
             );
             if (result != null && result is Map<String, dynamic>) {
               ref.read(bookingControllerProvider.notifier).setDestination(
-                    result['location'] as LatLng,
                     result['address'] as String,
+                    result['location'] as LatLng,
                   );
             }
           },

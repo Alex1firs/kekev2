@@ -78,7 +78,7 @@ class AuthController extends StateNotifier<AuthState> {
   }
 }
 
-final authControllerProvider = StateNotifierProvider<AuthController, AuthState>((ref) {
+final StateNotifierProvider<AuthController, AuthState> authControllerProvider = StateNotifierProvider<AuthController, AuthState>((ref) {
   return AuthController(
     ref.watch(authRepositoryProvider),
     ref.watch(secureStorageServiceProvider),

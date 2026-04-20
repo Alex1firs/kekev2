@@ -1,0 +1,35 @@
+Analyzing keke_passenger...                                     
+
+   info • The prefix 'IO' isn't a lower_case_with_underscores identifier • lib/core/network/socket_service.dart:2:60 • library_prefixes
+warning • Unused import: 'package:flutter_riverpod/flutter_riverpod.dart' • lib/core/network/socket_service.dart:3:8 • unused_import
+   info • Don't invoke 'print' in production code • lib/core/network/socket_service.dart:28:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/core/network/socket_service.dart:32:34 • avoid_print
+   info • 'background' is deprecated and shouldn't be used. Use surface instead. This feature was deprecated after v3.18.0-0.1.pre • lib/core/theme/app_theme.dart:18:9 • deprecated_member_use
+   info • Use 'const' for final variables initialized to a constant value • lib/features/passenger/application/booking_controller.dart:56:5 • prefer_const_declarations
+  error • There's no constant named 'confirming' in 'BookingStep' • lib/features/passenger/application/booking_controller.dart:129:25 • undefined_enum_constant
+  error • The named parameter 'isLoading' isn't defined • lib/features/passenger/application/booking_controller.dart:139:28 • undefined_named_parameter
+  error • The named parameter 'isLoading' isn't defined • lib/features/passenger/application/booking_controller.dart:148:9 • undefined_named_parameter
+  error • The named parameter 'isLoading' isn't defined • lib/features/passenger/application/booking_controller.dart:151:73 • undefined_named_parameter
+warning • Unused import: 'package:dio/dio.dart' • lib/features/passenger/application/wallet_controller.dart:2:8 • unused_import
+   info • Don't invoke 'print' in production code • lib/features/passenger/data/map_repository.dart:81:9 • avoid_print
+   info • Don't invoke 'print' in production code • lib/features/passenger/data/map_repository.dart:84:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/features/passenger/data/map_repository.dart:103:9 • avoid_print
+   info • Don't invoke 'print' in production code • lib/features/passenger/data/map_repository.dart:106:8 • avoid_print
+   info • Use 'const' for final variables initialized to a constant value • lib/features/passenger/data/map_repository.dart:129:7 • prefer_const_declarations
+   info • Use 'const' for final variables initialized to a constant value • lib/features/passenger/data/map_repository.dart:130:7 • prefer_const_declarations
+warning • Unused import: 'package:google_maps_flutter/google_maps_flutter.dart' • lib/features/passenger/presentation/destination_search_screen.dart:4:8 • unused_import
+   info • Don't invoke 'print' in production code • lib/features/passenger/presentation/home_map_screen.dart:71:17 • avoid_print
+   info • Don't invoke 'print' in production code • lib/features/passenger/presentation/home_map_screen.dart:78:17 • avoid_print
+   info • 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss • lib/features/passenger/presentation/wallet_screen.dart:43:51 • deprecated_member_use
+warning • The value of the local variable 'authState' isn't used • lib/features/passenger/presentation/wallet_screen.dart:125:21 • unused_local_variable
+   info • Use 'const' for final variables initialized to a constant value • lib/features/passenger/presentation/wallet_screen.dart:126:15 • prefer_const_declarations
+   info • Don't use 'BuildContext's across async gaps • lib/features/passenger/presentation/wallet_screen.dart:134:21 • use_build_context_synchronously
+  error • The argument type 'LatLng' can't be assigned to the parameter type 'String'.  • lib/features/passenger/presentation/widgets/booking_sheet.dart:84:21 • argument_type_not_assignable
+  error • The argument type 'String' can't be assigned to the parameter type 'LatLng'.  • lib/features/passenger/presentation/widgets/booking_sheet.dart:85:21 • argument_type_not_assignable
+  error • The argument type 'LatLng' can't be assigned to the parameter type 'String'.  • lib/features/passenger/presentation/widgets/booking_sheet.dart:148:21 • argument_type_not_assignable
+  error • The argument type 'String' can't be assigned to the parameter type 'LatLng'.  • lib/features/passenger/presentation/widgets/booking_sheet.dart:149:21 • argument_type_not_assignable
+   info • Use 'const' with the constructor to improve performance • lib/features/passenger/presentation/widgets/booking_sheet.dart:227:9 • prefer_const_constructors
+   info • Use 'const' literals as arguments to constructors of '@immutable' classes • lib/features/passenger/presentation/widgets/booking_sheet.dart:228:21 • prefer_const_literals_to_create_immutables
+   info • Don't invoke 'print' in production code • test/dio_url_test.dart:9:9 • avoid_print
+  error • The name 'MyApp' isn't a class • test/widget_test.dart:16:35 • creation_with_non_type
+

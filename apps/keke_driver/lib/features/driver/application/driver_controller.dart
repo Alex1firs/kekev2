@@ -51,18 +51,52 @@ class DriverController extends StateNotifier<DriverState> {
 
   void _startHeartbeat() {
     _heartbeatTimer?.cancel();
-    _heartbeatTimer = Timer.periodic(const Duration(seconds: 12), (timer) async {
-      if (!mounted) return;
-      if (state.operationStatus == OperationStatus.available && _socketService != null) {
-        final position = await Geolocator.getCurrentPosition();
-        if (!mounted) return;
-        _socketService!.emit('driver:heartbeat', {
-          'driverId': _userId,
-          'lat': position.latitude,
-          'lng': position.longitude,
-        });
+    _sendHeartbeat();
+    _heartbeatTimer = Timer.periodic(const Duration(seconds: 12), (_) => _sendHeartbeat());
+  }
+
+  Future<void> _sendHeartbeat() async {
+    if (!mounted) return;
+    if (state.operationStatus == OperationStatus.available && _socketService != null) {
+      double lat, lng;
+      if (state.mockLocation != null) {
+        lat = state.mockLocation!.latitude;
+        lng = state.mockLocation!.longitude;
+      } else {
+        try {
+          final position = await Geolocator.getCurrentPosition();
+          lat = position.latitude;
+          lng = position.longitude;
+        } catch (_) {
+          return; // Skip heartbeat if we can't get real location and no mock exists
+        }
       }
-    });
+      if (!mounted) return;
+      
+      final isMock = state.mockLocation != null;
+      print('===================================================');
+      print('[DEBUG:HEARTBEAT] Source: ${isMock ? "MOCK" : "REAL GPS"}');
+      print('[DEBUG:HEARTBEAT] Payload: lat=$lat lng=$lng');
+      print('===================================================');
+      
+      _socketService!.emit('driver:heartbeat', {
+        'driverId': _userId,
+        'lat': lat,
+        'lng': lng,
+      });
+    }
+  }
+
+  void setMockLocation(LatLng pos) {
+    print('[DEBUG:MOCK] LONG-PRESS MAP OVERRIDE TRIGGERED at: lat=${pos.latitude}, lng=${pos.longitude}');
+    state = state.copyWith(mockLocation: pos);
+    print('[DEBUG:MOCK] driverState updated. mockLocation is now: ${state.mockLocation?.latitude}, ${state.mockLocation?.longitude}');
+    if (state.operationStatus == OperationStatus.available) _sendHeartbeat();
+  }
+
+  void clearMockLocation() {
+    state = state.copyWith(clearMockLocation: true);
+    if (state.operationStatus == OperationStatus.available) _sendHeartbeat();
   }
 
   void _handleIncomingRequest(Map<String, dynamic> data) {
@@ -283,12 +317,17 @@ class DriverController extends StateNotifier<DriverState> {
   }
 
   void toggleOnline() {
-    if (state.profile.status != DriverStatus.approved) return;
+    if (state.profile.status != DriverStatus.approved) {
+      print('[DEBUG:TOGGLE] Prevented online toggle, status is ${state.profile.status}');
+      return;
+    }
 
     if (state.operationStatus == OperationStatus.offline) {
+      print('[DEBUG:TOGGLE] Driver going ONLINE. Starting heartbeat...');
       state = state.copyWith(operationStatus: OperationStatus.available);
       _startHeartbeat(); // Ensure heartbeat fires immediately to get into Redis
     } else {
+      print('[DEBUG:TOGGLE] Driver going OFFLINE. Stopping heartbeat...');
       state = state.copyWith(operationStatus: OperationStatus.offline);
       _heartbeatTimer?.cancel();
       if (_socketService != null) {
@@ -356,6 +395,7 @@ class DriverController extends StateNotifier<DriverState> {
       operationStatus: OperationStatus.available,
       activeRequest: null,
       countdown: null,
+      tripStep: TripStep.none,
     );
   }
 

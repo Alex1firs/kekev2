@@ -59,6 +59,8 @@ class BookingSheet extends ConsumerWidget {
         return _buildSearchingPanel(context, ref, state);
         
       case BookingStep.confirmed:
+      case BookingStep.arrived:
+      case BookingStep.started:
         return _buildConfirmedPanel(context, ref, state);
     }
   }
@@ -267,11 +269,22 @@ class BookingSheet extends ConsumerWidget {
     final driver = state.assignedDriver;
     if (driver == null) return const SizedBox.shrink();
 
+    String titleText = 'Driver Assigned!';
+    Color titleColor = Colors.green;
+    
+    if (state.step == BookingStep.arrived) {
+      titleText = 'Driver has arrived!';
+      titleColor = Colors.amber.shade700;
+    } else if (state.step == BookingStep.started) {
+      titleText = 'Heading to destination...';
+      titleColor = Colors.blue;
+    }
+
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Text('Driver Assigned!', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.green)),
+        Text(titleText, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: titleColor)),
         const SizedBox(height: 16),
         ListTile(
           contentPadding: EdgeInsets.zero,
@@ -284,10 +297,12 @@ class BookingSheet extends ConsumerWidget {
           ),
         ),
         const SizedBox(height: 16),
-        ElevatedButton(
-          onPressed: () => ref.read(bookingControllerProvider.notifier).cancelBooking(), 
-          child: const Text('Cancel Trip'),
-        ),
+        
+        if (state.step != BookingStep.started)
+          ElevatedButton(
+            onPressed: () => ref.read(bookingControllerProvider.notifier).cancelBooking(), 
+            child: const Text('Cancel Trip'),
+          ),
       ],
     );
   }

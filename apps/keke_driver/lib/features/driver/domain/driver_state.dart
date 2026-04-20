@@ -11,6 +11,7 @@ class DriverState {
   final bool isLoading;
   final String? errorMessage;
   final LatLng? mockLocation;
+  final int waitTimeSeconds;
 
   const DriverState({
     required this.profile,
@@ -21,6 +22,7 @@ class DriverState {
     this.isLoading = false,
     this.errorMessage,
     this.mockLocation,
+    this.waitTimeSeconds = 0,
   });
 
   DriverState copyWith({
@@ -33,6 +35,7 @@ class DriverState {
     String? errorMessage,
     LatLng? mockLocation,
     bool clearMockLocation = false,
+    int? waitTimeSeconds,
   }) {
     return DriverState(
       profile: profile ?? this.profile,
@@ -43,6 +46,7 @@ class DriverState {
       isLoading: isLoading ?? this.isLoading,
       errorMessage: errorMessage ?? this.errorMessage,
       mockLocation: clearMockLocation ? null : (mockLocation ?? this.mockLocation),
+      waitTimeSeconds: waitTimeSeconds ?? this.waitTimeSeconds,
     );
   }
 }

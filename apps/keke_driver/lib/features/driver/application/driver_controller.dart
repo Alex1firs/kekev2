@@ -20,6 +20,7 @@ class DriverController extends StateNotifier<DriverState> {
 
   Timer? _countdownTimer;
   Timer? _heartbeatTimer;
+  Timer? _waitTimer;
   StreamSubscription? _socketSubscription;
 
   DriverController(this._socketService, this._apiClient, this._userId)
@@ -401,19 +402,54 @@ class DriverController extends StateNotifier<DriverState> {
 
   // --- Trip Lifecycle ---
 
-  void markArrived() => state = state.copyWith(tripStep: TripStep.arrived);
+  void markArrived() {
+    if (_socketService == null || state.activeRequest == null) return;
+    
+    _socketService!.emit('ride:arrived', {
+      'rideId': state.activeRequest!.id,
+      'driverId': _userId,
+    });
+
+    state = state.copyWith(tripStep: TripStep.arrived, waitTimeSeconds: 0);
+    
+    _waitTimer?.cancel();
+    _waitTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (mounted) {
+        state = state.copyWith(waitTimeSeconds: state.waitTimeSeconds + 1);
+      }
+    });
+  }
   
-  void startTrip() => state = state.copyWith(tripStep: TripStep.started);
+  void startTrip() {
+    if (_socketService == null || state.activeRequest == null) return;
+
+    _socketService!.emit('ride:start', {
+      'rideId': state.activeRequest!.id,
+      'driverId': _userId,
+    });
+
+    _waitTimer?.cancel();
+    state = state.copyWith(tripStep: TripStep.started);
+  }
 
   void completeTrip() {
     if (_socketService == null || state.activeRequest == null) return;
+
+    // Calculate Wait Time Surcharge (e.g. 5 minutes grace period, then ₦10 per minute)
+    int waitCharge = 0;
+    if (state.waitTimeSeconds > 300) {
+      int extraMinutes = ((state.waitTimeSeconds - 300) / 60).ceil();
+      waitCharge = extraMinutes * 10;
+    }
+    final totalFare = state.activeRequest!.fare + waitCharge;
 
     _socketService!.emit('ride:complete', {
       'rideId': state.activeRequest!.id,
       'passengerId': state.activeRequest!.passengerId,
       'driverId': _userId,
-      'totalFare': state.activeRequest!.fare,
+      'totalFare': totalFare,
       'isCash': state.activeRequest!.isCash,
+      'waitTimeSeconds': state.waitTimeSeconds, // Send to backend for record logic if needed
     });
 
     state = state.copyWith(
@@ -426,11 +462,13 @@ class DriverController extends StateNotifier<DriverState> {
       tripStep: TripStep.none,
       activeRequest: null,
       operationStatus: OperationStatus.available,
+      waitTimeSeconds: 0,
     );
   }
 
   @override
   void dispose() {
+    _waitTimer?.cancel();
     _countdownTimer?.cancel();
     _heartbeatTimer?.cancel();
     _socketSubscription?.cancel();

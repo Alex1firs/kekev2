@@ -102,6 +102,30 @@ export class SocketHandler {
         }
       });
 
+      // --- Driver Arrived ---
+      socket.on('ride:arrived', async (data: { rideId: string; driverId: string }) => {
+        try {
+          const rideRepo = require('../config/data_source').AppDataSource.getRepository(require('../models').Ride);
+          await rideRepo.update(data.rideId, { status: 'arrived' as any });
+        } catch (err) {
+          console.error('Failed to update ride to arrived:', err);
+        }
+        this.io.to(`passenger:${data.rideId}`).emit('ride:status_update', { rideId: data.rideId, status: 'arrived' });
+        this.io.to('admin').emit('ride:status_update', { rideId: data.rideId, status: 'arrived' });
+      });
+
+      // --- Trip Started ---
+      socket.on('ride:start', async (data: { rideId: string; driverId: string }) => {
+        try {
+          const rideRepo = require('../config/data_source').AppDataSource.getRepository(require('../models').Ride);
+          await rideRepo.update(data.rideId, { status: 'in_progress' as any });
+        } catch (err) {
+          console.error('Failed to update ride to in_progress:', err);
+        }
+        this.io.to(`passenger:${data.rideId}`).emit('ride:status_update', { rideId: data.rideId, status: 'started' });
+        this.io.to('admin').emit('ride:status_update', { rideId: data.rideId, status: 'in_progress' });
+      });
+
       // --- Ride Completion ---
       socket.on('ride:complete', async (data: { 
         rideId: string; 

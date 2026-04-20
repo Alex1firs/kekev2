@@ -7,7 +7,9 @@ enum BookingStep {
   selectingDestination, // Pickup locked, searching for destination
   previewEstimate,      // Both locked, showing polyline and fare
   searching,            // Backend is looking for driver
-  confirmed             // Driver accepted
+  confirmed,            // Driver accepted
+  arrived,              // Driver arrived at pickup
+  started               // Trip has started
 }
 
 class BookingState {

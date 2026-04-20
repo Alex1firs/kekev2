@@ -40,7 +40,11 @@ class BookingController extends StateNotifier<BookingState> {
           );
           break;
         case 'ride:status_update':
-           // Handle driver arrived, trip started, etc.
+           if (data['status'] == 'arrived') {
+             state = state.copyWith(step: BookingStep.arrived);
+           } else if (data['status'] == 'started') {
+             state = state.copyWith(step: BookingStep.started);
+           }
            break;
         case 'ride:failed':
           state = state.copyWith(

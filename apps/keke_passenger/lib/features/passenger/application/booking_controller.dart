@@ -5,14 +5,21 @@ import '../domain/booking_state.dart';
 import '../data/map_repository.dart';
 import '../../../core/network/socket_service.dart';
 import '../../../core/network/socket_provider.dart';
+import '../../auth/application/auth_controller.dart';
+import '../../auth/domain/auth_state.dart';
+import 'package:jwt_decoder/jwt_decoder.dart';
 
 class BookingController extends StateNotifier<BookingState> {
   final MapRepository _mapRepo;
   final SocketService? _socketService;
+  final String passengerId;
+  final String firstName;
+  final String lastName;
+
   Timer? _debounceTimer;
   StreamSubscription? _socketSubscription;
 
-  BookingController(this._mapRepo, this._socketService) : super(const BookingState()) {
+  BookingController(this._mapRepo, this._socketService, this.passengerId, this.firstName, this.lastName) : super(const BookingState()) {
     _initializeMap();
     _listenToSocket();
   }
@@ -107,26 +114,29 @@ class BookingController extends StateNotifier<BookingState> {
     );
   }
 
-  void setPickup(LatLng location, String address) {
+  void setPickup(String address, LatLng location) {
     state = state.copyWith(
-      pickupLocation: location,
       pickupAddress: address,
-      mapCenter: location, // Also visually recenter the map here if desired
+      pickupLocation: location,
     );
+    if (state.destinationLocation != null) _calculateFare();
   }
 
-  void setDestination(LatLng location, String address) async {
+  void setDestination(String address, LatLng location) {
     state = state.copyWith(
-      destinationLocation: location,
       destinationAddress: address,
-      step: BookingStep.previewEstimate,
+      destinationLocation: location,
+      step: BookingStep.confirming,
     );
-    
-    _fetchRouteEstimate();
+    if (state.pickupLocation != null) _calculateFare();
   }
-  
-  Future<void> _fetchRouteEstimate() async {
-    if (state.pickupLocation == null || state.destinationLocation == null) return;
+
+  void setPaymentMethod(String method) {
+    state = state.copyWith(paymentMethod: method);
+  }
+
+  Future<void> _calculateFare() async {
+    state = state.copyWith(isLoading: true, errorMessage: null);
     
     try {
       final estimate = await _mapRepo.calculateRouteAndFare(state.pickupLocation!, state.destinationLocation!);
@@ -135,9 +145,10 @@ class BookingController extends StateNotifier<BookingState> {
         estimatedTime: estimate['time'] as String,
         estimatedFareAmount: estimate['fare'] as int,
         activeRoutePolyline: List<LatLng>.from(estimate['polyline']),
+        isLoading: false,
       );
     } catch (e) {
-      state = state.copyWith(errorMessage: 'Failed to calculate fare.');
+      state = state.copyWith(errorMessage: 'Failed to calculate fare.', isLoading: false);
     }
   }
 
@@ -148,9 +159,9 @@ class BookingController extends StateNotifier<BookingState> {
     
     _socketService!.emit('ride:request', {
       'rideId': rideId,
-      'passengerId': 'demo-passenger-id',
+      'passengerId': passengerId,
       'isCash': state.paymentMethod == 'cash',
-      'passengerName': 'Ngozi Obi', 
+      'passengerName': '$firstName $lastName'.trim(), 
       'pickupAddress': state.pickupAddress,
       'pickupLat': state.pickupLocation!.latitude,
       'pickupLng': state.pickupLocation!.longitude,
@@ -186,5 +197,21 @@ class BookingController extends StateNotifier<BookingState> {
 
 final bookingControllerProvider = StateNotifierProvider<BookingController, BookingState>((ref) {
   final socketService = ref.watch(socketServiceProvider);
-  return BookingController(ref.watch(mapRepositoryProvider), socketService);
+  final authState = ref.watch(authControllerProvider);
+  final mapRepo = ref.watch(mapRepositoryProvider);
+  
+  String passId = 'unknown';
+  String fname = 'Passenger';
+  String lname = '';
+  
+  if (authState.status == AuthStatus.authenticated && authState.token != null) {
+      try {
+        final decoded = JwtDecoder.decode(authState.token!);
+        passId = decoded['userId'] as String? ?? 'unknown';
+        fname = decoded['firstName'] as String? ?? 'Passenger';
+        lname = decoded['lastName'] as String? ?? '';
+      } catch (_) {}
+  }
+  
+  return BookingController(mapRepo, socketService, passId, fname, lname);
 });

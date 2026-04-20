@@ -30,6 +30,12 @@ export class SocketHandler {
         await DispatchService.updateDriverLocation(data.driverId, data.lat, data.lng);
       });
 
+      // --- Driver Offline Toggle ---
+      socket.on('driver:offline', async (data: { driverId: string }) => {
+        await DispatchService.removeDriverAvailability(data.driverId);
+        console.log(`Driver ${data.driverId} went offline`);
+      });
+
       // --- Passenger Ride Request ---
       socket.on('ride:request', async (request: any) => {
         const { rideId, pickupLat, pickupLng, passengerId, fare, isCash, pickupAddress, destinationAddress } = request;

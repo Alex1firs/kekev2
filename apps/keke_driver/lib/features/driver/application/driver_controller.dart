@@ -91,21 +91,7 @@ class DriverController extends StateNotifier<DriverState> {
     _startCountdown();
   }
 
-  // Debug mock
-  void simulateIncomingRequest() {
-    _handleIncomingRequest({
-      'rideId': 'req_${DateTime.now().millisecondsSinceEpoch}',
-      'passengerName': 'John Doe',
-      'pickupAddress': 'Nnamdi Azikiwe University Main Gate',
-      'pickupLat': 6.242,
-      'pickupLng': 7.118,
-      'destinationAddress': 'Arroma Junction, Awka',
-      'destinationLat': 6.220,
-      'destinationLng': 7.070,
-      'fare': 1500.0,
-      'isCash': true,
-    });
-  }
+
 
   Future<void> _initDriver() async {
     // Small delay ensures Riverpod state finishes spreading before we hit the network
@@ -301,8 +287,13 @@ class DriverController extends StateNotifier<DriverState> {
 
     if (state.operationStatus == OperationStatus.offline) {
       state = state.copyWith(operationStatus: OperationStatus.available);
+      _startHeartbeat(); // Ensure heartbeat fires immediately to get into Redis
     } else {
       state = state.copyWith(operationStatus: OperationStatus.offline);
+      _heartbeatTimer?.cancel();
+      if (_socketService != null) {
+        _socketService!.emit('driver:offline', {'driverId': _userId});
+      }
     }
   }
 

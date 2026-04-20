@@ -43,7 +43,9 @@ export class AuthService {
             { 
                 userId: user.id, 
                 phone: user.phone, 
-                role: user.role 
+                role: user.role,
+                firstName: user.firstName,
+                lastName: user.lastName
             }, 
             JWT_SECRET, 
             { expiresIn: "30d" }

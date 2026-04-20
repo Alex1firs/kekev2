@@ -42,17 +42,7 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
           if (driverState.tripStep != TripStep.none)
              TripOperationHUD(state: driverState),
 
-          // Simulation FAB (For Phase 4 Demo)
-          if (driverState.operationStatus == OperationStatus.available)
-            Positioned(
-              right: 20,
-              bottom: 120,
-              child: FloatingActionButton(
-                backgroundColor: Colors.blueAccent,
-                onPressed: () => ref.read(driverControllerProvider.notifier).simulateIncomingRequest(),
-                child: const Icon(Icons.bolt, color: Colors.white),
-              ),
-            ),
+
         ],
       ),
     );

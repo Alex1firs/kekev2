@@ -21,6 +21,16 @@ export class DispatchService {
   }
 
   /**
+   * Explicitly remove driver from availability pool when toggling offline
+   */
+  static async removeDriverAvailability(driverId: string) {
+    const pipeline = redis.pipeline();
+    pipeline.zrem(this.DRIVER_GEO_KEY, driverId);
+    pipeline.del(`${this.DRIVER_AVAILABILITY_PREFIX}${driverId}`);
+    await pipeline.exec();
+  }
+
+  /**
    * Find available drivers within radius
    */
   static async findNearbyDrivers(lat: number, lng: number, radiusKm: number, limit: number = 10): Promise<string[]> {

@@ -343,12 +343,14 @@ class BookingController extends StateNotifier<BookingState> {
   
   void cancelBooking() {
     if (_socketService != null && state.rideId != null) {
+      print('[PASSENGER_LIFECYCLE] Requesting cancellation for: ${state.rideId}');
+      state = state.copyWith(step: BookingStep.loading);
+      
       _socketService!.emit('ride:cancel', {
         'rideId': state.rideId,
         'passengerId': passengerId,
       });
-      // NOTICE: We no longer optimistically reset state. 
-      // We wait for the backend 'ride:cancelled' event for a strict sync.
+      // NOTICE: We wait for the backend 'ride:cancelled' event for a strict sync.
     }
   }
 

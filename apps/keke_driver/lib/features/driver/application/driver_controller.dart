@@ -60,12 +60,20 @@ class DriverController extends StateNotifier<DriverState> {
     _socketSubscription = _socketService!.events.listen((data) {
       final event = data['event'];
       
+      print('[DRIVER_SIGNAL] Received Event: $event | Payload: $data');
+      
       switch (event) {
         case 'ride:request':
           _handleIncomingRequest(data);
           break;
         case 'ride:cancelled':
-          if (state.activeRequest?.id == data['rideId']) {
+          // Robust comparison: check toString() to avoid type mismatch, 
+          // or fallback to any active request if payload is the "dismissal" shape
+          final incomingRideId = data['rideId']?.toString();
+          final currentRideId = state.activeRequest?.id.toString();
+          
+          if (incomingRideId == currentRideId || state.tripStep == TripStep.none) {
+            print('[DRIVER_SIGNAL] Cancellation/Dismissal confirmed for: $incomingRideId');
             _stopWatchdog();
             _resetToAvailable();
           }
@@ -456,16 +464,23 @@ class DriverController extends StateNotifier<DriverState> {
   void rejectRequest() {
     if (_socketService == null || state.activeRequest == null) return;
 
+    print('[DRIVER_ACTION] Rejecting ride: ${state.activeRequest!.id}');
     _socketService!.emit('ride:reject', {
       'rideId': state.activeRequest!.id,
       'driverId': _userId,
     });
 
+    _resetToAvailable();
+  }
+
+  void _resetToAvailable() {
+    print('[DRIVER_LIFECYCLE] Resetting to available state.');
     _countdownTimer?.cancel();
     state = state.copyWith(
       operationStatus: OperationStatus.available,
       activeRequest: null,
       countdown: null,
+      tripStep: TripStep.none,
     );
   }
 
@@ -486,12 +501,8 @@ class DriverController extends StateNotifier<DriverState> {
   }
 
   void _handleTimeout() {
-    state = state.copyWith(
-      operationStatus: OperationStatus.available,
-      activeRequest: null,
-      countdown: null,
-      tripStep: TripStep.none,
-    );
+    print('[DRIVER_LIFECYCLE] Request timed out.');
+    _resetToAvailable();
   }
 
   // --- Trip Lifecycle ---

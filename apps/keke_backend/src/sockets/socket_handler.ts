@@ -122,6 +122,7 @@ export class SocketHandler {
             // Immediately dismiss request UI for any ringing/notified drivers (Optimization)
             const notifiedDrivers = this.activeDispatches.get(data.rideId);
             if (notifiedDrivers) {
+              console.log(`[BACKEND_DISMISS] Signaling ${notifiedDrivers.size} drivers to dismiss ride ${data.rideId}`);
               for (const driverId of notifiedDrivers) {
                 this.io.to(`driver:${driverId}`).emit('ride:cancelled', { rideId: data.rideId });
               }

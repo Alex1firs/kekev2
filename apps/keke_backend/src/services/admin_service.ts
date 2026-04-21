@@ -96,14 +96,15 @@ export class AdminService {
      * Get active rides from Redis state (Hybrid)
      */
     static async getActiveRides() {
-        // In a real system, we'd fetch detail from Redis hashes or memory.
-        // For this phase, we'll list the locks as a proxy, 
-        // and ideally query the Ride entity for matching 'active' statuses.
+        const { MoreThan } = require("typeorm");
+        // Only show rides that have heartbeat/updates in the last 6 hours to prevent dashboard clog
+        const recentlyActiveThreshold = new Date(Date.now() - 6 * 60 * 60 * 1000);
+
         return await AppDataSource.getRepository(Ride).find({
             where: [
-                { status: RideStatus.ACCEPTED },
-                { status: RideStatus.STARTED },
-                { status: RideStatus.SEARCHING }
+                { status: RideStatus.ACCEPTED, updatedAt: MoreThan(recentlyActiveThreshold) },
+                { status: RideStatus.STARTED, updatedAt: MoreThan(recentlyActiveThreshold) },
+                { status: RideStatus.SEARCHING, updatedAt: MoreThan(recentlyActiveThreshold) }
             ],
             order: { updatedAt: "DESC" }
         });

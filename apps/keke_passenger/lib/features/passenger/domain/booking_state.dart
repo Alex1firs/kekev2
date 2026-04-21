@@ -33,6 +33,10 @@ class BookingState {
   final String? errorMessage;
   final Map<String, dynamic>? assignedDriver;
   final String paymentMethod;
+  
+  final String? rideId;
+  final LatLng? assignedDriverLocation;
+  final DateTime? lastLocationUpdate;
 
   const BookingState({
     this.step = BookingStep.loading,
@@ -49,6 +53,9 @@ class BookingState {
     this.assignedDriver,
     this.paymentMethod = 'cash',
     this.errorMessage,
+    this.rideId,
+    this.assignedDriverLocation,
+    this.lastLocationUpdate,
   });
 
   BookingState copyWith({
@@ -66,6 +73,9 @@ class BookingState {
     Map<String, dynamic>? assignedDriver,
     String? paymentMethod,
     String? errorMessage,
+    String? rideId,
+    LatLng? assignedDriverLocation,
+    DateTime? lastLocationUpdate,
   }) {
     return BookingState(
       step: step ?? this.step,
@@ -82,6 +92,9 @@ class BookingState {
       assignedDriver: assignedDriver ?? this.assignedDriver,
       paymentMethod: paymentMethod ?? this.paymentMethod,
       errorMessage: errorMessage ?? this.errorMessage,
+      rideId: rideId ?? this.rideId,
+      assignedDriverLocation: assignedDriverLocation ?? this.assignedDriverLocation,
+      lastLocationUpdate: lastLocationUpdate ?? this.lastLocationUpdate,
     );
   }
 }

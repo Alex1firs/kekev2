@@ -14,22 +14,45 @@ import '../../auth/domain/auth_state.dart';
 import 'package:jwt_decoder/jwt_decoder.dart';
 
 class DriverController extends StateNotifier<DriverState> {
-  final SocketService? _socketService;
+  SocketService? _socketService;
   final ApiClient _apiClient;
   final String _userId;
 
   Timer? _countdownTimer;
   Timer? _heartbeatTimer;
   Timer? _waitTimer;
+  Timer? _watchdogTimer;
   StreamSubscription? _socketSubscription;
 
-  DriverController(this._socketService, this._apiClient, this._userId)
+  DriverController(SocketService? initialSocket, this._apiClient, this._userId)
       : super(const DriverState(
           profile: DriverProfile(status: DriverStatus.unregistered),
         )) {
+    _socketService = initialSocket;
     _initDriver();
-    _listenToSocket();
+    if (_socketService != null) _listenToSocket();
     _startHeartbeat();
+  }
+
+  void updateSocketService(SocketService? newService) {
+    if (newService == _socketService) return;
+
+    print('[SOCKET_SYNC] Socket Service updated. Re-linking...');
+    _socketSubscription?.cancel();
+    _socketService = newService;
+
+    if (_socketService != null) {
+      _listenToSocket();
+
+      // If we have an active ride, immediately re-join the room
+      if (state.activeRequest != null) {
+        print('[SOCKET_SYNC] Re-joining ride room on new socket: ${state.activeRequest!.id}');
+        _socketService!.emit('join', {'userId': state.activeRequest!.id, 'role': 'ride'});
+        
+        // Redundant sync to catch any state drift during the gap
+        syncStatus();
+      }
+    }
   }
 
   void _listenToSocket() {
@@ -41,13 +64,41 @@ class DriverController extends StateNotifier<DriverState> {
         case 'ride:request':
           _handleIncomingRequest(data);
           break;
+        case 'ride:cancelled':
+          if (state.activeRequest?.id == data['rideId']) {
+            _stopWatchdog();
+            _resetToAvailable();
+          }
+          break;
+        case 'socket:reconnected':
+          print('[DRIVER_SYNC] Socket reconnected. Triggering redundant healing...');
+          syncStatus();
+          break;
         case 'ride:expired':
           if (state.activeRequest?.id == data['rideId']) {
             _handleTimeout();
           }
           break;
+        case 'ride:finished':
+          if (state.activeRequest?.id == data['rideId']) {
+            _stopWatchdog();
+            finishAndGoAvailable();
+          }
+          break;
       }
     });
+  }
+
+  void _resetToAvailable() {
+    _waitTimer?.cancel();
+    _countdownTimer?.cancel();
+    state = state.copyWith(
+      operationStatus: OperationStatus.available,
+      activeRequest: null,
+      countdown: null,
+      tripStep: TripStep.none,
+      waitTimeSeconds: 0,
+    );
   }
 
   void _startHeartbeat() {
@@ -156,6 +207,48 @@ class DriverController extends StateNotifier<DriverState> {
           ),
           isLoading: false,
         );
+
+        // Phase 2: Active Ride Recovery
+        try {
+          final rideResponse = await _apiClient.dio.get('/rides/active/driver');
+          final rideData = rideResponse.data;
+          if (rideData != null && rideData['rideId'] != null) {
+            final rideId = rideData['rideId'];
+            final status = rideData['status'];
+            
+            TripStep step = TripStep.accepted;
+            if (status == 'arrived') step = TripStep.arrived;
+            else if (status == 'in_progress' || status == 'started') step = TripStep.started;
+
+            final recoveredRequest = TripRequest(
+              id: rideData['rideId'],
+              passengerId: rideData['passengerId'],
+              isCash: rideData['paymentMode'] == 'cash',
+              passengerName: 'User', // Generic placeholder for recovery
+              pickupAddress: rideData['pickupAddress'] ?? '',
+              pickupLocation: LatLng(
+                  double.parse(rideData['pickupLat'].toString()), 
+                  double.parse(rideData['pickupLng'].toString())
+              ),
+              destinationAddress: rideData['destinationAddress'] ?? '',
+              destinationLocation: LatLng(
+                  double.parse(rideData['destinationLat'].toString()), 
+                  double.parse(rideData['destinationLng'].toString())
+              ),
+              fare: double.parse(rideData['fare'].toString()),
+              distance: 0,
+            );
+
+            state = state.copyWith(
+              operationStatus: OperationStatus.busy,
+              tripStep: step,
+              activeRequest: recoveredRequest,
+            );
+            _startWatchdog();
+          }
+        } catch (e) {
+          print('Active ride recovery failed for driver: $e');
+        }
       } else {
         state = state.copyWith(isLoading: false);
       }
@@ -357,6 +450,7 @@ class DriverController extends StateNotifier<DriverState> {
       tripStep: TripStep.accepted,
       countdown: null,
     );
+    _startWatchdog();
   }
 
   void rejectRequest() {
@@ -464,6 +558,56 @@ class DriverController extends StateNotifier<DriverState> {
       operationStatus: OperationStatus.available,
       waitTimeSeconds: 0,
     );
+    _stopWatchdog();
+  }
+
+  Future<void> syncStatus() async {
+    if (state.activeRequest == null) return;
+    try {
+      final response = await _apiClient.dio.get('/rides/active/driver');
+      final data = response.data;
+      if (data != null && data['rideId'] == state.activeRequest!.id) {
+        final status = data['status'];
+        print('[DRIVER_SYNC] Redundant healing caught status: $status');
+
+        TripStep targetStep = state.tripStep;
+        if (status == 'arrived') targetStep = TripStep.arrived;
+        else if (status == 'in_progress' || status == 'started') targetStep = TripStep.started;
+
+        if (targetStep != state.tripStep) {
+          state = state.copyWith(tripStep: targetStep);
+        }
+      } else if (data == null || data['rideId'] == null) {
+         // Server says no active ride, but we think we have one? 
+         // Force reset to available.
+         print('[DRIVER_SYNC] Server says no active ride. Force resetting.');
+         _stopWatchdog();
+         finishAndGoAvailable();
+      }
+    } catch (e) {
+      print('Status sync failed: $e');
+    }
+  }
+
+  void _startWatchdog() {
+    _watchdogTimer?.cancel();
+    print('[WATCHDOG] Starting driver sync watchdog...');
+    _watchdogTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      if (state.activeRequest != null) {
+        print('[WATCHDOG] Triggering redundant sync...');
+        syncStatus();
+      } else {
+        _stopWatchdog();
+      }
+    });
+  }
+
+  void _stopWatchdog() {
+    if (_watchdogTimer != null) {
+      print('[WATCHDOG] Stopping driver sync watchdog.');
+      _watchdogTimer?.cancel();
+      _watchdogTimer = null;
+    }
   }
 
   @override
@@ -471,13 +615,13 @@ class DriverController extends StateNotifier<DriverState> {
     _waitTimer?.cancel();
     _countdownTimer?.cancel();
     _heartbeatTimer?.cancel();
+    _watchdogTimer?.cancel();
     _socketSubscription?.cancel();
     super.dispose();
   }
 }
 
 final driverControllerProvider = StateNotifierProvider<DriverController, DriverState>((ref) {
-  final socketService = ref.watch(socketServiceProvider);
   final apiClient = ref.watch(apiClientProvider);
   final authState = ref.watch(authControllerProvider);
   
@@ -494,14 +638,22 @@ final driverControllerProvider = StateNotifierProvider<DriverController, DriverS
       userId = extractedId.toString();
     } catch (e) {
       print('[CRITICAL:AUTH] JWT Decode failed or userId missing: $e');
-      // Force clean session since we have a malformed/invalid token
       Future.microtask(() {
         ref.read(authControllerProvider.notifier).forceUnauthorizedCleanup();
       });
-      // Return a temporary controller that will be immediately replaced by provider refresh
-      return DriverController(socketService, apiClient, 'session_invalid');
+      return DriverController(null, apiClient, 'session_invalid');
     }
   }
 
-  return DriverController(socketService, apiClient, userId);
+  // Initial socket
+  final socketService = ref.read(socketServiceProvider);
+
+  final controller = DriverController(socketService, apiClient, userId);
+
+  // Listen for socket updates without re-creating the controller
+  ref.listen(socketServiceProvider, (previous, next) {
+    controller.updateSocketService(next);
+  });
+
+  return controller;
 });

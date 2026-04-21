@@ -99,29 +99,67 @@ class _HomeMapScreenState extends ConsumerState<HomeMapScreen> {
   }
 
   Set<Marker> _buildMarkers(BookingState state) {
-    if (state.step != BookingStep.previewEstimate) return {};
-    
-    // When generating preview, we replace the fixed pin with explicit markers
     final markers = <Marker>{};
-    if (state.pickupLocation != null) {
-      markers.add(Marker(
-        markerId: const MarkerId('pickup'),
-        position: state.pickupLocation!,
-        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueYellow),
-      ));
+
+    // Show pickup/destination in preview and active trip steps
+    final showMarkersSteps = {
+      BookingStep.previewEstimate,
+      BookingStep.searching,
+      BookingStep.confirmed,
+      BookingStep.arrived,
+      BookingStep.started
+    };
+
+    if (showMarkersSteps.contains(state.step)) {
+      if (state.pickupLocation != null) {
+        markers.add(Marker(
+          markerId: const MarkerId('pickup'),
+          position: state.pickupLocation!,
+          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueYellow),
+        ));
+      }
+      if (state.destinationLocation != null) {
+        markers.add(Marker(
+          markerId: const MarkerId('destination'),
+          position: state.destinationLocation!,
+          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+        ));
+      }
     }
-    if (state.destinationLocation != null) {
-      markers.add(Marker(
-        markerId: const MarkerId('destination'),
-        position: state.destinationLocation!,
-        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
-      ));
+
+    // Driver live tracking marker
+    if (state.assignedDriverLocation != null && 
+        (state.step == BookingStep.confirmed || state.step == BookingStep.arrived || state.step == BookingStep.started)) {
+      
+      bool isStale = false;
+      if (state.lastLocationUpdate != null) {
+        final diff = DateTime.now().difference(state.lastLocationUpdate!);
+        if (diff.inSeconds > 30) isStale = true;
+      }
+
+      if (!isStale) {
+        markers.add(Marker(
+          markerId: const MarkerId('driver'),
+          position: state.assignedDriverLocation!,
+          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
+          infoWindow: const InfoWindow(title: 'Your Keke'),
+        ));
+      }
     }
+
     return markers;
   }
 
   Set<Polyline> _buildPolylines(BookingState state) {
-    if (state.step != BookingStep.previewEstimate || state.activeRoutePolyline.isEmpty) {
+    final showPolylineSteps = {
+      BookingStep.previewEstimate,
+      BookingStep.searching,
+      BookingStep.confirmed,
+      BookingStep.arrived,
+      BookingStep.started
+    };
+
+    if (!showPolylineSteps.contains(state.step) || state.activeRoutePolyline.isEmpty) {
       return {};
     }
     

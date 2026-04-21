@@ -9,6 +9,7 @@ import financeRoutes from './routes/finance_routes';
 import adminRoutes from './routes/admin_routes';
 import driverRoutes from "./routes/driver_routes";
 import authRoutes, { driverAuthRouter } from "./routes/auth_routes";
+import rideRoutes from "./routes/ride_routes";
 
 dotenv.config();
 
@@ -36,6 +37,7 @@ app.use('/api/v1/driver/auth', driverAuthRouter);
 app.use('/api/v1/finance', financeRoutes);
 app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/drivers', driverRoutes);
+app.use('/api/v1/rides', rideRoutes);
 
 const httpServer = createServer(app);
 const io = new Server(httpServer, {

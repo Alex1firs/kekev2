@@ -5,55 +5,118 @@ import '../domain/booking_state.dart';
 import '../data/map_repository.dart';
 import '../../../core/network/socket_service.dart';
 import '../../../core/network/socket_provider.dart';
+import '../../../core/network/api_client.dart';
 import '../../auth/application/auth_controller.dart';
 import '../../auth/domain/auth_state.dart';
 import 'package:jwt_decoder/jwt_decoder.dart';
 
 class BookingController extends StateNotifier<BookingState> {
   final MapRepository _mapRepo;
-  final SocketService? _socketService;
+  SocketService? _socketService;
+  final ApiClient? _apiClient;
   final String passengerId;
   final String firstName;
   final String lastName;
 
   Timer? _debounceTimer;
+  Timer? _watchdogTimer;
   StreamSubscription? _socketSubscription;
 
-  BookingController(this._mapRepo, this._socketService, this.passengerId, this.firstName, this.lastName) : super(const BookingState()) {
+  BookingController(this._mapRepo, SocketService? initialSocket, this._apiClient, this.passengerId, this.firstName, this.lastName) : super(const BookingState()) {
+    _socketService = initialSocket;
     _initializeMap();
-    _listenToSocket();
+    if (_socketService != null) _listenToSocket();
+  }
+
+  void updateSocketService(SocketService? newService) {
+    if (newService == _socketService) return;
+    
+    print('[SOCKET_SYNC] Socket Service updated. Re-linking...');
+    _socketSubscription?.cancel();
+    _socketService = newService;
+    
+    if (_socketService != null) {
+      _listenToSocket();
+      
+      // If we have an active ride, immediately re-join the room
+      if (state.rideId != null) {
+        print('[SOCKET_SYNC] Re-joining ride room on new socket: ${state.rideId}');
+        _socketService!.emit('join', {'userId': state.rideId, 'role': 'ride'});
+        
+        // Redundant sync to catch any state drift during the gap
+        syncStatus();
+      }
+    }
   }
 
   void _listenToSocket() {
     if (_socketService == null) return;
     _socketSubscription = _socketService!.events.listen((data) {
       final event = data['event'];
+      print('[PASSENGER_SYNC] Event: $event | CurrentStep: ${state.step}');
       
       switch (event) {
         case 'ride:searching':
           state = state.copyWith(step: BookingStep.searching);
+          _startWatchdog();
           break;
-        case 'ride:assigned':
+        case 'socket:reconnected':
+          print('[PASSENGER_SYNC] Socket reconnected. Triggering redundant healing...');
+          syncStatus();
+          break;
           state = state.copyWith(
             step: BookingStep.confirmed,
             assignedDriver: data['driverDetails'],
           );
+          _stopWatchdog();
           break;
         case 'ride:status_update':
+           print('[PASSENGER_SYNC] Status update: ${data['status']}');
            if (data['status'] == 'arrived') {
              state = state.copyWith(step: BookingStep.arrived);
            } else if (data['status'] == 'started') {
              state = state.copyWith(step: BookingStep.started);
            }
            break;
+        case 'ride:cancelled':
+        case 'ride:finished':
+          print('[PASSENGER_SYNC] Ride finished/cancelled. Resetting state.');
+          _stopWatchdog();
+          _resetBookingState();
+          break;
         case 'ride:failed':
           state = state.copyWith(
             step: BookingStep.previewEstimate,
             errorMessage: data['message'] ?? 'No drivers found.',
           );
           break;
+        case 'driver:location_update':
+          state = state.copyWith(
+            assignedDriverLocation: LatLng(
+              double.parse(data['lat'].toString()),
+              double.parse(data['lng'].toString()),
+            ),
+            lastLocationUpdate: DateTime.now(),
+          );
+          break;
       }
     });
+  }
+
+  void _resetBookingState() {
+    state = state.copyWith(
+      step: BookingStep.selectingPickup,
+      destinationAddress: null,
+      destinationLocation: null,
+      estimatedDistance: null,
+      estimatedFareAmount: null,
+      estimatedTime: null,
+      activeRoutePolyline: [],
+      assignedDriver: null,
+      rideId: null,
+      assignedDriverLocation: null,
+    );
+    _stopWatchdog();
   }
 
   Future<void> _initializeMap() async {
@@ -67,6 +130,48 @@ class BookingController extends StateNotifier<BookingState> {
       pickupLocation: center,
       pickupAddress: 'Locating...',
     );
+
+    // Phase 2: Active Ride Recovery
+    if (_apiClient != null && passengerId != 'unknown') {
+      try {
+        final response = await _apiClient!.dio.get('/rides/active/passenger');
+        final data = response.data;
+        if (data != null && data['rideId'] != null) {
+          final rideId = data['rideId'];
+          final status = data['status'];
+          
+          BookingStep restoredStep = BookingStep.searching;
+          if (status == 'accepted') restoredStep = BookingStep.confirmed;
+          else if (status == 'arrived') restoredStep = BookingStep.arrived;
+          else if (status == 'in_progress' || status == 'started') restoredStep = BookingStep.started;
+
+          state = state.copyWith(
+            step: restoredStep,
+            rideId: rideId,
+            pickupLocation: LatLng(
+                double.parse(data['pickupLat'].toString()), 
+                double.parse(data['pickupLng'].toString())
+            ),
+            pickupAddress: data['pickupAddress'],
+            destinationLocation: LatLng(
+                double.parse(data['destinationLat'].toString()), 
+                double.parse(data['destinationLng'].toString())
+            ),
+            destinationAddress: data['destinationAddress'],
+            estimatedFareAmount: int.tryParse(data['fare'].toString()),
+          );
+          
+          // Re-calculate route to show polyline on map
+          if (state.pickupLocation != null && state.destinationLocation != null) {
+            _calculateFare();
+          }
+          return; // Skip default search if recovered
+        }
+      } catch (e) {
+        print('Active ride recovery failed: $e');
+      }
+    }
+
     _triggerReverseGeocode(center, isPickup: true);
   }
 
@@ -174,35 +279,90 @@ class BookingController extends StateNotifier<BookingState> {
       'fare': state.estimatedFareAmount,
     });
     
-    // Join a ride-specific room to receive backend acknowledgements
-    _socketService!.emit('join', {'userId': rideId, 'role': 'passenger'});
+    // Join a ride-specific room
+    _socketService?.emit('join', {'userId': rideId, 'role': 'ride'});
     
-    state = state.copyWith(step: BookingStep.searching);
+    state = state.copyWith(
+      step: BookingStep.searching,
+      rideId: rideId,
+    );
+    _startWatchdog();
+  }
+
+  Future<void> syncStatus() async {
+    if (_apiClient == null || passengerId == 'unknown' || state.rideId == null) return;
+    try {
+      final response = await _apiClient!.dio.get('/rides/active/passenger');
+      final data = response.data;
+      if (data != null && data['rideId'] == state.rideId) {
+        final status = data['status'];
+        print('[PASSENGER_SYNC] Redundant healing caught status: $status');
+        
+        BookingStep targetStep = state.step;
+        if (status == 'accepted') targetStep = BookingStep.confirmed;
+        else if (status == 'arrived') targetStep = BookingStep.arrived;
+        else if (status == 'in_progress' || status == 'started') targetStep = BookingStep.started;
+        
+        if (targetStep != state.step || state.assignedDriver == null) {
+          print('[PASSENGER_SYNC] Healing state to $targetStep with driver: ${data['driverDetails']}');
+          state = state.copyWith(
+            step: targetStep,
+            assignedDriver: data['driverDetails'],
+          );
+        }
+
+        if (targetStep != BookingStep.searching) {
+          _stopWatchdog();
+        }
+      }
+    } catch (e) {
+      print('Status sync failed: $e');
+    }
+  }
+
+  void _startWatchdog() {
+    _watchdogTimer?.cancel();
+    print('[WATCHDOG] Starting sync watchdog...');
+    _watchdogTimer = Timer.periodic(const Duration(seconds: 8), (_) {
+      if (state.step == BookingStep.searching) {
+        print('[WATCHDOG] Triggering redundant sync...');
+        syncStatus();
+      } else {
+        _stopWatchdog();
+      }
+    });
+  }
+
+  void _stopWatchdog() {
+    if (_watchdogTimer != null) {
+      print('[WATCHDOG] Stopping sync watchdog.');
+      _watchdogTimer?.cancel();
+      _watchdogTimer = null;
+    }
   }
   
   void cancelBooking() {
-    state = state.copyWith(
-      step: BookingStep.selectingPickup,
-      destinationAddress: null,
-      destinationLocation: null,
-      estimatedDistance: null,
-      estimatedFareAmount: null,
-      estimatedTime: null,
-      activeRoutePolyline: [],
-      assignedDriver: null,
-    );
+    if (_socketService != null && state.rideId != null) {
+      _socketService!.emit('ride:cancel', {
+        'rideId': state.rideId,
+        'passengerId': passengerId,
+      });
+      // NOTICE: We no longer optimistically reset state. 
+      // We wait for the backend 'ride:cancelled' event for a strict sync.
+    }
   }
 
   @override
   void dispose() {
     _debounceTimer?.cancel();
+    _watchdogTimer?.cancel();
     _socketSubscription?.cancel();
     super.dispose();
   }
 }
 
 final bookingControllerProvider = StateNotifierProvider<BookingController, BookingState>((ref) {
-  final socketService = ref.watch(socketServiceProvider);
+  final apiClient = ref.watch(apiClientProvider);
   final authState = ref.watch(authControllerProvider);
   final mapRepo = ref.watch(mapRepositoryProvider);
   
@@ -219,5 +379,15 @@ final bookingControllerProvider = StateNotifierProvider<BookingController, Booki
       } catch (_) {}
   }
   
-  return BookingController(mapRepo, socketService, passId, fname, lname);
+  // Initial socket
+  final socketService = ref.read(socketServiceProvider);
+  
+  final controller = BookingController(mapRepo, socketService, apiClient, passId, fname, lname);
+
+  // Listen for socket updates without re-creating the controller
+  ref.listen(socketServiceProvider, (previous, next) {
+    controller.updateSocketService(next);
+  });
+
+  return controller;
 });

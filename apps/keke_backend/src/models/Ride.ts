@@ -3,6 +3,8 @@ import { Entity, PrimaryColumn, Column, CreateDateColumn, UpdateDateColumn } fro
 export enum RideStatus {
     SEARCHING = "searching",
     ACCEPTED = "accepted",
+    ARRIVED = "arrived",
+    IN_PROGRESS = "in_progress",
     STARTED = "started",
     COMPLETED = "completed",
     CANCELED = "canceled",

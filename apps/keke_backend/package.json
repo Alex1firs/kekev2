@@ -6,7 +6,7 @@
   "scripts": {
     "start": "ts-node src/index.ts",
     "dev": "nodemon src/index.ts",
-    "build": "tsc && (mkdir -p dist/config && cp src/config/*.json dist/config/ 2>/dev/null || true)",
+    "build": "npx tsc && (mkdir -p dist/config && cp src/config/*.json dist/config/ 2>/dev/null || true)",
     "serve": "node dist/index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },

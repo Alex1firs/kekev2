@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { DataSource } from "typeorm";
-import { Wallet, LedgerEntry, Transaction, PayoutRecord, DriverProfile, Ride, AuditLog, User } from "../models";
+import { Wallet, LedgerEntry, Transaction, PayoutRecord, DriverProfile, Ride, AuditLog, User, DeviceToken } from "../models";
 import dotenv from "dotenv";
 
 dotenv.config();

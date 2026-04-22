@@ -1,13 +1,13 @@
 import { Router } from 'express';
 import { NotificationController } from '../controllers/notification_controller';
-import { authenticate } from '../middleware/auth_middleware';
+import { authMiddleware } from '../middleware/auth_middleware';
 
 const router = Router();
 
 // Register or update fcm token
-router.post('/tokens', authenticate, NotificationController.registerToken);
+router.post('/tokens', authMiddleware, NotificationController.registerToken);
 
 // Deactivate token on logout
-router.delete('/tokens/:token', authenticate, NotificationController.deactivateToken);
+router.delete('/tokens/:token', authMiddleware, NotificationController.deactivateToken);
 
 export default router;

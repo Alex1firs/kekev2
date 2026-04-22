@@ -12,7 +12,7 @@ export const AppDataSource = new DataSource({
     url: DATABASE_URL,
     synchronize: true, // Only for development
     logging: false,
-    entities: [Wallet, LedgerEntry, Transaction, PayoutRecord, DriverProfile, Ride, AuditLog, User],
+    entities: [Wallet, LedgerEntry, Transaction, PayoutRecord, DriverProfile, Ride, AuditLog, User, DeviceToken],
     migrations: [],
     subscribers: [],
 });

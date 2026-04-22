@@ -9,6 +9,8 @@ import '../../../core/network/api_client.dart';
 import '../../auth/application/auth_controller.dart';
 import '../../auth/domain/auth_state.dart';
 import 'package:jwt_decoder/jwt_decoder.dart';
+import '../../core/network/notification_service.dart';
+import '../../../core/services/sound_service.dart';
 
 class BookingController extends StateNotifier<BookingState> {
   final MapRepository _mapRepo;
@@ -21,11 +23,25 @@ class BookingController extends StateNotifier<BookingState> {
   Timer? _debounceTimer;
   Timer? _watchdogTimer;
   StreamSubscription? _socketSubscription;
+  StreamSubscription? _notificationSubscription;
+  final NotificationService _notificationService;
+  final SoundService _soundService;
 
-  BookingController(this._mapRepo, SocketService? initialSocket, this._apiClient, this.passengerId, this.firstName, this.lastName) : super(const BookingState()) {
+  BookingController(this._mapRepo, SocketService? initialSocket, this._apiClient, this._notificationService, this._soundService, this.passengerId, this.firstName, this.lastName) : super(const BookingState()) {
     _socketService = initialSocket;
     _initializeMap();
     if (_socketService != null) _listenToSocket();
+    _listenToNotifications();
+  }
+
+  void _listenToNotifications() {
+    _notificationSubscription = _notificationService.intentStream.listen((data) {
+      print('[PASSENGER_SYNC] Notification intent received: $data. Triggering sync...');
+      syncStatus();
+    });
+    
+    // Catch cold starts from a notification
+    _notificationService.handleInitialMessage();
   }
 
   void updateSocketService(SocketService? newService) {
@@ -64,16 +80,19 @@ class BookingController extends StateNotifier<BookingState> {
           print('[PASSENGER_SYNC] Socket reconnected. Triggering redundant healing...');
           syncStatus();
           break;
+        case 'ride:assigned':
           state = state.copyWith(
             step: BookingStep.confirmed,
             assignedDriver: data['driverDetails'],
           );
           _stopWatchdog();
+          _soundService.playAlert(); // 🔔 Driver found
           break;
         case 'ride:status_update':
            print('[PASSENGER_SYNC] Status update: ${data['status']}');
            if (data['status'] == 'arrived') {
              state = state.copyWith(step: BookingStep.arrived);
+             _soundService.playAlert(); // 🔔 Driver arrived
            } else if (data['status'] == 'started') {
              state = state.copyWith(step: BookingStep.started);
            }
@@ -112,8 +131,8 @@ class BookingController extends StateNotifier<BookingState> {
       estimatedFareAmount: null,
       estimatedTime: null,
       activeRoutePolyline: [],
-      assignedDriver: null,
-      rideId: null,
+      clearAssignedDriver: true,
+      clearRideId: true,
       assignedDriverLocation: null,
     );
     _stopWatchdog();
@@ -359,6 +378,7 @@ class BookingController extends StateNotifier<BookingState> {
     _debounceTimer?.cancel();
     _watchdogTimer?.cancel();
     _socketSubscription?.cancel();
+    _notificationSubscription?.cancel();
     super.dispose();
   }
 }
@@ -383,8 +403,10 @@ final bookingControllerProvider = StateNotifierProvider<BookingController, Booki
   
   // Initial socket
   final socketService = ref.read(socketServiceProvider);
+  final notificationService = ref.read(notificationServiceProvider('passenger'));
+  final soundService = ref.read(soundServiceProvider);
   
-  final controller = BookingController(mapRepo, socketService, apiClient, passId, fname, lname);
+  final controller = BookingController(mapRepo, socketService, apiClient, notificationService, soundService, passId, fname, lname);
 
   // Listen for socket updates without re-creating the controller
   ref.listen(socketServiceProvider, (previous, next) {

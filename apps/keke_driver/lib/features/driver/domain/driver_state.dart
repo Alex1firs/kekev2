@@ -35,14 +35,16 @@ class DriverState {
     String? errorMessage,
     LatLng? mockLocation,
     bool clearMockLocation = false,
+    bool clearActiveRequest = false,
+    bool clearCountdown = false,
     int? waitTimeSeconds,
   }) {
     return DriverState(
       profile: profile ?? this.profile,
       operationStatus: operationStatus ?? this.operationStatus,
       tripStep: tripStep ?? this.tripStep,
-      activeRequest: activeRequest ?? this.activeRequest,
-      countdown: countdown ?? this.countdown,
+      activeRequest: clearActiveRequest ? null : (activeRequest ?? this.activeRequest),
+      countdown: clearCountdown ? null : (countdown ?? this.countdown),
       isLoading: isLoading ?? this.isLoading,
       errorMessage: errorMessage ?? this.errorMessage,
       mockLocation: clearMockLocation ? null : (mockLocation ?? this.mockLocation),

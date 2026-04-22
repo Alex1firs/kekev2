@@ -1,5 +1,7 @@
 import { Server, Socket } from 'socket.io';
 import { DispatchService } from '../services/dispatch_service';
+import { NotificationService } from '../services/notification_service';
+import { UserRole } from '../models/User';
 
 export class SocketHandler {
   private io: Server;
@@ -125,8 +127,21 @@ export class SocketHandler {
               console.log(`[BACKEND_DISMISS] Signaling ${notifiedDrivers.size} drivers to dismiss ride ${data.rideId}`);
               for (const driverId of notifiedDrivers) {
                 this.io.to(`driver:${driverId}`).emit('ride:cancelled', { rideId: data.rideId });
+                // 🔔 PUSH: Dismiss/Cancel Request for Driver
+                NotificationService.sendToUser(driverId, UserRole.DRIVER, 'Ride Cancelled', 'The request has been cancelled.', {
+                    type: 'RIDE_CANCELLED',
+                    rideId: data.rideId,
+                    intent: 'home'
+                });
               }
             }
+
+            // 🔔 PUSH: Cancel for Passenger (Authoritative)
+            NotificationService.sendToUser(data.passengerId, UserRole.PASSENGER, 'Ride Cancelled', 'Your ride has been cancelled.', {
+              type: 'RIDE_CANCELLED',
+              rideId: data.rideId,
+              intent: 'home'
+            });
 
             // Clean memory Maps
             this.rideExclusions.delete(data.rideId);
@@ -146,12 +161,13 @@ export class SocketHandler {
         const locked = await DispatchService.acquireRideLock(data.rideId, data.driverId);
         
         if (locked) {
+          let currentRide: any = null;
           // Update Ride status in Postgres
           try {
             const rideRepo = require('../config/data_source').AppDataSource.getRepository(require('../models').Ride);
             
             // Critical Check: is ride cancelled in the DB?
-            const currentRide = await rideRepo.findOne({ where: { rideId: data.rideId } });
+            currentRide = await rideRepo.findOne({ where: { rideId: data.rideId } });
             if (!currentRide || currentRide.status === 'canceled') {
                // Too late, passenger just canceled. Clear lock and inform driver.
                await require('../config/redis').redis.del(`ride:${data.rideId}:lock`);
@@ -172,6 +188,13 @@ export class SocketHandler {
           this.broadcastToRide(data.rideId, 'ride:assigned', {
             driverId: data.driverId,
             driverDetails: data.driverDetails
+          });
+
+          // 🔔 PUSH: Assigned for Passenger
+          NotificationService.sendToUser(currentRide.passengerId, UserRole.PASSENGER, 'Driver Assigned!', 'A driver is on the way to you.', {
+            type: 'RIDE_ASSIGNED',
+            rideId: data.rideId,
+            intent: 'active'
           });
           socket.emit('ride:confirmed', { rideId: data.rideId });
           this.io.to('admin').emit('ride:status_update', { rideId: data.rideId, status: 'accepted' });
@@ -201,6 +224,13 @@ export class SocketHandler {
           await rideRepo.update(data.rideId, { status: 'arrived' as any });
           
           this.broadcastToRide(data.rideId, 'ride:status_update', { rideId: data.rideId, status: 'arrived' });
+          
+          // 🔔 PUSH: Arrived for Passenger
+          NotificationService.sendToUser(ride.passengerId, UserRole.PASSENGER, 'Driver Arrived!', 'Your driver has reached the pickup location.', {
+            type: 'RIDE_ARRIVED',
+            rideId: data.rideId,
+            intent: 'active'
+          });
           this.io.to('admin').emit('ride:status_update', { rideId: data.rideId, status: 'arrived' });
         } catch (err) {
           console.error('Failed to update ride to arrived:', err);
@@ -217,6 +247,13 @@ export class SocketHandler {
           await rideRepo.update(data.rideId, { status: 'in_progress' as any });
           
           this.broadcastToRide(data.rideId, 'ride:status_update', { rideId: data.rideId, status: 'started' });
+          
+          // 🔔 PUSH: Started for Passenger
+          NotificationService.sendToUser(ride.passengerId, UserRole.PASSENGER, 'Trip Started', 'You are now on your trip.', {
+            type: 'TRIP_STARTED',
+            rideId: data.rideId,
+            intent: 'active'
+          });
           this.io.to('admin').emit('ride:status_update', { rideId: data.rideId, status: 'in_progress' });
         } catch (err) {
           console.error('Failed to update ride to in_progress:', err);
@@ -253,6 +290,13 @@ export class SocketHandler {
 
           this.io.to('admin').emit('ride:status_update', { rideId: data.rideId, status: 'completed' });
           this.broadcastToRide(data.rideId, 'ride:finished', { rideId: data.rideId });
+
+          // 🔔 PUSH: Completed for Passenger
+          NotificationService.sendToUser(data.passengerId, UserRole.PASSENGER, 'Trip Completed', 'Hope you enjoyed the ride!', {
+            type: 'TRIP_COMPLETED',
+            rideId: data.rideId,
+            intent: 'receipt'
+          });
         } catch (err) {
           console.error('Ride completion lifecycle failed:', err);
         }
@@ -293,6 +337,13 @@ export class SocketHandler {
         targetDrivers.forEach(driverId => {
           notifiedSet.add(driverId);
           this.io.to(`driver:${driverId}`).emit('ride:request', payload);
+
+          // 🔔 PUSH: New Ride Request for Driver
+          NotificationService.sendToUser(driverId, UserRole.DRIVER, '🛺 New Ride Request', 'You have a new request nearby!', {
+            type: 'NEW_REQUEST',
+            rideId: payload.rideId,
+            intent: 'booking'
+          });
         });
         this.activeDispatches.set(rideId, notifiedSet);
         

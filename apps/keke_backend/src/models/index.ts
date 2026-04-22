@@ -6,3 +6,4 @@ export * from "./DriverProfile";
 export * from "./Ride";
 export * from "./AuditLog";
 export * from "./User";
+export * from "./DeviceToken";

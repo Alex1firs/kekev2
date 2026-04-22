@@ -74,6 +74,8 @@ class BookingState {
     String? paymentMethod,
     String? errorMessage,
     String? rideId,
+    bool clearAssignedDriver = false,
+    bool clearRideId = false,
     LatLng? assignedDriverLocation,
     DateTime? lastLocationUpdate,
   }) {
@@ -89,10 +91,10 @@ class BookingState {
       estimatedDistance: estimatedDistance ?? this.estimatedDistance,
       estimatedTime: estimatedTime ?? this.estimatedTime,
       activeRoutePolyline: activeRoutePolyline ?? this.activeRoutePolyline,
-      assignedDriver: assignedDriver ?? this.assignedDriver,
+      assignedDriver: clearAssignedDriver ? null : (assignedDriver ?? this.assignedDriver),
       paymentMethod: paymentMethod ?? this.paymentMethod,
       errorMessage: errorMessage ?? this.errorMessage,
-      rideId: rideId ?? this.rideId,
+      rideId: clearRideId ? null : (rideId ?? this.rideId),
       assignedDriverLocation: assignedDriverLocation ?? this.assignedDriverLocation,
       lastLocationUpdate: lastLocationUpdate ?? this.lastLocationUpdate,
     );

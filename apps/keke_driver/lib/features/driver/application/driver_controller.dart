@@ -12,6 +12,8 @@ import '../../../core/network/api_client.dart';
 import '../../auth/application/auth_controller.dart';
 import '../../auth/domain/auth_state.dart';
 import 'package:jwt_decoder/jwt_decoder.dart';
+import '../../core/network/notification_service.dart';
+import '../../../core/services/sound_service.dart';
 
 class DriverController extends StateNotifier<DriverState> {
   SocketService? _socketService;
@@ -23,8 +25,11 @@ class DriverController extends StateNotifier<DriverState> {
   Timer? _waitTimer;
   Timer? _watchdogTimer;
   StreamSubscription? _socketSubscription;
+  StreamSubscription? _notificationSubscription;
+  final NotificationService _notificationService;
+  final SoundService _soundService;
 
-  DriverController(SocketService? initialSocket, this._apiClient, this._userId)
+  DriverController(SocketService? initialSocket, this._apiClient, this._notificationService, this._soundService, this._userId)
       : super(const DriverState(
           profile: DriverProfile(status: DriverStatus.unregistered),
         )) {
@@ -32,6 +37,17 @@ class DriverController extends StateNotifier<DriverState> {
     _initDriver();
     if (_socketService != null) _listenToSocket();
     _startHeartbeat();
+    _listenToNotifications();
+  }
+
+  void _listenToNotifications() {
+    _notificationSubscription = _notificationService.intentStream.listen((data) {
+      print('[DRIVER_SYNC] Notification intent received: $data. Triggering sync...');
+      syncStatus();
+    });
+    
+    // Catch cold starts from a notification
+    _notificationService.handleInitialMessage();
   }
 
   void updateSocketService(SocketService? newService) {
@@ -95,18 +111,6 @@ class DriverController extends StateNotifier<DriverState> {
           break;
       }
     });
-  }
-
-  void _resetToAvailable() {
-    _waitTimer?.cancel();
-    _countdownTimer?.cancel();
-    state = state.copyWith(
-      operationStatus: OperationStatus.available,
-      activeRequest: null,
-      countdown: null,
-      tripStep: TripStep.none,
-      waitTimeSeconds: 0,
-    );
   }
 
   void _startHeartbeat() {
@@ -183,6 +187,8 @@ class DriverController extends StateNotifier<DriverState> {
     );
 
     _startCountdown();
+    // 🔔 PLAY SOUND: Foreground alert for driver
+    _soundService.playRequestSound();
   }
 
 
@@ -478,10 +484,11 @@ class DriverController extends StateNotifier<DriverState> {
     _countdownTimer?.cancel();
     state = state.copyWith(
       operationStatus: OperationStatus.available,
-      activeRequest: null,
-      countdown: null,
       tripStep: TripStep.none,
+      clearActiveRequest: true,
+      clearCountdown: true,
     );
+    _soundService.stop();
   }
 
   void _startCountdown() {
@@ -565,21 +572,30 @@ class DriverController extends StateNotifier<DriverState> {
   void finishAndGoAvailable() {
     state = state.copyWith(
       tripStep: TripStep.none,
-      activeRequest: null,
       operationStatus: OperationStatus.available,
       waitTimeSeconds: 0,
+      clearActiveRequest: true,
+      clearCountdown: true,
     );
     _stopWatchdog();
   }
 
   Future<void> syncStatus() async {
-    if (state.activeRequest == null) return;
     try {
       final response = await _apiClient.dio.get('/rides/active/driver');
       final data = response.data;
-      if (data != null && data['rideId'] == state.activeRequest!.id) {
+      
+      if (data != null && data['rideId'] != null) {
         final status = data['status'];
         print('[DRIVER_SYNC] Redundant healing caught status: $status');
+        
+        // If we don't have the request in memory, perform full recovery
+        if (state.activeRequest == null) {
+           print('[DRIVER_SYNC] Recovering active ride into memory...');
+           // Re-trigger the init logic which handles recovery
+           _initDriver();
+           return;
+        }
 
         TripStep targetStep = state.tripStep;
         if (status == 'arrived') targetStep = TripStep.arrived;
@@ -628,6 +644,7 @@ class DriverController extends StateNotifier<DriverState> {
     _heartbeatTimer?.cancel();
     _watchdogTimer?.cancel();
     _socketSubscription?.cancel();
+    _notificationSubscription?.cancel();
     super.dispose();
   }
 }
@@ -658,8 +675,10 @@ final driverControllerProvider = StateNotifierProvider<DriverController, DriverS
 
   // Initial socket
   final socketService = ref.read(socketServiceProvider);
+  final notificationService = ref.read(notificationServiceProvider('driver'));
+  final soundService = ref.read(soundServiceProvider);
 
-  final controller = DriverController(socketService, apiClient, userId);
+  final controller = DriverController(socketService, apiClient, notificationService, soundService, userId);
 
   // Listen for socket updates without re-creating the controller
   ref.listen(socketServiceProvider, (previous, next) {

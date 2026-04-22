@@ -10,6 +10,8 @@ import adminRoutes from './routes/admin_routes';
 import driverRoutes from "./routes/driver_routes";
 import authRoutes, { driverAuthRouter } from "./routes/auth_routes";
 import rideRoutes from "./routes/ride_routes";
+import notificationRoutes from "./routes/notification_routes";
+import { NotificationService } from './services/notification_service';
 
 dotenv.config();
 
@@ -38,6 +40,7 @@ app.use('/api/v1/finance', financeRoutes);
 app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/drivers', driverRoutes);
 app.use('/api/v1/rides', rideRoutes);
+app.use('/api/v1/notifications', notificationRoutes);
 
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
@@ -63,6 +66,7 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 AppDataSource.initialize()
   .then(() => {
     console.log('PostgreSQL (TypeORM) Initialized');
+    NotificationService.initialize();
     httpServer.listen(PORT, () => {
       console.log(`Keke Backend running on port ${PORT}`);
     });

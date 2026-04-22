@@ -13,6 +13,9 @@ dependencies:
   go_router: ^14.0.0
   dio: ^5.4.3+1
   flutter_secure_storage: ^9.2.2
+  firebase_core: ^3.0.0
+  firebase_messaging: ^15.0.0
+  audioplayers: ^6.1.0
   google_maps_flutter: ^2.5.3
   geolocator: ^11.1.0
   geocoding: ^3.0.0
@@ -28,3 +31,5 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/sounds/keke_ring.wav

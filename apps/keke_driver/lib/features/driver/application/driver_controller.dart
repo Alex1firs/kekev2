@@ -137,6 +137,11 @@ class DriverController extends StateNotifier<DriverState> {
       }
       if (!mounted) return;
       
+      if (state.profile.status != DriverStatus.approved) {
+        print('[DEBUG:HEARTBEAT] Skipped: Driver status is ${state.profile.status} (Needs: approved)');
+        return;
+      }
+
       final isMock = state.mockLocation != null;
       print('===================================================');
       print('[DEBUG:HEARTBEAT] Source: ${isMock ? "MOCK" : "REAL GPS"}');
@@ -283,9 +288,7 @@ class DriverController extends StateNotifier<DriverState> {
     }
   }
 
-  void setDriverStatus(DriverStatus status) {
-    state = state.copyWith(profile: state.profile.copyWith(status: status));
-  }
+  // Removed setDriverStatus (Fake/Local Spoofing blocked)
 
   // --- Onboarding & Status ---
   

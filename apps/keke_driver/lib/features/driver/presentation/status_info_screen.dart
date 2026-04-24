@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import '../../auth/application/auth_controller.dart';
 import '../application/driver_controller.dart';
 import '../domain/driver_profile.dart';
@@ -87,25 +88,13 @@ class StatusInfoScreen extends ConsumerWidget {
   Widget _buildAction(BuildContext context, WidgetRef ref, DriverStatus status) {
     if (status == DriverStatus.rejected) {
       return ElevatedButton(
-        style: ElevatedButton.styleFrom(backgroundColor: Colors.amber, foregroundColor: Colors.black),
-        onPressed: () {
-          // Re-upload action placeholder
-          ref.read(driverControllerProvider.notifier).setDriverStatus(DriverStatus.pendingApproval);
-        },
-        child: const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 24.0, vertical: 12.0),
-          child: Text('Resubmit Documents', style: TextStyle(fontWeight: FontWeight.bold)),
+        onPressed: () => context.push('/onboarding'),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: Colors.amber,
+          foregroundColor: Colors.black,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         ),
-      );
-    }
-
-    // For debugging/demo - simulate approval
-    if (status == DriverStatus.pendingApproval) {
-      return TextButton(
-        onPressed: () {
-           ref.read(driverControllerProvider.notifier).setDriverStatus(DriverStatus.approved);
-        },
-        child: const Text('(Demo Only: Approve Account)', style: TextStyle(color: Colors.blueAccent)),
+        child: const Text('Resubmit Documents'),
       );
     }
     

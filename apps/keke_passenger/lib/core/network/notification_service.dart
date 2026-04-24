@@ -42,6 +42,12 @@ class NotificationService {
         _intentStreamController.add(message.data);
       });
 
+      // 3. Handle Token Refresh
+      FirebaseMessaging.instance.onTokenRefresh.listen((newToken) {
+        print('[PUSH] Token refreshed: $newToken. Re-registering...');
+        registerDeviceToken();
+      });
+
     } catch (e) {
       print('[PUSH_ERROR] Initialization failed: $e');
     }

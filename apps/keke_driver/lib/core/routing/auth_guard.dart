@@ -47,10 +47,14 @@ class AuthGuard extends ChangeNotifier {
       }
 
       if (status == DriverStatus.pendingApproval || 
-          status == DriverStatus.suspended || 
-          status == DriverStatus.rejected) {
+          status == DriverStatus.suspended) {
         if (!isStatusPage) return '/status';
         return null;
+      }
+
+      if (status == DriverStatus.rejected) {
+        if (isOnboarding || isStatusPage) return null;
+        return '/status';
       }
 
       if (status == DriverStatus.approved) {

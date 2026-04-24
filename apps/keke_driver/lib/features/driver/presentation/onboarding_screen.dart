@@ -20,6 +20,17 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   final Map<String, String> _uploadedDocs = {};
 
   @override
+  void initState() {
+    super.initState();
+    // Pre-fill controllers with existing data if available (Sync with network truth)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final profile = ref.read(driverControllerProvider).profile;
+      _plateController.text = profile.vehiclePlate ?? '';
+      _modelController.text = profile.vehicleModel ?? '';
+    });
+  }
+
+  @override
   void dispose() {
     _plateController.dispose();
     _modelController.dispose();

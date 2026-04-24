@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import 'package:jwt_decoder/jwt_decoder.dart';
 import '../application/wallet_controller.dart';
 import '../../auth/application/auth_controller.dart';
 import '../domain/wallet_state.dart';
@@ -123,7 +124,19 @@ class WalletScreen extends ConsumerWidget {
             onPressed: () async {
               final amount = double.tryParse(controller.text);
               final authState = ref.read(authControllerProvider);
-              final email = 'guest@keke.app'; // Default since auth profile isn't fully pulled here yet
+              String email = 'user@keke.app';
+              
+              if (authState.token != null) {
+                try {
+                  final decoded = JwtDecoder.decode(authState.token!);
+                  final phone = decoded['phone']?.toString();
+                  if (phone != null) {
+                    email = '$phone@keke.app';
+                  }
+                } catch (e) {
+                  print('[WALLET_ERROR] Email derivation failed: $e');
+                }
+              }
 
               if (amount != null && amount > 0) {
                 Navigator.pop(context);

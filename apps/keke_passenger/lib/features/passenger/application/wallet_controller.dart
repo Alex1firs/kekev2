@@ -1,5 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:dio/dio.dart';
+import 'package:jwt_decoder/jwt_decoder.dart';
 import '../../auth/application/auth_controller.dart';
 import '../../auth/domain/auth_state.dart';
 import '../domain/wallet_state.dart';
@@ -52,9 +52,17 @@ final walletControllerProvider = StateNotifierProvider<WalletController, WalletS
   final authState = ref.watch(authControllerProvider);
   final apiClient = ref.watch(apiClientProvider);
   
-  if (authState.status != AuthStatus.authenticated) {
+  if (authState.status != AuthStatus.authenticated || authState.token == null) {
     return WalletController(apiClient, 'guest'); 
   }
   
-  return WalletController(apiClient, 'demo-passenger-id'); // Use a placeholder ID for now
+  try {
+    final decoded = JwtDecoder.decode(authState.token!);
+    final userId = decoded['userId']?.toString();
+    if (userId == null) throw 'Missing userId';
+    return WalletController(apiClient, userId);
+  } catch (e) {
+    print('[WALLET_ERROR] Identity extraction failed: $e');
+    return WalletController(apiClient, 'error-id');
+  }
 });

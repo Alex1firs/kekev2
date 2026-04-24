@@ -15,11 +15,11 @@ export class NotificationController {
         try {
             const tokenRepo = AppDataSource.getRepository(DeviceToken);
             
-            // Check if this token is already registered to THIS user
+            // Check if this token is already registered (might belong to another user now)
             let deviceToken = await tokenRepo.findOne({ where: { token } });
 
             if (deviceToken) {
-                // Update existing record
+                // Update existing record (transfer ownership if necessary)
                 deviceToken.userId = userId;
                 deviceToken.role = role as UserRole;
                 deviceToken.platform = platform;
@@ -40,7 +40,7 @@ export class NotificationController {
             }
 
             await tokenRepo.save(deviceToken);
-            console.log(`[TOKEN_REG] Registered token for user ${userId} (${role}) on ${platform}`);
+            console.log(`[TOKEN_REG] Registered ${platform} token for ${role} ${userId}`);
             res.status(200).json({ message: 'Token registered successfully' });
         } catch (error) {
             console.error('[TOKEN_ERROR] Registration failed:', error);

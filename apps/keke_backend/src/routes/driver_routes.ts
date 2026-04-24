@@ -36,10 +36,11 @@ router.post("/onboarding", onboardingLimiter, async (req: Request, res: Response
         profile.vehiclePlate = vehiclePlate;
         profile.vehicleModel = vehicleModel;
 
-        // If documents are already present, we might transition to review, 
-        // otherwise stay in pending_documents.
         const allDocsPresent = profile.licenseUrl && profile.idCardUrl && profile.vehiclePaperUrl;
         profile.status = allDocsPresent ? DriverStatus.PENDING_REVIEW : DriverStatus.PENDING_DOCUMENTS;
+        
+        // Clear rejection reason on resubmission
+        profile.rejectionReason = "";
 
         await repo.save(profile);
 

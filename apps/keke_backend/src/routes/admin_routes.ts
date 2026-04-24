@@ -133,6 +133,32 @@ router.post("/drivers/:userId/reject", async (req: Request, res: Response) => {
 });
 
 /**
+ * POST /admin/drivers/:userId/suspend
+ */
+router.post("/drivers/:userId/suspend", async (req: Request, res: Response) => {
+    try {
+        const userId = req.params.userId as string;
+        const result = await AdminService.updateDriverStatus(userId, DriverStatus.SUSPENDED, req.body.reason || "Policy violation");
+        res.json(result);
+    } catch (err: any) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * POST /admin/drivers/:userId/activate
+ */
+router.post("/drivers/:userId/activate", async (req: Request, res: Response) => {
+    try {
+        const userId = req.params.userId as string;
+        const result = await AdminService.updateDriverStatus(userId, DriverStatus.APPROVED);
+        res.json(result);
+    } catch (err: any) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
  * GET /admin/rides/active
  */
 router.get("/rides/active", async (req: Request, res: Response) => {

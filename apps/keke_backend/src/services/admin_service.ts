@@ -67,16 +67,27 @@ export class AdminService {
 
         const oldStatus = profile.status;
         profile.status = status;
-        if (reason) profile.rejectionReason = reason;
+        
+        // Clear rejection reason if move back to review or approved or suspended (new reason will be set)
+        if (status !== DriverStatus.REJECTED) {
+            profile.rejectionReason = reason || "";
+        } else if (reason) {
+            profile.rejectionReason = reason;
+        }
         
         const saved = await repo.save(profile);
         
         // --- Audit Logging (Successful Mutation) ---
         try {
           const auditRepo = AppDataSource.getRepository(require("../models").AuditLog);
+          let action = "UPDATE_DRIVER_STATUS";
+          if (status === DriverStatus.APPROVED) action = "APPROVE_DRIVER";
+          else if (status === DriverStatus.REJECTED) action = "REJECT_DRIVER";
+          else if (status === DriverStatus.SUSPENDED) action = "SUSPEND_DRIVER";
+
           await auditRepo.save({
             adminId: "SYSTEM_ADMIN",
-            action: status === DriverStatus.APPROVED ? "APPROVE_DRIVER" : "REJECT_DRIVER",
+            action,
             entityType: "DRIVER_PROFILE",
             entityId: userId,
             details: {

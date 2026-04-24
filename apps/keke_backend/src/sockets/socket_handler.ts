@@ -35,7 +35,21 @@ export class SocketHandler {
       console.log(`New connection: ${socket.id}`);
 
       // --- Room Management ---
-      socket.on('join', (data: { userId: string; role: 'passenger' | 'driver' | 'admin' | 'ride' }) => {
+      socket.on('join', async (data: { userId: string; role: 'passenger' | 'driver' | 'admin' | 'ride' }) => {
+        if (data.role === 'driver') {
+          try {
+            const driverRepo = require('../config/data_source').AppDataSource.getRepository(require('../models/DriverProfile').DriverProfile);
+            const profile = await driverRepo.findOneBy({ userId: data.userId });
+            if (profile && profile.status === 'suspended') {
+              console.warn(`[SOCKET_AUTH] Suspended driver ${data.userId} attempted to join. Disconnecting.`);
+              socket.emit('error:suspended', { message: 'Your account is suspended. Contact support.' });
+              return socket.disconnect();
+            }
+          } catch (err) {
+            console.error('Failed to verify driver status during join:', err);
+          }
+        }
+
         const room = data.role === 'ride' ? `ride:${data.userId}` : `${data.role}:${data.userId}`;
         socket.join(room);
         if (data.role === 'admin') {
@@ -46,6 +60,19 @@ export class SocketHandler {
 
       // --- Driver Heartbeat & Location ---
       socket.on('driver:heartbeat', async (data: { driverId: string; lat: number; lng: number }) => {
+        // Enforce suspension check on every heartbeat to catch real-time bans
+        try {
+          const driverRepo = require('../config/data_source').AppDataSource.getRepository(require('../models/DriverProfile').DriverProfile);
+          const profile = await driverRepo.findOneBy({ userId: data.driverId });
+          if (!profile || profile.status === 'suspended' || profile.status === 'rejected') {
+            console.warn(`[SOCKET_BLOCK] Heartbeat rejected for driver ${data.driverId} (Status: ${profile?.status})`);
+            socket.emit('error:suspended', { message: 'Operational activity blocked.' });
+            return;
+          }
+        } catch (err) {
+          console.error('Heartbeat status check failed:', err);
+        }
+
         await DispatchService.updateDriverLocation(data.driverId, data.lat, data.lng);
 
         // Stream live location to passenger ONLY if driver is actively assigned a ride
@@ -158,6 +185,18 @@ export class SocketHandler {
 
       // --- Driver Accept ---
       socket.on('ride:accept', async (data: { rideId: string; driverId: string; driverDetails: any }) => {
+        try {
+          const driverRepo = require('../config/data_source').AppDataSource.getRepository(require('../models/DriverProfile').DriverProfile);
+          const profile = await driverRepo.findOneBy({ userId: data.driverId });
+          if (!profile || profile.status === 'suspended' || profile.status === 'rejected') {
+            console.warn(`[SOCKET_BLOCK] Ride acceptance blocked for driver ${data.driverId} (Status: ${profile?.status})`);
+            socket.emit('error:suspended', { message: 'Operational activity blocked.' });
+            return;
+          }
+        } catch (err) {
+          console.error('Ride accept status check failed:', err);
+        }
+
         const locked = await DispatchService.acquireRideLock(data.rideId, data.driverId);
         
         if (locked) {
@@ -373,10 +412,22 @@ export class SocketHandler {
   private async validateRideState(rideId: string, allowedStatuses: string[]): Promise<any> {
     const rideRepo = require('../config/data_source').AppDataSource.getRepository(require('../models').Ride);
     const ride = await rideRepo.findOne({ where: { rideId } });
+    
     if (!ride || !allowedStatuses.includes(ride.status)) {
         console.warn(`[SYNC_AUDIT] Ignored action for ride ${rideId} - illegal state transition from ${ride?.status}`);
         return null;
     }
+
+    // Operational Guard: Check driver status if driver is assigned
+    if (ride.driverId) {
+        const driverRepo = require('../config/data_source').AppDataSource.getRepository(require('../models/DriverProfile').DriverProfile);
+        const profile = await driverRepo.findOneBy({ userId: ride.driverId });
+        if (profile && (profile.status === 'suspended' || profile.status === 'rejected')) {
+            console.error(`[SYNC_AUDIT] Blocked action for ride ${rideId} - driver ${ride.driverId} is ${profile.status}`);
+            return null;
+        }
+    }
+
     return ride;
   }
 }

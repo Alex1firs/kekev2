@@ -7,65 +7,55 @@ import { authMiddleware, AuthRequest } from "../middleware/auth_middleware";
 
 const router = Router();
 
-/**
- * Get Wallet Balance & History
- */
 router.get("/balance/:userId", authMiddleware, async (req: AuthRequest, res: Response) => {
     try {
         const userId = req.params.userId as string;
+        if (req.user!.userId !== userId) {
+            return res.status(403).json({ error: "Forbidden" });
+        }
         const wallet = await WalletService.getOrCreateWallet(userId);
         const history = await AppDataSource.getRepository(LedgerEntry).find({
             where: { walletId: userId },
             order: { createdAt: "DESC" },
             take: 20
         });
-
-        res.json({
-            balance: wallet,
-            history
-        });
+        res.json({ balance: wallet, history });
     } catch (err: any) {
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: "Internal Server Error" });
     }
 });
 
-/**
- * Initialize Top-up
- */
 router.post("/topup/init", authMiddleware, async (req: AuthRequest, res: Response) => {
     try {
-        const { userId, email, amount } = req.body;
+        const userId = req.user!.userId;
+        const { email, amount } = req.body;
+        if (!email || !amount || amount <= 0) {
+            return res.status(400).json({ error: "Invalid email or amount" });
+        }
         const result = await PaystackService.initializeTopup(userId, email, amount);
         res.json(result);
     } catch (err: any) {
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: "Internal Server Error" });
     }
 });
 
-/**
- * Manual Verify
- */
-router.post("/topup/verify", async (req: Request, res: Response) => {
+router.post("/topup/verify", authMiddleware, async (req: AuthRequest, res: Response) => {
     try {
         const { reference } = req.body;
+        if (!reference) return res.status(400).json({ error: "Reference required" });
         const verified = await PaystackService.verifyTransaction(reference);
         res.json({ verified });
     } catch (err: any) {
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: "Internal Server Error" });
     }
 });
 
-/**
- * Paystack Webhook
- */
 router.post("/webhook", async (req: Request, res: Response) => {
     const signature = req.headers["x-paystack-signature"] as string;
     const body = JSON.stringify(req.body);
-
     if (!PaystackService.verifyWebhookSignature(body, signature)) {
         return res.status(400).send("Invalid signature");
     }
-
     try {
         await PaystackService.handleWebhook(req.body);
         res.sendStatus(200);

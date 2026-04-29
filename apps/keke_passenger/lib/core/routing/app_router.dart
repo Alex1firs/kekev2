@@ -17,6 +17,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
     navigatorKey: rootNavigatorKey,
     initialLocation: '/splash',
     redirect: authStateListener.redirectHook,
+    refreshListenable: authStateListener,
     routes: [
       GoRoute(
         path: '/splash',

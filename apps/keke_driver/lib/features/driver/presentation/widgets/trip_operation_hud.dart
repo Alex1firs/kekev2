@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../application/driver_controller.dart';
 import '../../domain/driver_profile.dart';
 import '../../domain/driver_state.dart';
@@ -126,7 +127,15 @@ class TripOperationHUD extends ConsumerWidget {
         Text(state.activeRequest!.passengerName, style: const TextStyle(color: Colors.white, fontSize: 18)),
         const SizedBox(width: 24),
         IconButton(
-          onPressed: () {},
+          onPressed: () async {
+            final phone = state.activeRequest?.passengerPhone;
+            if (phone != null && phone.isNotEmpty) {
+              final uri = Uri(scheme: 'tel', path: phone);
+              if (await canLaunchUrl(uri)) {
+                await launchUrl(uri);
+              }
+            }
+          },
           icon: const Icon(Icons.call, color: Colors.greenAccent),
         ),
       ],

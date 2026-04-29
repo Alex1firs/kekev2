@@ -10,9 +10,14 @@ const DATABASE_URL = process.env.DATABASE_URL || "postgres://localhost:5432/keke
 export const AppDataSource = new DataSource({
     type: "postgres",
     url: DATABASE_URL,
-    synchronize: true, // Only for development
-    logging: false,
+    synchronize: false,
+    logging: ["error", "warn", "migration"],
     entities: [Wallet, LedgerEntry, Transaction, PayoutRecord, DriverProfile, Ride, AuditLog, User, DeviceToken],
-    migrations: [],
+    migrations: ["dist/migrations/*.js"],
     subscribers: [],
+    extra: {
+        max: 20,
+        idleTimeoutMillis: 30000,
+        connectionTimeoutMillis: 5000,
+    },
 });

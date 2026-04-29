@@ -1,5 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:jwt_decoder/jwt_decoder.dart';
 import '../../../core/storage/secure_storage.dart';
+import '../../../core/network/api_client.dart';
 import '../../core/network/notification_service.dart';
 import '../data/auth_repository.dart';
 import '../domain/auth_state.dart';
@@ -18,6 +20,11 @@ class AuthController extends StateNotifier<AuthState> {
     try {
       final token = await _secureStorage.readToken();
       if (token != null && token.isNotEmpty) {
+        if (JwtDecoder.isExpired(token)) {
+          await _secureStorage.clearAll();
+          state = AuthState.unauthenticated();
+          return;
+        }
         state = AuthState.authenticated(token);
         // Ensure backend has current device token for background wake-ups
         _notificationService.registerDeviceToken();
@@ -86,9 +93,20 @@ class AuthController extends StateNotifier<AuthState> {
 }
 
 final StateNotifierProvider<AuthController, AuthState> authControllerProvider = StateNotifierProvider<AuthController, AuthState>((ref) {
-  return AuthController(
+  final controller = AuthController(
     ref.watch(authRepositoryProvider),
     ref.watch(secureStorageServiceProvider),
     ref.watch(notificationServiceProvider('passenger')),
   );
+
+  // React to 401 responses from the API layer without a circular import
+  ref.listen(unauthorizedEventProvider, (_, isUnauthorized) {
+    if (isUnauthorized) {
+      controller.forceUnauthorizedCleanup();
+      // Reset the flag so subsequent 401s fire again
+      ref.read(unauthorizedEventProvider.notifier).state = false;
+    }
+  });
+
+  return controller;
 });

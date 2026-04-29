@@ -4,12 +4,16 @@ import 'package:go_router/go_router.dart';
 import '../../features/auth/application/auth_controller.dart';
 import '../../features/auth/domain/auth_state.dart';
 
-class AuthGuard {
-  final AuthState authState;
+class AuthGuard extends ChangeNotifier {
+  final Ref _ref;
 
-  AuthGuard(this.authState);
+  AuthGuard(this._ref) {
+    // Notify GoRouter whenever auth state changes so redirects fire
+    _ref.listen(authControllerProvider, (_, __) => notifyListeners());
+  }
 
   String? redirectHook(BuildContext context, GoRouterState state) {
+    final authState = _ref.read(authControllerProvider);
     final isSplash = state.matchedLocation == '/splash';
     final isAuthRoute = state.matchedLocation == '/login' || state.matchedLocation == '/signup';
 
@@ -36,8 +40,7 @@ class AuthGuard {
   }
 }
 
-// Observe the state from the AuthController to reactivity re-evaluate routing
+// Observe the state from the AuthController to reactively re-evaluate routing
 final authGuardProvider = Provider<AuthGuard>((ref) {
-  final authState = ref.watch(authControllerProvider);
-  return AuthGuard(authState);
+  return AuthGuard(ref);
 });

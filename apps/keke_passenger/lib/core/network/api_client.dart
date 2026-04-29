@@ -33,8 +33,9 @@ final dioProvider = Provider<Dio>((ref) {
       },
       onError: (DioException e, handler) async {
         if (e.response?.statusCode == 401) {
-          // Clear storage safely to trigger re-auth without circular imports
+          // Clear storage and signal auth expiry; auth_controller listens to this flag
           await ref.read(secureStorageServiceProvider).clearAll();
+          ref.read(unauthorizedEventProvider.notifier).state = true;
         }
         return handler.next(e);
       },
@@ -47,3 +48,7 @@ final dioProvider = Provider<Dio>((ref) {
 final apiClientProvider = Provider<ApiClient>((ref) {
   return ApiClient(ref.watch(dioProvider));
 });
+
+/// Fires true when the server returns 401, signalling that the session is invalid.
+/// AuthController watches this to set state to unauthenticated without a circular import.
+final unauthorizedEventProvider = StateProvider<bool>((ref) => false);

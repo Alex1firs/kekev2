@@ -284,6 +284,21 @@ td {
     font-size: 2rem;
 }
 
+.doc-thumb.loading {
+    background: #2a2a2a;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 80px;
+    border-radius: 8px;
+}
+
+.doc-thumb.loading::after {
+    content: 'Loading...';
+    color: #888;
+    font-size: 12px;
+}
+
 .modal-content {
     max-width: 800px; /* Wider for gallery */
 }

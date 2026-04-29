@@ -108,40 +108,59 @@ class WalletScreen extends ConsumerWidget {
   }
 
   void _showTopupDialog(BuildContext context, WidgetRef ref) {
-    final controller = TextEditingController();
+    final amountController = TextEditingController();
+    final emailController = TextEditingController();
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Fund Wallet'),
-        content: TextField(
-          controller: controller,
-          keyboardType: TextInputType.number,
-          decoration: const InputDecoration(labelText: 'Amount (₦)', hintText: 'e.g. 5000'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: amountController,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'Amount (₦)', hintText: 'e.g. 5000'),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: emailController,
+              keyboardType: TextInputType.emailAddress,
+              decoration: const InputDecoration(
+                labelText: 'Email (for receipt)',
+                hintText: 'Optional',
+              ),
+            ),
+          ],
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
           ElevatedButton(
             onPressed: () async {
-              final amount = double.tryParse(controller.text);
+              final amount = double.tryParse(amountController.text);
               final authState = ref.read(authControllerProvider);
-              String email = 'user@keke.app';
-              
+              String fallbackEmail = 'user@keke.app';
+
               if (authState.token != null) {
                 try {
                   final decoded = JwtDecoder.decode(authState.token!);
                   final phone = decoded['phone']?.toString();
                   if (phone != null) {
-                    email = '$phone@keke.app';
+                    fallbackEmail = '$phone@keke.app';
                   }
                 } catch (e) {
                   print('[WALLET_ERROR] Email derivation failed: $e');
                 }
               }
 
+              final email = emailController.text.trim().isNotEmpty
+                  ? emailController.text.trim()
+                  : fallbackEmail;
+
               if (amount != null && amount > 0) {
                 Navigator.pop(context);
                 final url = await ref.read(walletControllerProvider.notifier)
-                    .initializeTopup(amount, email); 
+                    .initializeTopup(amount, email);
                 if (url != null) {
                    Navigator.push(
                     context,

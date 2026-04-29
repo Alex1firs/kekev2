@@ -90,6 +90,7 @@ router.get("/drivers/:userId/documents/:docType", async (req: Request, res: Resp
 
         if (!filename) return res.status(404).json({ error: "Document not uploaded" });
 
+        filename = path.basename(filename);
         const filePath = path.join(__dirname, "../../uploads", filename);
         if (!fs.existsSync(filePath)) return res.status(404).json({ error: "File not found on disk" });
 

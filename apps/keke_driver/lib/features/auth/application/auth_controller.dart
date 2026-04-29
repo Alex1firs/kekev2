@@ -1,5 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:jwt_decoder/jwt_decoder.dart';
 import '../../../core/storage/secure_storage.dart';
+import '../../../core/network/api_client.dart';
 import '../../core/network/notification_service.dart';
 import '../data/auth_repository.dart';
 import '../domain/auth_state.dart';
@@ -18,6 +20,11 @@ class AuthController extends StateNotifier<AuthState> {
     try {
       final token = await _secureStorage.readToken();
       if (token != null && token.isNotEmpty) {
+        if (JwtDecoder.isExpired(token)) {
+          await _secureStorage.deleteToken();
+          state = state.copyWith(status: AuthStatus.unauthenticated);
+          return;
+        }
         state = AuthState.authenticated(token);
         _notificationService.registerDeviceToken();
       } else {
@@ -84,9 +91,14 @@ class AuthController extends StateNotifier<AuthState> {
 }
 
 final authControllerProvider = StateNotifierProvider<AuthController, AuthState>((ref) {
-  return AuthController(
+  final controller = AuthController(
     ref.watch(authRepositoryProvider),
     ref.watch(secureStorageServiceProvider),
     ref.watch(notificationServiceProvider('driver')),
   );
+
+  // Wire up the 401 callback so api_client can trigger logout without a circular import
+  ref.read(unauthorizedCallbackProvider.notifier).state = controller.logout;
+
+  return controller;
 });

@@ -1,5 +1,16 @@
 const API_BASE = 'https://api.kekeride.ng/api/v1/admin';
-let ADMIN_KEY = localStorage.getItem('KEKE_ADMIN_KEY') || '';
+let ADMIN_KEY = sessionStorage.getItem('KEKE_ADMIN_KEY') || '';
+
+// --- XSS Protection ---
+function escapeHtml(str) {
+  if (str == null) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
 // --- State Management ---
 let currentSection = 'overview';
@@ -87,7 +98,7 @@ function showLoginScreen() {
             };
             const res = await fetch(`${API_BASE}/overview`, options);
             if (res.ok) {
-                localStorage.setItem('KEKE_ADMIN_KEY', key);
+                sessionStorage.setItem('KEKE_ADMIN_KEY', key);
                 ADMIN_KEY = key;
                 showToast('Workstation authorized', 'success');
                 init(); // Re-initialize
@@ -111,7 +122,7 @@ function setupAuthListeners() {
 }
 
 function handleLogout() {
-    localStorage.removeItem('KEKE_ADMIN_KEY');
+    sessionStorage.removeItem('KEKE_ADMIN_KEY');
     location.reload();
 }
 
@@ -123,7 +134,7 @@ function switchSection(id) {
     document.querySelector(`[data-section="${id}"]`).classList.add('active');
     
     currentSection = id;
-    sectionTitle.innerText = id.charAt(0).toUpperCase() + id.slice(1).replace('-', ' ');
+    sectionTitle.innerText = id.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 
     // Refresh data when switching
     if (id === 'drivers') { fetchPendingDrivers(); fetchIncompleteDrivers(); }
@@ -205,10 +216,10 @@ async function fetchPendingDrivers() {
 
     list.innerHTML = drivers.map(d => `
         <tr>
-            <td>${d.firstName} ${d.lastName}</td>
-            <td>${d.vehicleModel} (${d.vehiclePlate})</td>
+            <td>${escapeHtml(d.firstName)} ${escapeHtml(d.lastName)}</td>
+            <td>${escapeHtml(d.vehicleModel)} (${escapeHtml(d.vehiclePlate)})</td>
             <td>${new Date(d.createdAt).toLocaleString()}</td>
-            <td><button class="btn-primary" onclick="reviewDriver('${d.userId}')">Review</button></td>
+            <td><button class="btn-primary" onclick="reviewDriver('${escapeHtml(d.userId)}')">Review</button></td>
         </tr>
     `).join('');
     if (drivers.length === 0) list.innerHTML = '<tr><td colspan="4">No pending applications.</td></tr>';
@@ -219,10 +230,10 @@ async function fetchIncompleteDrivers() {
     const list = document.getElementById('incomplete-drivers-list');
     list.innerHTML = drivers.map(d => `
         <tr>
-            <td>${d.firstName} ${d.lastName}</td>
-            <td>${d.vehicleModel} (${d.vehiclePlate})</td>
+            <td>${escapeHtml(d.firstName)} ${escapeHtml(d.lastName)}</td>
+            <td>${escapeHtml(d.vehicleModel)} (${escapeHtml(d.vehiclePlate)})</td>
             <td>${new Date(d.createdAt).toLocaleDateString()}</td>
-            <td><button class="btn-secondary" onclick="reviewDriver('${d.userId}')">View Progress</button></td>
+            <td><button class="btn-secondary" onclick="reviewDriver('${escapeHtml(d.userId)}')">View Progress</button></td>
         </tr>
     `).join('');
     if (drivers.length === 0) list.innerHTML = '<tr><td colspan="4">No incomplete applications.</td></tr>';
@@ -234,10 +245,10 @@ async function fetchActiveRides() {
     const list = document.getElementById('active-rides-list');
     list.innerHTML = rides.map(r => `
         <tr>
-            <td>${r.rideId}</td>
-            <td><span class="status-indicator online"></span> ${r.status.toUpperCase()}</td>
-            <td>${r.passengerId}</td>
-            <td>${r.driverId || '---'}</td>
+            <td>${escapeHtml(r.rideId)}</td>
+            <td><span class="status-indicator online"></span> ${escapeHtml(r.status).toUpperCase()}</td>
+            <td>${escapeHtml(r.passengerId)}</td>
+            <td>${escapeHtml(r.driverId) || '---'}</td>
             <td>₦${r.fare}</td>
         </tr>
     `).join('');
@@ -248,7 +259,10 @@ async function fetchActiveRides() {
 async function fetchFinanceSummary() {
     const summary = await adminFetch('/finance/summary');
     document.getElementById('finance-total-debt').innerText = `₦${summary.totalCommissionDebt.toLocaleString()}`;
-    // Payout ready would be a filtered calculation
+    const payoutReadyEl = document.getElementById('finance-payout-ready');
+    if (payoutReadyEl && summary.totalAvailableBalance != null) {
+        payoutReadyEl.innerText = `₦${summary.totalAvailableBalance.toLocaleString()}`;
+    }
 }
 
 async function fetchRideHistory() {
@@ -257,8 +271,8 @@ async function fetchRideHistory() {
     list.innerHTML = history.map(r => `
         <tr>
             <td>${new Date(r.createdAt).toLocaleDateString()}</td>
-            <td>${r.rideId}</td>
-            <td>${r.status}</td>
+            <td>${escapeHtml(r.rideId)}</td>
+            <td>${escapeHtml(r.status)}</td>
             <td>₦${r.fare}</td>
         </tr>
     `).join('');
@@ -269,8 +283,8 @@ async function fetchOnlineDrivers() {
     const list = document.getElementById('online-drivers-list');
     list.innerHTML = drivers.map(d => `
         <tr>
-            <td>${d.userId}</td>
-            <td>${d.location}</td>
+            <td>${escapeHtml(d.userId)}</td>
+            <td>${escapeHtml(d.location)}</td>
         </tr>
     `).join('');
 }
@@ -280,7 +294,7 @@ async function fetchDebtLeaderboard() {
     const list = document.getElementById('debt-leaderboard');
     list.innerHTML = debts.map(d => `
         <tr>
-            <td>${d.userId}</td>
+            <td>${escapeHtml(d.userId)}</td>
             <td>₦${parseFloat(d.driverCommissionDebt).toLocaleString()}</td>
             <td>${parseFloat(d.driverCommissionDebt) >= 5000 ? '🔴 BLOCKED' : '🟢 ACTIVE'}</td>
         </tr>
@@ -288,8 +302,8 @@ async function fetchDebtLeaderboard() {
 }
 
 async function fetchPayouts() {
-    // Logic for payouts could go here if UI exists, for now just fetch
     const payouts = await adminFetch('/finance/payouts');
+    console.log('[Payouts] Fetched payout records:', payouts);
 }
 
 // --- Operational Logic ---
@@ -303,10 +317,10 @@ function updateOperationalAlerts(rides) {
         const ageInMins = (now - new Date(ride.updatedAt || ride.createdAt)) / 60000;
         
         if (ride.status === 'searching' && ageInMins > 3) {
-            alerts.push({ text: `Ride ${ride.rideId} searching for ${Math.round(ageInMins)}m`, type: 'danger' });
+            alerts.push({ text: `Ride ${escapeHtml(ride.rideId)} searching for ${Math.round(ageInMins)}m`, type: 'danger' });
         }
         if (ride.status === 'accepted' && ageInMins > 5) {
-            alerts.push({ text: `Driver ${ride.driverId} stagnant on Ride ${ride.rideId}`, type: 'warning' });
+            alerts.push({ text: `Driver ${escapeHtml(ride.driverId)} stagnant on Ride ${escapeHtml(ride.rideId)}`, type: 'warning' });
         }
     });
 
@@ -367,9 +381,9 @@ window.reviewDriver = async function(userId) {
         <div style="margin-top: 16px;">
             <div style="display:flex; justify-content:space-between; align-items:flex-start;">
                 <div>
-                    <p><strong>Name:</strong> ${driver.firstName} ${driver.lastName}</p>
-                    <p><strong>Vehicle:</strong> ${driver.vehicleModel} (${driver.vehiclePlate})</p>
-                    <p><strong>Status:</strong> <span class="status-indicator ${isPendingReview ? 'online' : 'offline'}"></span> ${driver.status.toUpperCase().replace('_', ' ')}</p>
+                    <p><strong>Name:</strong> ${escapeHtml(driver.firstName)} ${escapeHtml(driver.lastName)}</p>
+                    <p><strong>Vehicle:</strong> ${escapeHtml(driver.vehicleModel)} (${escapeHtml(driver.vehiclePlate)})</p>
+                    <p><strong>Status:</strong> <span class="status-indicator ${isPendingReview ? 'online' : 'offline'}"></span> ${escapeHtml(driver.status).toUpperCase().replace('_', ' ')}</p>
                 </div>
                 <div style="text-align:right;">
                     <p><strong>Submitted:</strong><br/>${new Date(driver.createdAt).toLocaleString()}</p>
@@ -491,16 +505,32 @@ function closeModal() {
 
 // --- WebSocket Setup ---
 
+function updateApiStatus(online) {
+    const el = document.getElementById('api-status');
+    if (!el) return;
+    if (online) {
+        el.classList.add('online');
+    } else {
+        el.classList.remove('online');
+    }
+}
+
 function setupSocket() {
     const socket = io('https://api.kekeride.ng');
-    
+
     socket.on('connect', () => {
         socket.emit('join', { userId: 'dashboard', role: 'admin' });
-        document.getElementById('api-status').classList.add('online');
+        updateApiStatus(true);
     });
 
     socket.on('disconnect', () => {
-        document.getElementById('api-status').classList.remove('online');
+        updateApiStatus(false);
+    });
+
+    socket.on('reconnect', () => {
+        console.log('Socket reconnected. Refreshing data...');
+        updateApiStatus(true);
+        init();
     });
 
     // Handle real-time updates

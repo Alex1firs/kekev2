@@ -10,7 +10,14 @@ export class AdminService {
      * Get overview stats (Daily Revenue, Live Rides, Online Drivers)
      */
     static async getOverview() {
-        const activeRideCount = (await redis.keys("ride:*:lock")).length;
+        const activeRideCount = await AppDataSource.getRepository(Ride).count({
+            where: [
+                { status: RideStatus.SEARCHING },
+                { status: RideStatus.ACCEPTED },
+                { status: RideStatus.IN_PROGRESS },
+                { status: RideStatus.ARRIVED },
+            ]
+        });
         const onlineDriverCount = (await redis.zcount("drivers:locations", "-inf", "+inf")) || 0;
         
         // Simple daily revenue from today's completed rides
@@ -135,15 +142,17 @@ export class AdminService {
      * Get Finance Summary
      */
     static async getFinanceSummary() {
-        const wallets = await AppDataSource.getRepository(Wallet).find();
-        
-        const totalCommissionDebt = wallets.reduce((acc, w) => acc + Number(w.driverCommissionDebt), 0);
-        const totalAvailableBalance = wallets.reduce((acc, w) => acc + Number(w.driverAvailableBalance), 0);
+        const result = await AppDataSource.getRepository(Wallet)
+            .createQueryBuilder("w")
+            .select("SUM(w.driverCommissionDebt)", "totalCommissionDebt")
+            .addSelect("SUM(w.driverAvailableBalance)", "totalAvailableBalance")
+            .addSelect("COUNT(*)", "activeWallets")
+            .getRawOne();
 
         return {
-            totalCommissionDebt,
-            totalAvailableBalance,
-            activeWallets: wallets.length
+            totalCommissionDebt: parseFloat(result?.totalCommissionDebt || "0"),
+            totalAvailableBalance: parseFloat(result?.totalAvailableBalance || "0"),
+            activeWallets: parseInt(result?.activeWallets || "0"),
         };
     }
 
@@ -161,13 +170,13 @@ export class AdminService {
      * Get Online Drivers (Redis + Profile Join)
      */
     static async getOnlineDrivers() {
-        const locations = await redis.zrange("drivers:locations", 0, -1, "WITHSCORES");
+        const members = await redis.zrange("drivers:locations", 0, -1);
         const results = [];
-        
-        // ZRANGE returns [member, score, member, score, ...]
-        for (let i = 0; i < locations.length; i += 2) {
-            const userId = locations[i];
-            results.push({ userId, location: locations[i+1] });
+        for (const userId of members) {
+            const pos = await redis.geopos("drivers:locations", userId);
+            if (pos && pos[0]) {
+                results.push({ userId, lng: pos[0][0], lat: pos[0][1] });
+            }
         }
         return results;
     }

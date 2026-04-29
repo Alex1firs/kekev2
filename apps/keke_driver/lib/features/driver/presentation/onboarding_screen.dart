@@ -14,6 +14,8 @@ class OnboardingScreen extends ConsumerStatefulWidget {
 }
 
 class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
+  final _firstNameController = TextEditingController();
+  final _lastNameController = TextEditingController();
   final _plateController = TextEditingController();
   final _modelController = TextEditingController();
   int _currentStep = 0;
@@ -32,6 +34,8 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
   @override
   void dispose() {
+    _firstNameController.dispose();
+    _lastNameController.dispose();
     _plateController.dispose();
     _modelController.dispose();
     super.dispose();
@@ -47,6 +51,8 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
   void _finishOnboarding() {
     ref.read(driverControllerProvider.notifier).submitOnboarding(
+      firstName: _firstNameController.text,
+      lastName: _lastNameController.text,
       plate: _plateController.text,
       model: _modelController.text,
     );
@@ -107,9 +113,22 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
             content: Column(
               children: [
                 TextField(
+                  controller: _firstNameController,
+                  decoration: const InputDecoration(labelText: 'First Name'),
+                  textCapitalization: TextCapitalization.words,
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _lastNameController,
+                  decoration: const InputDecoration(labelText: 'Last Name'),
+                  textCapitalization: TextCapitalization.words,
+                ),
+                const SizedBox(height: 8),
+                TextField(
                   controller: _plateController,
                   decoration: const InputDecoration(labelText: 'Keke License Plate (e.g. ANK-123)'),
                 ),
+                const SizedBox(height: 8),
                 TextField(
                   controller: _modelController,
                   decoration: const InputDecoration(labelText: 'Vehicle Model (e.g. TVS King)'),

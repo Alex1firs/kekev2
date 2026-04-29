@@ -10,9 +10,13 @@ class ApiClient {
   ApiClient(this._dio);
 }
 
+/// Holds an optional logout callback that can be set by auth layers to avoid
+/// circular imports between api_client and auth_controller.
+final unauthorizedCallbackProvider = StateProvider<void Function()?>((_) => null);
+
 final dioProvider = Provider<Dio>((ref) {
   final env = EnvConfig.current;
-  
+
   final dio = Dio(
     BaseOptions(
       baseUrl: env.apiBaseUrl,
@@ -20,7 +24,7 @@ final dioProvider = Provider<Dio>((ref) {
       receiveTimeout: const Duration(seconds: 15),
     ),
   );
-  
+
   dio.interceptors.add(
     InterceptorsWrapper(
       onRequest: (options, handler) async {
@@ -33,8 +37,12 @@ final dioProvider = Provider<Dio>((ref) {
       },
       onError: (DioException e, handler) async {
         if (e.response?.statusCode == 401) {
-          // Clear storage safely to trigger re-auth without circular imports
+          // Clear storage and trigger auth state change via callback
           await ref.read(secureStorageServiceProvider).clearAll();
+          final callback = ref.read(unauthorizedCallbackProvider);
+          if (callback != null) {
+            Future.microtask(callback);
+          }
         }
         return handler.next(e);
       },

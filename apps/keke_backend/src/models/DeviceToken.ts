@@ -1,4 +1,4 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn } from "typeorm";
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index } from "typeorm";
 import { UserRole } from "./User";
 
 @Entity()
@@ -6,6 +6,7 @@ export class DeviceToken {
     @PrimaryGeneratedColumn("uuid")
     id!: string;
 
+    @Index()
     @Column()
     userId!: string;
 
@@ -21,6 +22,7 @@ export class DeviceToken {
     @Column({ nullable: true })
     deviceLabel?: string;
 
+    @Index()
     @Column({ default: true })
     isActive!: boolean;
 

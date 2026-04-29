@@ -3,9 +3,11 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import '../../../core/config/env_config.dart';
+import '../../auth/application/auth_controller.dart';
 import '../application/driver_controller.dart';
 import '../domain/driver_profile.dart';
 import '../domain/driver_state.dart';
+import 'earnings_screen.dart';
 import 'widgets/incoming_request_card.dart';
 import 'widgets/trip_operation_hud.dart';
 
@@ -106,8 +108,7 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
               child: IconButton(
                 icon: const Icon(Icons.account_balance_wallet, color: Colors.white),
                 onPressed: () {
-                  // TODO: Implement EarningsScreen
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Earnings screen coming soon')));
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const EarningsScreen()));
                 },
               ),
             ),
@@ -134,6 +135,14 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
                 activeTrackColor: Colors.green.shade700,
               ),
             ),
+            Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: IconButton(
+                icon: const Icon(Icons.logout, color: Colors.white54, size: 20),
+                tooltip: 'Logout',
+                onPressed: () => ref.read(authControllerProvider.notifier).logout(),
+              ),
+            ),
           ],
         ),
       ),
@@ -145,13 +154,13 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
     Color color = Colors.amber;
 
     if (amount >= 5000) {
-      message = 'HARD BLOCK: Pay ₦$amount to go online';
+      message = 'HARD BLOCK: Pay ₦${amount.toStringAsFixed(0)} to go online';
       color = Colors.red;
     } else if (amount >= 2000) {
-      message = 'RESTRICTION WARNING: Debt ₦$amount too high';
+      message = 'RESTRICTION WARNING: Debt ₦${amount.toStringAsFixed(0)} too high';
       color = Colors.orange;
     } else {
-      message = 'DEBT WARNING: Balance ₦$amount';
+      message = 'DEBT WARNING: Balance ₦${amount.toStringAsFixed(0)}';
       color = Colors.amber;
     }
 

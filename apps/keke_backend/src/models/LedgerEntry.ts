@@ -1,4 +1,4 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, ManyToOne } from "typeorm";
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, ManyToOne, Index } from "typeorm";
 import { Wallet } from "./Wallet";
 
 export enum BalanceType {
@@ -24,6 +24,7 @@ export class LedgerEntry {
     @ManyToOne(() => Wallet)
     wallet!: Wallet;
 
+    @Index()
     @Column()
     walletId!: string;
 

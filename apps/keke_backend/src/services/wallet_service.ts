@@ -88,11 +88,10 @@ export class WalletService {
         totalFare: number;
         isCash: boolean;
     }): Promise<void> {
-        const commissionAmount = data.totalFare * 0.10;
-        const driverNetAmount = data.totalFare - commissionAmount;
+        const commissionAmount = Math.round(data.totalFare * 0.10 * 100) / 100;
+        const driverNetAmount = Math.round((data.totalFare - commissionAmount) * 100) / 100;
 
         if (data.isCash) {
-            // Cash Ride: Only track commission as debt
             await this.mutateBalance(
                 data.driverId,
                 commissionAmount,
@@ -101,27 +100,54 @@ export class WalletService {
                 { rideId: data.rideId, fare: data.totalFare }
             );
         } else {
-            // Wallet Ride: Complex multi-wallet mutation
-            // 1. Debit Passenger Total
-            await this.mutateBalance(
-                data.passengerId,
-                -data.totalFare,
-                BalanceType.PASSENGER,
-                TransactionType.TRIP_PAYMENT,
-                { rideId: data.rideId }
-            );
+            // Wallet ride: atomic debit + credit in one transaction
+            await AppDataSource.transaction(async (manager) => {
+                // 1. Lock and check passenger balance
+                const passengerWallet = await manager.findOne(Wallet, {
+                    where: { userId: data.passengerId },
+                    lock: { mode: "pessimistic_write" }
+                });
+                if (!passengerWallet) throw new Error("Passenger wallet not found");
 
-            // 2. Credit Driver Net
-            await this.mutateBalance(
-                data.driverId,
-                driverNetAmount,
-                BalanceType.DRIVER_AVAILABLE,
-                TransactionType.TRIP_PAYMENT,
-                { rideId: data.rideId, commission: commissionAmount }
-            );
-            
-            // Note: Platform 10% is implicitly the difference, 
-            // in a full system we'd credit a Platform Wallet here too.
+                const currentBalance = Number(passengerWallet.passengerBalance);
+                if (currentBalance < data.totalFare) {
+                    throw new Error(`Insufficient balance: has ₦${currentBalance}, needs ₦${data.totalFare}`);
+                }
+
+                // 2. Debit passenger
+                passengerWallet.passengerBalance = currentBalance - data.totalFare;
+                await manager.save(passengerWallet);
+                await manager.save(manager.create(LedgerEntry, {
+                    walletId: data.passengerId,
+                    balanceType: BalanceType.PASSENGER,
+                    transactionType: TransactionType.TRIP_PAYMENT,
+                    amount: -data.totalFare,
+                    balanceBefore: currentBalance,
+                    balanceAfter: passengerWallet.passengerBalance,
+                    metadata: { rideId: data.rideId }
+                }));
+
+                // 3. Credit driver (get or create)
+                let driverWallet = await manager.findOne(Wallet, {
+                    where: { userId: data.driverId },
+                    lock: { mode: "pessimistic_write" }
+                });
+                if (!driverWallet) {
+                    driverWallet = manager.create(Wallet, { userId: data.driverId });
+                }
+                const driverBefore = Number(driverWallet.driverAvailableBalance);
+                driverWallet.driverAvailableBalance = driverBefore + driverNetAmount;
+                await manager.save(driverWallet);
+                await manager.save(manager.create(LedgerEntry, {
+                    walletId: data.driverId,
+                    balanceType: BalanceType.DRIVER_AVAILABLE,
+                    transactionType: TransactionType.TRIP_PAYMENT,
+                    amount: driverNetAmount,
+                    balanceBefore: driverBefore,
+                    balanceAfter: driverWallet.driverAvailableBalance,
+                    metadata: { rideId: data.rideId, commission: commissionAmount }
+                }));
+            });
         }
     }
 }

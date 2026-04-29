@@ -6,7 +6,9 @@ dotenv.config();
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY;
 
 if (!ADMIN_API_KEY) {
-    console.error("FATAL: ADMIN_API_KEY is not defined in environment variables.");
+    const msg = "FATAL: ADMIN_API_KEY is not defined in environment variables. Server cannot start.";
+    console.error(msg);
+    throw new Error(msg);
 }
 
 /**

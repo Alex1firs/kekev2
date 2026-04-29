@@ -1,4 +1,4 @@
-import { Entity, PrimaryColumn, Column, CreateDateColumn, UpdateDateColumn } from "typeorm";
+import { Entity, PrimaryColumn, Column, CreateDateColumn, UpdateDateColumn, Index } from "typeorm";
 
 export enum RideStatus {
     SEARCHING = "searching",
@@ -12,13 +12,18 @@ export enum RideStatus {
 }
 
 @Entity()
+@Index(["passengerId", "status"])
+@Index(["driverId", "status"])
+@Index(["status", "updatedAt"])
 export class Ride {
     @PrimaryColumn()
     rideId!: string;
 
+    @Index()
     @Column()
     passengerId!: string;
 
+    @Index()
     @Column({ nullable: true })
     driverId!: string;
 
@@ -28,6 +33,7 @@ export class Ride {
     @Column()
     paymentMode!: "wallet" | "cash";
 
+    @Index()
     @Column({ type: "enum", enum: RideStatus, default: RideStatus.SEARCHING })
     status!: RideStatus;
 
@@ -48,6 +54,9 @@ export class Ride {
 
     @Column({ type: "decimal", precision: 10, scale: 7, nullable: true })
     destinationLng!: number;
+
+    @Column({ nullable: true, default: false })
+    paymentFailed!: boolean;
 
     @CreateDateColumn()
     createdAt!: Date;

@@ -1,12 +1,12 @@
 import rateLimit from "express-rate-limit";
 
-/**
- * Admin Rate Limiter
- * 100 requests per 15 minutes
- */
+const adminWindowMs = parseInt(process.env.RATE_LIMIT_WINDOW || "900000");
+const adminMax = parseInt(process.env.ADMIN_RATE_LIMIT_MAX || "100");
+const onboardingMax = parseInt(process.env.ONBOARDING_RATE_LIMIT_MAX || "5");
+
 export const adminLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 100,
+    windowMs: adminWindowMs,
+    max: adminMax,
     standardHeaders: true,
     legacyHeaders: false,
     message: {
@@ -14,16 +14,12 @@ export const adminLimiter = rateLimit({
         message: "Admin rate limit exceeded. Please try again later.",
         status: 429
     },
-    skip: (req) => process.env.NODE_ENV === "development" // Optional: skip in dev
+    skip: (req) => process.env.NODE_ENV === "development"
 });
 
-/**
- * Onboarding Rate Limiter
- * 5 requests per 15 minutes (Protects against bot signup)
- */
 export const onboardingLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 5,
+    windowMs: adminWindowMs,
+    max: onboardingMax,
     standardHeaders: true,
     legacyHeaders: false,
     message: {

@@ -176,6 +176,7 @@ class DriverController extends StateNotifier<DriverState> {
       passengerId: data['passengerId'] ?? 'unknown',
       isCash: data['isCash'] ?? true,
       passengerName: data['passengerName'],
+      passengerPhone: data['passengerPhone']?.toString(),
       pickupAddress: data['pickupAddress'],
       pickupLocation: LatLng(data['pickupLat'], data['pickupLng']),
       destinationAddress: data['destinationAddress'],
@@ -293,6 +294,8 @@ class DriverController extends StateNotifier<DriverState> {
   // --- Onboarding & Status ---
   
   Future<void> submitOnboarding({
+    required String firstName,
+    required String lastName,
     required String plate,
     required String model,
   }) async {
@@ -300,8 +303,8 @@ class DriverController extends StateNotifier<DriverState> {
     try {
       final response = await _apiClient.dio.post('/drivers/onboarding', data: {
         'userId': _userId,
-        'firstName': 'Driver', // Placeholder until Auth update
-        'lastName': 'User',
+        'firstName': firstName,
+        'lastName': lastName,
         'vehiclePlate': plate,
         'vehicleModel': model,
       });

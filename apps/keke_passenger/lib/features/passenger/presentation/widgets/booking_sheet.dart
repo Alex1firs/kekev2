@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../domain/booking_state.dart';
 import '../../application/booking_controller.dart';
 import '../../application/wallet_controller.dart';
@@ -159,6 +160,24 @@ class BookingSheet extends ConsumerWidget {
   }
 
   Widget _buildFareEstimate(BuildContext context, WidgetRef ref, BookingState state) {
+    if (state.errorMessage != null && state.estimatedFareAmount == null) {
+      return SizedBox(
+        height: 180,
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(state.errorMessage!, style: const TextStyle(color: Colors.red)),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: () => ref.read(bookingControllerProvider.notifier).retreatToPickup(),
+                child: const Text('Try Again'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     if (state.estimatedFareAmount == null) {
       return const SizedBox(height: 180, child: Center(child: CircularProgressIndicator()));
     }
@@ -293,7 +312,13 @@ class BookingSheet extends ConsumerWidget {
           subtitle: Text('${driver['model']} • ${driver['plate']}'),
           trailing: IconButton(
             icon: const Icon(Icons.call, color: Colors.green),
-            onPressed: () {},
+            onPressed: () async {
+              final phone = driver['phone']?.toString();
+              if (phone != null && phone.isNotEmpty) {
+                final uri = Uri(scheme: 'tel', path: phone);
+                if (await canLaunchUrl(uri)) await launchUrl(uri);
+              }
+            },
           ),
         ),
         const SizedBox(height: 16),

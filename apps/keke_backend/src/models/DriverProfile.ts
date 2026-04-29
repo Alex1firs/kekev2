@@ -1,4 +1,4 @@
-import { Entity, PrimaryColumn, Column, CreateDateColumn, UpdateDateColumn } from "typeorm";
+import { Entity, PrimaryColumn, Column, CreateDateColumn, UpdateDateColumn, Index } from "typeorm";
 
 export enum DriverStatus {
     PENDING_DOCUMENTS = "pending_documents",
@@ -10,6 +10,7 @@ export enum DriverStatus {
 
 @Entity()
 export class DriverProfile {
+    @Index()
     @PrimaryColumn()
     userId!: string; // References User.id
 
@@ -25,6 +26,7 @@ export class DriverProfile {
     @Column()
     vehicleModel!: string;
 
+    @Index()
     @Column({ type: "enum", enum: DriverStatus, default: DriverStatus.PENDING_DOCUMENTS })
     status!: DriverStatus;
 

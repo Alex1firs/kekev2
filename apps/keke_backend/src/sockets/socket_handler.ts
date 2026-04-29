@@ -1,14 +1,22 @@
 import { Server, Socket } from 'socket.io';
+import jwt from 'jsonwebtoken';
 import { DispatchService } from '../services/dispatch_service';
 import { NotificationService } from '../services/notification_service';
 import { UserRole } from '../models/User';
+import { AppDataSource } from '../config/data_source';
+import { Ride } from '../models/Ride';
+import { DriverProfile } from '../models/DriverProfile';
+import { redis } from '../config/redis';
+import { WalletService } from '../services/wallet_service';
+
+const JWT_SECRET = process.env.JWT_SECRET || "default_secret_change_me_in_prod";
 
 export class SocketHandler {
   private io: Server;
-  
+
   // Track rejected drivers per ride to exclude them in expansion
   private rideExclusions: Map<string, Set<string>> = new Map();
-  
+
   // Track currently ringing drivers to emit immediate cancellation (optimization)
   private activeDispatches: Map<string, Set<string>> = new Map();
 
@@ -31,6 +39,20 @@ export class SocketHandler {
   }
 
   private setupHandlers() {
+    this.io.use((socket, next) => {
+      const token = socket.handshake.auth?.token || socket.handshake.query?.token as string;
+      if (!token) {
+        return next(new Error('Authentication required'));
+      }
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET) as any;
+        (socket as any).user = decoded;
+        next();
+      } catch (err) {
+        next(new Error('Invalid or expired token'));
+      }
+    });
+
     this.io.on('connection', (socket: Socket) => {
       console.log(`New connection: ${socket.id}`);
 
@@ -38,7 +60,7 @@ export class SocketHandler {
       socket.on('join', async (data: { userId: string; role: 'passenger' | 'driver' | 'admin' | 'ride' }) => {
         if (data.role === 'driver') {
           try {
-            const driverRepo = require('../config/data_source').AppDataSource.getRepository(require('../models/DriverProfile').DriverProfile);
+            const driverRepo = AppDataSource.getRepository(DriverProfile);
             const profile = await driverRepo.findOneBy({ userId: data.userId });
             if (profile && profile.status === 'suspended') {
               console.warn(`[SOCKET_AUTH] Suspended driver ${data.userId} attempted to join. Disconnecting.`);
@@ -62,7 +84,7 @@ export class SocketHandler {
       socket.on('driver:heartbeat', async (data: { driverId: string; lat: number; lng: number }) => {
         // Enforce suspension check on every heartbeat to catch real-time bans
         try {
-          const driverRepo = require('../config/data_source').AppDataSource.getRepository(require('../models/DriverProfile').DriverProfile);
+          const driverRepo = AppDataSource.getRepository(DriverProfile);
           const profile = await driverRepo.findOneBy({ userId: data.driverId });
           if (!profile || profile.status === 'suspended' || profile.status === 'rejected') {
             console.warn(`[SOCKET_BLOCK] Heartbeat rejected for driver ${data.driverId} (Status: ${profile?.status})`);
@@ -95,16 +117,16 @@ export class SocketHandler {
       // --- Passenger Ride Request ---
       socket.on('ride:request', async (request: any) => {
         const { rideId, pickupLat, pickupLng, passengerId, fare, isCash, pickupAddress, destinationAddress } = request;
-        
+
         // 1. Persist initial Ride record
         try {
-          const rideRepo = require('../config/data_source').AppDataSource.getRepository(require('../models').Ride);
+          const rideRepo = AppDataSource.getRepository(Ride);
           const ride = rideRepo.create({
             rideId,
             passengerId,
             fare,
             paymentMode: isCash ? 'cash' : 'wallet',
-            status: 'searching',
+            status: 'searching' as any,
             pickupAddress,
             destinationAddress,
             pickupLat,
@@ -118,13 +140,15 @@ export class SocketHandler {
         this.rideExclusions.set(rideId, new Set());
         console.log(`Starting dispatch for ride ${rideId}`);
         this.io.to('admin').emit('ride:status_update', { rideId, status: 'searching' });
-        this.startDispatchLoop(rideId, pickupLat, pickupLng, request);
+        this.startDispatchLoop(rideId, pickupLat, pickupLng, request).catch((err: any) => {
+          console.error(JSON.stringify({ level: 'error', event: 'dispatch_loop_failed', rideId, error: err?.message }));
+        });
       });
 
       // --- Passenger Cancel Ride ---
       socket.on('ride:cancel', async (data: { rideId: string; passengerId: string }) => {
         try {
-          const rideRepo = require('../config/data_source').AppDataSource.getRepository(require('../models').Ride);
+          const rideRepo = AppDataSource.getRepository(Ride);
           const ride = await rideRepo.findOne({ where: { rideId: data.rideId } });
 
           if (!ride) {
@@ -137,9 +161,9 @@ export class SocketHandler {
           }
 
           // Verify ride is still in cancellable state
-          if (ride.status === 'searching' || ride.status === 'accepted' || ride.status === 'arrived') {
+          if (ride.status === 'searching' as any || ride.status === 'accepted' as any || ride.status === 'arrived' as any) {
             await rideRepo.update(data.rideId, { status: 'canceled' as any, completedAt: new Date() });
-            
+
             this.io.to('admin').emit('ride:status_update', { rideId: data.rideId, status: 'canceled' });
             this.broadcastToRide(data.rideId, 'ride:cancelled', { rideId: data.rideId });
 
@@ -154,16 +178,16 @@ export class SocketHandler {
               console.log(`[BACKEND_DISMISS] Signaling ${notifiedDrivers.size} drivers to dismiss ride ${data.rideId}`);
               for (const driverId of notifiedDrivers) {
                 this.io.to(`driver:${driverId}`).emit('ride:cancelled', { rideId: data.rideId });
-                // 🔔 PUSH: Dismiss/Cancel Request for Driver
+                // PUSH: Dismiss/Cancel Request for Driver
                 NotificationService.sendToUser(driverId, UserRole.DRIVER, 'Ride Cancelled', 'The request has been cancelled.', {
-                    type: 'RIDE_CANCELLED',
-                    rideId: data.rideId,
-                    intent: 'home'
+                  type: 'RIDE_CANCELLED',
+                  rideId: data.rideId,
+                  intent: 'home'
                 });
               }
             }
 
-            // 🔔 PUSH: Cancel for Passenger (Authoritative)
+            // PUSH: Cancel for Passenger (Authoritative)
             NotificationService.sendToUser(data.passengerId, UserRole.PASSENGER, 'Ride Cancelled', 'Your ride has been cancelled.', {
               type: 'RIDE_CANCELLED',
               rideId: data.rideId,
@@ -173,7 +197,7 @@ export class SocketHandler {
             // Clean memory Maps
             this.rideExclusions.delete(data.rideId);
             this.activeDispatches.delete(data.rideId);
-            
+
             console.log(`Ride ${data.rideId} successfully canceled by passenger ${data.passengerId}.`);
           } else {
             socket.emit('ride:error', { message: 'Ride cannot be canceled at this stage' });
@@ -186,62 +210,70 @@ export class SocketHandler {
       // --- Driver Accept ---
       socket.on('ride:accept', async (data: { rideId: string; driverId: string; driverDetails: any }) => {
         try {
-          const driverRepo = require('../config/data_source').AppDataSource.getRepository(require('../models/DriverProfile').DriverProfile);
+          const driverRepo = AppDataSource.getRepository(DriverProfile);
           const profile = await driverRepo.findOneBy({ userId: data.driverId });
           if (!profile || profile.status === 'suspended' || profile.status === 'rejected') {
             console.warn(`[SOCKET_BLOCK] Ride acceptance blocked for driver ${data.driverId} (Status: ${profile?.status})`);
             socket.emit('error:suspended', { message: 'Operational activity blocked.' });
             return;
           }
-        } catch (err) {
-          console.error('Ride accept status check failed:', err);
-        }
 
-        const locked = await DispatchService.acquireRideLock(data.rideId, data.driverId);
-        
-        if (locked) {
-          let currentRide: any = null;
-          // Update Ride status in Postgres
-          try {
-            const rideRepo = require('../config/data_source').AppDataSource.getRepository(require('../models').Ride);
-            
-            // Critical Check: is ride cancelled in the DB?
-            currentRide = await rideRepo.findOne({ where: { rideId: data.rideId } });
-            if (!currentRide || currentRide.status === 'canceled') {
-               // Too late, passenger just canceled. Clear lock and inform driver.
-               await require('../config/redis').redis.del(`ride:${data.rideId}:lock`);
-               return socket.emit('ride:cancelled', { rideId: data.rideId });
+          const locked = await DispatchService.acquireRideLock(data.rideId, data.driverId);
+
+          if (locked) {
+            let currentRide: any = null;
+            // Update Ride status in Postgres
+            try {
+              const rideRepo = AppDataSource.getRepository(Ride);
+
+              // Critical Check: is ride cancelled in the DB?
+              currentRide = await rideRepo.findOne({ where: { rideId: data.rideId } });
+              if (!currentRide || currentRide.status === 'canceled') {
+                // Too late, passenger just canceled. Clear lock and inform driver.
+                await redis.del(`ride:${data.rideId}:lock`);
+                return socket.emit('ride:cancelled', { rideId: data.rideId });
+              }
+
+              await rideRepo.update(data.rideId, {
+                driverId: data.driverId,
+                status: 'accepted' as any
+              });
+            } catch (err) {
+              console.error('Failed to update ride to accepted:', err);
             }
 
-            await rideRepo.update(data.rideId, { 
-              driverId: data.driverId, 
-              status: 'accepted' as any 
+            // Link mapping for Live Location Streaming
+            this.driverRideMap.set(data.driverId, data.rideId);
+
+            // Build driverDetails from real DB profile, not client payload
+            const realProfile = profile;
+            const driverDetails = {
+              name: `${realProfile.firstName} ${realProfile.lastName}`,
+              vehiclePlate: realProfile.vehiclePlate,
+              vehicleModel: realProfile.vehicleModel,
+            };
+
+            this.broadcastToRide(data.rideId, 'ride:assigned', {
+              driverId: data.driverId,
+              driverDetails: driverDetails
             });
-          } catch (err) {
-             console.error('Failed to update ride to accepted:', err);
+
+            // PUSH: Assigned for Passenger
+            NotificationService.sendToUser(currentRide.passengerId, UserRole.PASSENGER, 'Driver Assigned!', 'A driver is on the way to you.', {
+              type: 'RIDE_ASSIGNED',
+              rideId: data.rideId,
+              intent: 'active'
+            });
+            socket.emit('ride:confirmed', { rideId: data.rideId });
+            this.io.to('admin').emit('ride:status_update', { rideId: data.rideId, status: 'accepted' });
+
+            this.rideExclusions.delete(data.rideId);
+            this.activeDispatches.delete(data.rideId); // Cleanup
+          } else {
+            socket.emit('ride:expired', { rideId: data.rideId, message: 'Already accepted by another driver' });
           }
-
-          // Link mapping for Live Location Streaming
-          this.driverRideMap.set(data.driverId, data.rideId);
-
-          this.broadcastToRide(data.rideId, 'ride:assigned', {
-            driverId: data.driverId,
-            driverDetails: data.driverDetails
-          });
-
-          // 🔔 PUSH: Assigned for Passenger
-          NotificationService.sendToUser(currentRide.passengerId, UserRole.PASSENGER, 'Driver Assigned!', 'A driver is on the way to you.', {
-            type: 'RIDE_ASSIGNED',
-            rideId: data.rideId,
-            intent: 'active'
-          });
-          socket.emit('ride:confirmed', { rideId: data.rideId });
-          this.io.to('admin').emit('ride:status_update', { rideId: data.rideId, status: 'accepted' });
-          
-          this.rideExclusions.delete(data.rideId);
-          this.activeDispatches.delete(data.rideId); // Cleanup
-        } else {
-          socket.emit('ride:expired', { rideId: data.rideId, message: 'Already accepted by another driver' });
+        } catch (err) {
+          console.error('ride:accept status check failed:', err);
         }
       });
 
@@ -259,12 +291,12 @@ export class SocketHandler {
           const ride = await this.validateRideState(data.rideId, ['accepted']);
           if (!ride) return;
 
-          const rideRepo = require('../config/data_source').AppDataSource.getRepository(require('../models').Ride);
+          const rideRepo = AppDataSource.getRepository(Ride);
           await rideRepo.update(data.rideId, { status: 'arrived' as any });
-          
+
           this.broadcastToRide(data.rideId, 'ride:status_update', { rideId: data.rideId, status: 'arrived' });
-          
-          // 🔔 PUSH: Arrived for Passenger
+
+          // PUSH: Arrived for Passenger
           NotificationService.sendToUser(ride.passengerId, UserRole.PASSENGER, 'Driver Arrived!', 'Your driver has reached the pickup location.', {
             type: 'RIDE_ARRIVED',
             rideId: data.rideId,
@@ -282,12 +314,12 @@ export class SocketHandler {
           const ride = await this.validateRideState(data.rideId, ['arrived', 'accepted']);
           if (!ride) return;
 
-          const rideRepo = require('../config/data_source').AppDataSource.getRepository(require('../models').Ride);
+          const rideRepo = AppDataSource.getRepository(Ride);
           await rideRepo.update(data.rideId, { status: 'in_progress' as any });
-          
-          this.broadcastToRide(data.rideId, 'ride:status_update', { rideId: data.rideId, status: 'started' });
-          
-          // 🔔 PUSH: Started for Passenger
+
+          this.broadcastToRide(data.rideId, 'ride:status_update', { rideId: data.rideId, status: 'in_progress' });
+
+          // PUSH: Started for Passenger
           NotificationService.sendToUser(ride.passengerId, UserRole.PASSENGER, 'Trip Started', 'You are now on your trip.', {
             type: 'TRIP_STARTED',
             rideId: data.rideId,
@@ -300,29 +332,39 @@ export class SocketHandler {
       });
 
       // --- Ride Completion ---
-      socket.on('ride:complete', async (data: { 
-        rideId: string; 
-        passengerId: string; 
-        driverId: string; 
-        totalFare: number; 
-        isCash: boolean; 
+      socket.on('ride:complete', async (data: {
+        rideId: string;
+        passengerId: string;
+        driverId: string;
       }) => {
         try {
           const ride = await this.validateRideState(data.rideId, ['in_progress', 'started']);
           if (!ride) return;
 
-          // Essential Cleanup (Unlink driver from ride for tracking) 
+          // Essential Cleanup (Unlink driver from ride for tracking)
           this.driverRideMap.delete(data.driverId);
+
+          // Read fare and paymentMode from DB, not socket payload
+          const fareToCharge = Number(ride.fare);
+          const isCashPayment = ride.paymentMode === 'cash';
 
           // Attempt financial posting
           console.log(`Processing financials for completed ride ${data.rideId}`);
-          await require('../services/wallet_service').WalletService.postRideFinancials(data).catch((e: any) => {
-            console.error(`Non-blocking financial failure for ${data.rideId}:`, e.message);
+          await WalletService.postRideFinancials({
+            rideId: data.rideId,
+            passengerId: ride.passengerId,
+            driverId: ride.driverId,
+            totalFare: fareToCharge,
+            isCash: isCashPayment,
+          }).catch(async (e: any) => {
+            console.error(JSON.stringify({ level: 'error', event: 'payment_failed', rideId: data.rideId, error: e.message }));
+            const rideRepo = AppDataSource.getRepository(Ride);
+            await rideRepo.update(data.rideId, { paymentFailed: true } as any).catch(() => {});
           });
-          
+
           // Update Ride status in Postgres
-          const rideRepo = require('../config/data_source').AppDataSource.getRepository(require('../models').Ride);
-          await rideRepo.update(data.rideId, { 
+          const rideRepo = AppDataSource.getRepository(Ride);
+          await rideRepo.update(data.rideId, {
             status: 'completed' as any,
             completedAt: new Date()
           });
@@ -330,7 +372,7 @@ export class SocketHandler {
           this.io.to('admin').emit('ride:status_update', { rideId: data.rideId, status: 'completed' });
           this.broadcastToRide(data.rideId, 'ride:finished', { rideId: data.rideId });
 
-          // 🔔 PUSH: Completed for Passenger
+          // PUSH: Completed for Passenger
           NotificationService.sendToUser(data.passengerId, UserRole.PASSENGER, 'Trip Completed', 'Hope you enjoyed the ride!', {
             type: 'TRIP_COMPLETED',
             rideId: data.rideId,
@@ -346,14 +388,14 @@ export class SocketHandler {
   private async startDispatchLoop(rideId: string, lat: number, lng: number, payload: any) {
     const radiuses = [3, 5]; // 3km then 5km
     this.activeDispatches.set(rideId, new Set());
-    
+
     for (const radius of radiuses) {
       // Postgres source of truth check: halt loop instantly if cancelled
-      const rideRepo = require('../config/data_source').AppDataSource.getRepository(require('../models').Ride);
+      const rideRepo = AppDataSource.getRepository(Ride);
       const dbRide = await rideRepo.findOne({ where: { rideId } });
-      if (!dbRide || dbRide.status === 'canceled') {
-         this.activeDispatches.delete(rideId);
-         return;
+      if (!dbRide || dbRide.status === 'canceled' as any) {
+        this.activeDispatches.delete(rideId);
+        return;
       }
 
       // Check if ride is already assigned (via Redis lock)
@@ -377,15 +419,15 @@ export class SocketHandler {
           notifiedSet.add(driverId);
           this.io.to(`driver:${driverId}`).emit('ride:request', payload);
 
-          // 🔔 PUSH: New Ride Request for Driver
-          NotificationService.sendToUser(driverId, UserRole.DRIVER, '🛺 New Ride Request', 'You have a new request nearby!', {
+          // PUSH: New Ride Request for Driver
+          NotificationService.sendToUser(driverId, UserRole.DRIVER, 'New Ride Request', 'You have a new request nearby!', {
             type: 'NEW_REQUEST',
             rideId: payload.rideId,
             intent: 'booking'
           });
         });
         this.activeDispatches.set(rideId, notifiedSet);
-        
+
         // Wait for 15s for acceptance before expanding radius
         await new Promise(resolve => setTimeout(resolve, 15000));
       } else {
@@ -395,8 +437,9 @@ export class SocketHandler {
     }
 
     // Final check after expansion
-    const finalRide = await require('../config/data_source').AppDataSource.getRepository(require('../models').Ride).findOne({ where: { rideId } });
-    if (finalRide && finalRide.status !== 'canceled' && !await this.isRideAssigned(rideId)) {
+    const finalRepo = AppDataSource.getRepository(Ride);
+    const finalRide = await finalRepo.findOne({ where: { rideId } });
+    if (finalRide && finalRide.status !== 'canceled' as any && !await this.isRideAssigned(rideId)) {
       this.io.to(`ride:${rideId}`).emit('ride:failed', { message: 'No drivers available nearby' });
       this.rideExclusions.delete(rideId);
       this.activeDispatches.delete(rideId);
@@ -404,28 +447,28 @@ export class SocketHandler {
   }
 
   private async isRideAssigned(rideId: string): Promise<boolean> {
-     // A pure read check. We do NOT acquire the lock here, otherwise drivers are blocked from accepting.
-     const lockVal = await require('../config/redis').redis.get(`ride:${rideId}:lock`);
-     return lockVal !== null && lockVal !== 'probe';
+    // A pure read check. We do NOT acquire the lock here, otherwise drivers are blocked from accepting.
+    const lockVal = await redis.get(`ride:${rideId}:lock`);
+    return lockVal !== null && lockVal !== 'probe';
   }
 
   private async validateRideState(rideId: string, allowedStatuses: string[]): Promise<any> {
-    const rideRepo = require('../config/data_source').AppDataSource.getRepository(require('../models').Ride);
+    const rideRepo = AppDataSource.getRepository(Ride);
     const ride = await rideRepo.findOne({ where: { rideId } });
-    
+
     if (!ride || !allowedStatuses.includes(ride.status)) {
-        console.warn(`[SYNC_AUDIT] Ignored action for ride ${rideId} - illegal state transition from ${ride?.status}`);
-        return null;
+      console.warn(`[SYNC_AUDIT] Ignored action for ride ${rideId} - illegal state transition from ${ride?.status}`);
+      return null;
     }
 
     // Operational Guard: Check driver status if driver is assigned
     if (ride.driverId) {
-        const driverRepo = require('../config/data_source').AppDataSource.getRepository(require('../models/DriverProfile').DriverProfile);
-        const profile = await driverRepo.findOneBy({ userId: ride.driverId });
-        if (profile && (profile.status === 'suspended' || profile.status === 'rejected')) {
-            console.error(`[SYNC_AUDIT] Blocked action for ride ${rideId} - driver ${ride.driverId} is ${profile.status}`);
-            return null;
-        }
+      const driverRepo = AppDataSource.getRepository(DriverProfile);
+      const profile = await driverRepo.findOneBy({ userId: ride.driverId });
+      if (profile && (profile.status === 'suspended' || profile.status === 'rejected')) {
+        console.error(`[SYNC_AUDIT] Blocked action for ride ${rideId} - driver ${ride.driverId} is ${profile.status}`);
+        return null;
+      }
     }
 
     return ride;

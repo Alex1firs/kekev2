@@ -7,6 +7,7 @@ import helmet from 'helmet';
 import dotenv from 'dotenv';
 import { SocketHandler } from './sockets/socket_handler';
 import { AppDataSource } from './config/data_source';
+import { Ride } from './models/Ride';
 import financeRoutes from './routes/finance_routes';
 import adminRoutes from './routes/admin_routes';
 import driverRoutes from "./routes/driver_routes";
@@ -27,9 +28,11 @@ process.on('uncaughtException', (err: Error) => {
   process.exit(1);
 });
 
-const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
-  ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
-  : ['http://localhost:3000', 'http://localhost:4000'];
+const _allowedOrigins = process.env.ALLOWED_ORIGINS;
+if (!_allowedOrigins) {
+  throw new Error('FATAL: ALLOWED_ORIGINS environment variable is not set. Refusing to start.');
+}
+const ALLOWED_ORIGINS: string[] = _allowedOrigins.split(',').map(o => o.trim());
 
 const app = express();
 app.use(helmet());
@@ -87,9 +90,26 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 });
 
 AppDataSource.initialize()
-  .then(() => {
+  .then(async () => {
     console.log(JSON.stringify({ level: 'info', message: 'PostgreSQL initialized' }));
     NotificationService.initialize();
+
+    // Sweep rides stuck in 'searching' from before last restart
+    try {
+      const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000);
+      const swept = await AppDataSource.getRepository(Ride)
+        .createQueryBuilder()
+        .update()
+        .set({ status: 'failed' as any })
+        .where('status = :status AND "createdAt" < :cutoff', { status: 'searching', cutoff: tenMinAgo })
+        .execute();
+      if (swept.affected && swept.affected > 0) {
+        console.log(JSON.stringify({ level: 'info', message: `Swept ${swept.affected} stale searching rides to failed` }));
+      }
+    } catch (e: any) {
+      console.error(JSON.stringify({ level: 'warn', message: 'Stale ride sweep failed', error: e.message }));
+    }
+
     const server = httpServer.listen(PORT, () => {
       console.log(JSON.stringify({ level: 'info', message: `Keke Backend running on port ${PORT}` }));
     });

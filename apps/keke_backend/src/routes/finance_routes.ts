@@ -1,4 +1,5 @@
 import { Router, Request, Response } from "express";
+import rateLimit from "express-rate-limit";
 import { WalletService } from "../services/wallet_service";
 import { PaystackService } from "../services/paystack_service";
 import { AppDataSource } from "../config/data_source";
@@ -6,6 +7,15 @@ import { LedgerEntry } from "../models/LedgerEntry";
 import { authMiddleware, AuthRequest } from "../middleware/auth_middleware";
 
 const router = Router();
+
+const topupLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 5,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many topup attempts. Please wait a minute before trying again.' },
+    skip: () => process.env.NODE_ENV === 'development',
+});
 
 router.get("/balance/:userId", authMiddleware, async (req: AuthRequest, res: Response) => {
     try {
@@ -25,7 +35,7 @@ router.get("/balance/:userId", authMiddleware, async (req: AuthRequest, res: Res
     }
 });
 
-router.post("/topup/init", authMiddleware, async (req: AuthRequest, res: Response) => {
+router.post("/topup/init", authMiddleware, topupLimiter, async (req: AuthRequest, res: Response) => {
     try {
         const userId = req.user!.userId;
         const { email, amount } = req.body;
@@ -39,7 +49,7 @@ router.post("/topup/init", authMiddleware, async (req: AuthRequest, res: Respons
     }
 });
 
-router.post("/topup/verify", authMiddleware, async (req: AuthRequest, res: Response) => {
+router.post("/topup/verify", authMiddleware, topupLimiter, async (req: AuthRequest, res: Response) => {
     try {
         const { reference } = req.body;
         if (!reference) return res.status(400).json({ error: "Reference required" });

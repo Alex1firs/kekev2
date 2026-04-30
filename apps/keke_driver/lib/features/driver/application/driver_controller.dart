@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:dio/dio.dart' as dio;
 import 'package:geolocator/geolocator.dart';
 import '../domain/driver_profile.dart';
@@ -122,50 +121,24 @@ class DriverController extends StateNotifier<DriverState> {
   Future<void> _sendHeartbeat() async {
     if (!mounted) return;
     if (state.operationStatus == OperationStatus.available && _socketService != null) {
+      if (state.profile.status != DriverStatus.approved) return;
+
       double lat, lng;
-      if (state.mockLocation != null) {
-        lat = state.mockLocation!.latitude;
-        lng = state.mockLocation!.longitude;
-      } else {
-        try {
-          final position = await Geolocator.getCurrentPosition();
-          lat = position.latitude;
-          lng = position.longitude;
-        } catch (_) {
-          return; // Skip heartbeat if we can't get real location and no mock exists
-        }
-      }
-      if (!mounted) return;
-      
-      if (state.profile.status != DriverStatus.approved) {
-        print('[DEBUG:HEARTBEAT] Skipped: Driver status is ${state.profile.status} (Needs: approved)');
+      try {
+        final position = await Geolocator.getCurrentPosition();
+        lat = position.latitude;
+        lng = position.longitude;
+      } catch (_) {
         return;
       }
+      if (!mounted) return;
 
-      final isMock = state.mockLocation != null;
-      print('===================================================');
-      print('[DEBUG:HEARTBEAT] Source: ${isMock ? "MOCK" : "REAL GPS"}');
-      print('[DEBUG:HEARTBEAT] Payload: lat=$lat lng=$lng');
-      print('===================================================');
-      
       _socketService!.emit('driver:heartbeat', {
         'driverId': _userId,
         'lat': lat,
         'lng': lng,
       });
     }
-  }
-
-  void setMockLocation(LatLng pos) {
-    print('[DEBUG:MOCK] LONG-PRESS MAP OVERRIDE TRIGGERED at: lat=${pos.latitude}, lng=${pos.longitude}');
-    state = state.copyWith(mockLocation: pos);
-    print('[DEBUG:MOCK] driverState updated. mockLocation is now: ${state.mockLocation?.latitude}, ${state.mockLocation?.longitude}');
-    if (state.operationStatus == OperationStatus.available) _sendHeartbeat();
-  }
-
-  void clearMockLocation() {
-    state = state.copyWith(clearMockLocation: true);
-    if (state.operationStatus == OperationStatus.available) _sendHeartbeat();
   }
 
   void _handleIncomingRequest(Map<String, dynamic> data) {

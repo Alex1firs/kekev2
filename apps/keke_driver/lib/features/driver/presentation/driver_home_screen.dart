@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
-import '../../../core/config/env_config.dart';
 import '../../auth/application/auth_controller.dart';
 import '../application/driver_controller.dart';
 import '../domain/driver_profile.dart';
@@ -31,7 +29,7 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
       body: Stack(
         children: [
           // Map Background
-          _buildMap(driverState),
+          _buildMap(),
 
           // Top Status Bar
           _buildStatusHeader(driverState),
@@ -39,16 +37,10 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
           // Debt Warning Overlay
           if (profile.debtAmount > 0) _buildDebtWarning(profile.debtAmount),
 
-          // Mock Location Banner (Test Only)
-          if (EnvConfig.current.environment != AppEnvironment.prod && driverState.mockLocation != null) _buildMockBanner(
-             profile.debtAmount > 0, 
-             driverState.mockLocation!,
-          ),
-
           // Content Layer (Request or Trip HUD)
           if (driverState.activeRequest != null && driverState.tripStep == TripStep.none)
              IncomingRequestCard(request: driverState.activeRequest!, countdown: driverState.countdown ?? 30),
-          
+
           if (driverState.tripStep != TripStep.none)
              TripOperationHUD(state: driverState),
 
@@ -58,19 +50,7 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
     );
   }
 
-  Widget _buildMap(DriverState state) {
-    Set<Marker> markers = {};
-    if (EnvConfig.current.environment != AppEnvironment.prod && state.mockLocation != null) {
-      markers.add(
-        Marker(
-          markerId: const MarkerId('mock_location'),
-          position: state.mockLocation!,
-          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueViolet),
-          infoWindow: const InfoWindow(title: 'Mock Location Active'),
-        ),
-      );
-    }
-
+  Widget _buildMap() {
     return Container(
       color: Colors.grey.shade900,
       child: GoogleMap(
@@ -79,10 +59,6 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
         myLocationButtonEnabled: false,
         onMapCreated: (controller) => _mapController = controller,
         mapType: MapType.normal,
-        markers: markers,
-        onLongPress: EnvConfig.current.environment != AppEnvironment.prod ? (LatLng pos) {
-          ref.read(driverControllerProvider.notifier).setMockLocation(pos);
-        } : null,
       ),
     );
   }
@@ -176,46 +152,5 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
     );
   }
 
-  Widget _buildMockBanner(bool hasDebt, LatLng mockPos) {
-    return Positioned(
-      top: hasDebt ? 180 : 130,
-      left: 10,
-      right: 10,
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-        decoration: BoxDecoration(
-          color: Colors.deepPurple,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.purpleAccent, width: 2),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text(
-                    'MOCK LOCATION ACTIVE',
-                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'Lat: ${mockPos.latitude.toStringAsFixed(4)}\nLng: ${mockPos.longitude.toStringAsFixed(4)}',
-                    style: const TextStyle(color: Colors.white70, fontSize: 11),
-                  ),
-                ],
-              ),
-            ),
-            TextButton(
-              style: TextButton.styleFrom(backgroundColor: Colors.white24),
-              onPressed: () => ref.read(driverControllerProvider.notifier).clearMockLocation(),
-              child: const Text('CLEAR', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }
+

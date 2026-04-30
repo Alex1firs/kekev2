@@ -21,10 +21,13 @@ class EnvConfig {
     // Hard fallback to DigitalOcean backend since Xcode strips --dart-define during direct Archive
     final String resolvedApiUrl = apiUrl.isEmpty ? 'https://api.kekeride.ng/api/v1' : apiUrl;
 
-    const String mapsKey = String.fromEnvironment(
-      'GOOGLE_MAPS_API_KEY', 
-      defaultValue: 'AIzaSyAIupE9r7gG3XGcem6hlg_8Dosw5AOk9yc'
-    );
+    const String mapsKey = String.fromEnvironment('GOOGLE_MAPS_API_KEY');
+    if (mapsKey.isEmpty) {
+      throw Exception(
+        'FATAL: GOOGLE_MAPS_API_KEY is not set. '
+        'Build with --dart-define=GOOGLE_MAPS_API_KEY=<your_key>',
+      );
+    }
 
     AppEnvironment parsedEnv;
     switch (envString) {

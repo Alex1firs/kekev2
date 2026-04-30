@@ -6,7 +6,7 @@ services:
     restart: always
     mem_limit: 250m
     environment:
-      POSTGRES_PASSWORD: securepassword123
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -29,15 +29,16 @@ services:
   api_prod:
     build: .
     restart: always
-    mem_limit: 250m 
+    mem_limit: 250m
     environment:
       NODE_ENV: production
       PORT: 4000
-      DATABASE_URL: postgresql://postgres:securepassword123@postgres_shared:5432/keke_prod_db
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres_shared:5432/keke_prod_db
       REDIS_URL: redis://redis_shared:6379/0
       NODE_OPTIONS: "--max-old-space-size=200"
-      ADMIN_API_KEY: keke_harden_test_2025
-      JWT_SECRET: default_secret_change_me_in_prod
+      ADMIN_API_KEY: ${ADMIN_API_KEY}
+      JWT_SECRET: ${JWT_SECRET}
+      PAYSTACK_SECRET_KEY: ${PAYSTACK_SECRET_KEY}
       RATE_LIMIT_WINDOW: 900000
       ADMIN_RATE_LIMIT_MAX: 100
       ONBOARDING_RATE_LIMIT_MAX: 5
@@ -59,10 +60,12 @@ services:
     environment:
       NODE_ENV: staging
       PORT: 3000
-      DATABASE_URL: postgresql://postgres:securepassword123@postgres_shared:5432/keke_staging_db
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres_shared:5432/keke_staging_db
       REDIS_URL: redis://redis_shared:6379/1
       NODE_OPTIONS: "--max-old-space-size=220"
-      ADMIN_API_KEY: keke_harden_test_2025
+      ADMIN_API_KEY: ${ADMIN_API_KEY}
+      JWT_SECRET: ${JWT_SECRET}
+      PAYSTACK_SECRET_KEY: ${PAYSTACK_SECRET_KEY}
       RATE_LIMIT_WINDOW: 900000
       ADMIN_RATE_LIMIT_MAX: 100
       ONBOARDING_RATE_LIMIT_MAX: 5

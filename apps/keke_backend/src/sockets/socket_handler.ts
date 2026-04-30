@@ -9,7 +9,10 @@ import { DriverProfile } from '../models/DriverProfile';
 import { redis } from '../config/redis';
 import { WalletService } from '../services/wallet_service';
 
-const JWT_SECRET = process.env.JWT_SECRET || "default_secret_change_me_in_prod";
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+    throw new Error('FATAL: JWT_SECRET environment variable is not set. Refusing to start.');
+}
 
 export class SocketHandler {
   private io: Server;

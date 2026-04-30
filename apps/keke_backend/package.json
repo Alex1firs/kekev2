@@ -8,6 +8,9 @@
     "dev": "nodemon src/index.ts",
     "build": "npx tsc && (mkdir -p dist/config && cp src/config/*.json dist/config/ 2>/dev/null || true)",
     "serve": "node dist/index.js",
+    "migration:run": "npx typeorm-ts-node-commonjs migration:run -d src/config/data_source.ts",
+    "migration:revert": "npx typeorm-ts-node-commonjs migration:revert -d src/config/data_source.ts",
+    "migration:generate": "npx typeorm-ts-node-commonjs migration:generate -d src/config/data_source.ts src/migrations/",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

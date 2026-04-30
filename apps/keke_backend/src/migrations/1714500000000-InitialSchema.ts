@@ -1,24 +1,37 @@
 import { MigrationInterface, QueryRunner } from "typeorm";
 
+// Idempotent migration — safe to run on a fresh DB or one already created
+// by TypeORM synchronize mode. Uses IF NOT EXISTS / exception handlers throughout.
 export class InitialSchema1714500000000 implements MigrationInterface {
     name = 'InitialSchema1714500000000'
+
+    private async createEnumIfNotExists(queryRunner: QueryRunner, name: string, values: string[]): Promise<void> {
+        const valuesStr = values.map(v => `'${v}'`).join(', ');
+        await queryRunner.query(`
+            DO $$ BEGIN
+                CREATE TYPE "${name}" AS ENUM (${valuesStr});
+            EXCEPTION
+                WHEN duplicate_object THEN NULL;
+            END $$;
+        `);
+    }
 
     public async up(queryRunner: QueryRunner): Promise<void> {
         await queryRunner.query(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`);
 
-        // Enum types
-        await queryRunner.query(`CREATE TYPE "user_role_enum" AS ENUM ('passenger', 'driver', 'admin')`);
-        await queryRunner.query(`CREATE TYPE "driver_profile_status_enum" AS ENUM ('pending_documents', 'pending_review', 'approved', 'rejected', 'suspended')`);
-        await queryRunner.query(`CREATE TYPE "ride_status_enum" AS ENUM ('searching', 'accepted', 'arrived', 'in_progress', 'started', 'completed', 'canceled', 'failed')`);
-        await queryRunner.query(`CREATE TYPE "ledger_entry_balance_type_enum" AS ENUM ('passenger', 'driver_available', 'driver_pending', 'driver_commission_debt')`);
-        await queryRunner.query(`CREATE TYPE "ledger_entry_transaction_type_enum" AS ENUM ('topup', 'trip_payment', 'commission_charge', 'payout', 'refund')`);
-        await queryRunner.query(`CREATE TYPE "transaction_status_enum" AS ENUM ('pending', 'success', 'failed', 'reversed')`);
-        await queryRunner.query(`CREATE TYPE "device_token_role_enum" AS ENUM ('passenger', 'driver', 'admin')`);
-        await queryRunner.query(`CREATE TYPE "payout_record_status_enum" AS ENUM ('pending', 'processing', 'success', 'failed')`);
+        // Enum types — safe on existing schema
+        await this.createEnumIfNotExists(queryRunner, 'user_role_enum', ['passenger', 'driver', 'admin']);
+        await this.createEnumIfNotExists(queryRunner, 'driver_profile_status_enum', ['pending_documents', 'pending_review', 'approved', 'rejected', 'suspended']);
+        await this.createEnumIfNotExists(queryRunner, 'ride_status_enum', ['searching', 'accepted', 'arrived', 'in_progress', 'started', 'completed', 'canceled', 'failed']);
+        await this.createEnumIfNotExists(queryRunner, 'ledger_entry_balance_type_enum', ['passenger', 'driver_available', 'driver_pending', 'driver_commission_debt']);
+        await this.createEnumIfNotExists(queryRunner, 'ledger_entry_transaction_type_enum', ['topup', 'trip_payment', 'commission_charge', 'payout', 'refund']);
+        await this.createEnumIfNotExists(queryRunner, 'transaction_status_enum', ['pending', 'success', 'failed', 'reversed']);
+        await this.createEnumIfNotExists(queryRunner, 'device_token_role_enum', ['passenger', 'driver', 'admin']);
+        await this.createEnumIfNotExists(queryRunner, 'payout_record_status_enum', ['pending', 'processing', 'success', 'failed']);
 
-        // user
+        // Tables — CREATE TABLE IF NOT EXISTS throughout
         await queryRunner.query(`
-            CREATE TABLE "user" (
+            CREATE TABLE IF NOT EXISTS "user" (
                 "id" uuid NOT NULL DEFAULT uuid_generate_v4(),
                 "phone" character varying NOT NULL,
                 "password" character varying NOT NULL,
@@ -32,9 +45,8 @@ export class InitialSchema1714500000000 implements MigrationInterface {
             )
         `);
 
-        // wallet
         await queryRunner.query(`
-            CREATE TABLE "wallet" (
+            CREATE TABLE IF NOT EXISTS "wallet" (
                 "userId" character varying NOT NULL,
                 "passengerBalance" numeric(12,2) NOT NULL DEFAULT '0',
                 "driverAvailableBalance" numeric(12,2) NOT NULL DEFAULT '0',
@@ -46,9 +58,8 @@ export class InitialSchema1714500000000 implements MigrationInterface {
             )
         `);
 
-        // driver_profile
         await queryRunner.query(`
-            CREATE TABLE "driver_profile" (
+            CREATE TABLE IF NOT EXISTS "driver_profile" (
                 "userId" character varying NOT NULL,
                 "firstName" character varying NOT NULL,
                 "lastName" character varying NOT NULL,
@@ -65,9 +76,8 @@ export class InitialSchema1714500000000 implements MigrationInterface {
             )
         `);
 
-        // ride
         await queryRunner.query(`
-            CREATE TABLE "ride" (
+            CREATE TABLE IF NOT EXISTS "ride" (
                 "rideId" character varying NOT NULL,
                 "passengerId" character varying NOT NULL,
                 "driverId" character varying,
@@ -88,9 +98,8 @@ export class InitialSchema1714500000000 implements MigrationInterface {
             )
         `);
 
-        // ledger_entry (FK to wallet)
         await queryRunner.query(`
-            CREATE TABLE "ledger_entry" (
+            CREATE TABLE IF NOT EXISTS "ledger_entry" (
                 "id" uuid NOT NULL DEFAULT uuid_generate_v4(),
                 "walletId" character varying NOT NULL,
                 "balanceType" "ledger_entry_balance_type_enum" NOT NULL,
@@ -105,9 +114,8 @@ export class InitialSchema1714500000000 implements MigrationInterface {
             )
         `);
 
-        // transaction
         await queryRunner.query(`
-            CREATE TABLE "transaction" (
+            CREATE TABLE IF NOT EXISTS "transaction" (
                 "id" uuid NOT NULL DEFAULT uuid_generate_v4(),
                 "userId" character varying NOT NULL,
                 "amount" numeric(12,2) NOT NULL,
@@ -122,9 +130,8 @@ export class InitialSchema1714500000000 implements MigrationInterface {
             )
         `);
 
-        // device_token
         await queryRunner.query(`
-            CREATE TABLE "device_token" (
+            CREATE TABLE IF NOT EXISTS "device_token" (
                 "id" uuid NOT NULL DEFAULT uuid_generate_v4(),
                 "userId" character varying NOT NULL,
                 "role" "device_token_role_enum" NOT NULL,
@@ -140,9 +147,8 @@ export class InitialSchema1714500000000 implements MigrationInterface {
             )
         `);
 
-        // audit_log
         await queryRunner.query(`
-            CREATE TABLE "audit_log" (
+            CREATE TABLE IF NOT EXISTS "audit_log" (
                 "id" uuid NOT NULL DEFAULT uuid_generate_v4(),
                 "adminId" character varying NOT NULL,
                 "action" character varying NOT NULL,
@@ -154,9 +160,8 @@ export class InitialSchema1714500000000 implements MigrationInterface {
             )
         `);
 
-        // payout_record
         await queryRunner.query(`
-            CREATE TABLE "payout_record" (
+            CREATE TABLE IF NOT EXISTS "payout_record" (
                 "id" uuid NOT NULL DEFAULT uuid_generate_v4(),
                 "driverId" character varying NOT NULL,
                 "amount" numeric(12,2) NOT NULL,
@@ -170,17 +175,17 @@ export class InitialSchema1714500000000 implements MigrationInterface {
             )
         `);
 
-        // Indexes
-        await queryRunner.query(`CREATE INDEX "IDX_driver_profile_status" ON "driver_profile" ("status")`);
-        await queryRunner.query(`CREATE INDEX "IDX_ride_passengerId" ON "ride" ("passengerId")`);
-        await queryRunner.query(`CREATE INDEX "IDX_ride_driverId" ON "ride" ("driverId")`);
-        await queryRunner.query(`CREATE INDEX "IDX_ride_status" ON "ride" ("status")`);
-        await queryRunner.query(`CREATE INDEX "IDX_ride_passengerId_status" ON "ride" ("passengerId", "status")`);
-        await queryRunner.query(`CREATE INDEX "IDX_ride_driverId_status" ON "ride" ("driverId", "status")`);
-        await queryRunner.query(`CREATE INDEX "IDX_ride_status_updatedAt" ON "ride" ("status", "updatedAt")`);
-        await queryRunner.query(`CREATE INDEX "IDX_ledger_entry_walletId" ON "ledger_entry" ("walletId")`);
-        await queryRunner.query(`CREATE INDEX "IDX_device_token_userId" ON "device_token" ("userId")`);
-        await queryRunner.query(`CREATE INDEX "IDX_device_token_isActive" ON "device_token" ("isActive")`);
+        // Indexes — CREATE INDEX IF NOT EXISTS
+        await queryRunner.query(`CREATE INDEX IF NOT EXISTS "IDX_driver_profile_status" ON "driver_profile" ("status")`);
+        await queryRunner.query(`CREATE INDEX IF NOT EXISTS "IDX_ride_passengerId" ON "ride" ("passengerId")`);
+        await queryRunner.query(`CREATE INDEX IF NOT EXISTS "IDX_ride_driverId" ON "ride" ("driverId")`);
+        await queryRunner.query(`CREATE INDEX IF NOT EXISTS "IDX_ride_status" ON "ride" ("status")`);
+        await queryRunner.query(`CREATE INDEX IF NOT EXISTS "IDX_ride_passengerId_status" ON "ride" ("passengerId", "status")`);
+        await queryRunner.query(`CREATE INDEX IF NOT EXISTS "IDX_ride_driverId_status" ON "ride" ("driverId", "status")`);
+        await queryRunner.query(`CREATE INDEX IF NOT EXISTS "IDX_ride_status_updatedAt" ON "ride" ("status", "updatedAt")`);
+        await queryRunner.query(`CREATE INDEX IF NOT EXISTS "IDX_ledger_entry_walletId" ON "ledger_entry" ("walletId")`);
+        await queryRunner.query(`CREATE INDEX IF NOT EXISTS "IDX_device_token_userId" ON "device_token" ("userId")`);
+        await queryRunner.query(`CREATE INDEX IF NOT EXISTS "IDX_device_token_isActive" ON "device_token" ("isActive")`);
     }
 
     public async down(queryRunner: QueryRunner): Promise<void> {

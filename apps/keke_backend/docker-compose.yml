@@ -101,6 +101,8 @@ services:
     image: adminer
     restart: always
     mem_limit: 60m
+    ports:
+      - "127.0.0.1:8080:8080"
     depends_on:
       postgres_shared:
         condition: service_healthy

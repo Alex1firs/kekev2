@@ -1,4 +1,6 @@
-const API_BASE = 'https://api.kekeride.ng/api/v1/admin';
+const API_BASE = window.location.hostname === 'localhost'
+  ? `http://localhost:4000/api/v1/admin`
+  : 'https://api.kekeride.ng/api/v1/admin';
 let ADMIN_KEY = sessionStorage.getItem('KEKE_ADMIN_KEY') || '';
 
 // --- XSS Protection ---

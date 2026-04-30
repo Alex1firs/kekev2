@@ -4,9 +4,11 @@ import 'package:firebase_core/firebase_core.dart';
 import 'core/routing/app_router.dart';
 import 'core/theme/app_theme.dart';
 import 'core/network/notification_service.dart';
+import 'core/services/location_foreground_task.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  initForegroundTask();
   
   final container = ProviderContainer();
   final notificationService = container.read(notificationServiceProvider('driver'));

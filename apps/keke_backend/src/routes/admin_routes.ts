@@ -106,7 +106,8 @@ router.get("/drivers/:userId/documents/:docType", async (req: Request, res: Resp
 router.post("/drivers/:userId/approve", async (req: Request, res: Response) => {
     try {
         const userId = req.params.userId as string;
-        const result = await AdminService.updateDriverStatus(userId, DriverStatus.APPROVED);
+        const adminId = `admin_${(req.headers['x-admin-key'] as string).slice(-8)}`;
+        const result = await AdminService.updateDriverStatus(userId, DriverStatus.APPROVED, undefined, adminId);
         res.json(result);
     } catch (err: any) {
         res.status(500).json({ error: err.message });
@@ -119,14 +120,15 @@ router.post("/drivers/:userId/approve", async (req: Request, res: Response) => {
 router.post("/drivers/:userId/reject", async (req: Request, res: Response) => {
     try {
         const userId = req.params.userId as string;
-        
+
         // Strict Validation
         const validated = adminRejectionSchema.safeParse(req.body);
         if (!validated.success) {
           return res.status(400).json({ error: "Validation Failed", details: validated.error.format() });
         }
 
-        const result = await AdminService.updateDriverStatus(userId, DriverStatus.REJECTED, validated.data.reason);
+        const adminId = `admin_${(req.headers['x-admin-key'] as string).slice(-8)}`;
+        const result = await AdminService.updateDriverStatus(userId, DriverStatus.REJECTED, validated.data.reason, adminId);
         res.json(result);
     } catch (err: any) {
         res.status(500).json({ error: err.message });
@@ -139,7 +141,8 @@ router.post("/drivers/:userId/reject", async (req: Request, res: Response) => {
 router.post("/drivers/:userId/suspend", async (req: Request, res: Response) => {
     try {
         const userId = req.params.userId as string;
-        const result = await AdminService.updateDriverStatus(userId, DriverStatus.SUSPENDED, req.body.reason || "Policy violation");
+        const adminId = `admin_${(req.headers['x-admin-key'] as string).slice(-8)}`;
+        const result = await AdminService.updateDriverStatus(userId, DriverStatus.SUSPENDED, req.body.reason || "Policy violation", adminId);
         res.json(result);
     } catch (err: any) {
         res.status(500).json({ error: err.message });
@@ -152,7 +155,8 @@ router.post("/drivers/:userId/suspend", async (req: Request, res: Response) => {
 router.post("/drivers/:userId/activate", async (req: Request, res: Response) => {
     try {
         const userId = req.params.userId as string;
-        const result = await AdminService.updateDriverStatus(userId, DriverStatus.APPROVED);
+        const adminId = `admin_${(req.headers['x-admin-key'] as string).slice(-8)}`;
+        const result = await AdminService.updateDriverStatus(userId, DriverStatus.APPROVED, undefined, adminId);
         res.json(result);
     } catch (err: any) {
         res.status(500).json({ error: err.message });

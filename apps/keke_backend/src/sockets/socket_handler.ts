@@ -184,8 +184,23 @@ export class SocketHandler {
                 this.rideExclusions.set(rideId, new Set());
                 log.info(`Starting dispatch for ride ${rideId}`);
                 this.io.to('admin').emit('ride:status_update', { rideId, status: 'searching' });
-                this.startDispatchLoop(rideId, pickupLat, pickupLng, request).catch((err: any) => {
-                    log.error(JSON.stringify({ level: 'error', event: 'dispatch_loop_failed', rideId, error: err?.message }));
+
+                const DISPATCH_TIMEOUT_MS = 40_000;
+                Promise.race([
+                    this.startDispatchLoop(rideId, pickupLat, pickupLng, request),
+                    new Promise<void>((_, reject) =>
+                        setTimeout(() => reject(new Error('dispatch_timeout')), DISPATCH_TIMEOUT_MS)
+                    ),
+                ]).catch(async (err: any) => {
+                    log.error(JSON.stringify({ level: 'error', event: 'dispatch_failed', rideId, error: err?.message }));
+                    if (err?.message === 'dispatch_timeout') {
+                        try {
+                            await AppDataSource.getRepository(Ride).update(rideId, { status: 'failed' as any });
+                            this.io.to(`ride:${rideId}`).emit('ride:failed', { message: 'No drivers available nearby' });
+                        } catch (_) {}
+                        this.rideExclusions.delete(rideId);
+                        this.activeDispatches.delete(rideId);
+                    }
                 });
             });
 

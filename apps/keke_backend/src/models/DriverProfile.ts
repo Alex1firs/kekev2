@@ -30,7 +30,7 @@ export class DriverProfile {
     @Column({ type: "enum", enum: DriverStatus, default: DriverStatus.PENDING_DOCUMENTS })
     status!: DriverStatus;
 
-    @Column({ nullable: true })
+    @Column({ type: 'varchar', length: 500, nullable: true })
     rejectionReason!: string;
 
     @Column({ nullable: true })

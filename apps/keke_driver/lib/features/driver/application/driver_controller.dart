@@ -1,7 +1,10 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:dio/dio.dart' as dio;
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:geolocator/geolocator.dart';
+import '../../../core/services/location_foreground_task.dart';
 import '../domain/driver_profile.dart';
 import '../domain/driver_state.dart';
 import '../domain/trip_request.dart';
@@ -412,15 +415,32 @@ class DriverController extends StateNotifier<DriverState> {
     if (state.operationStatus == OperationStatus.offline) {
       print('[DEBUG:TOGGLE] Driver going ONLINE. Starting heartbeat...');
       state = state.copyWith(operationStatus: OperationStatus.available);
-      _startHeartbeat(); // Ensure heartbeat fires immediately to get into Redis
+      _startHeartbeat();
+      _startLocationForegroundService();
     } else {
       print('[DEBUG:TOGGLE] Driver going OFFLINE. Stopping heartbeat...');
       state = state.copyWith(operationStatus: OperationStatus.offline);
       _heartbeatTimer?.cancel();
+      _stopLocationForegroundService();
       if (_socketService != null) {
         _socketService!.emit('driver:offline', {'driverId': _userId});
       }
     }
+  }
+
+  void _startLocationForegroundService() {
+    if (!Platform.isAndroid) return;
+    FlutterForegroundTask.startService(
+      serviceId: 1001,
+      notificationTitle: 'Keke Driver',
+      notificationText: 'You are online and available for rides',
+      callback: locationTaskCallback,
+    ).catchError((_) {});
+  }
+
+  void _stopLocationForegroundService() {
+    if (!Platform.isAndroid) return;
+    FlutterForegroundTask.stopService().catchError((_) {});
   }
 
   // --- Real Request Flow ---

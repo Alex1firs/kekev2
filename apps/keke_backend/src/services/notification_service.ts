@@ -3,6 +3,7 @@ import { AppDataSource } from '../config/data_source';
 import { DeviceToken } from '../models/DeviceToken';
 import { UserRole } from '../models/User';
 import { In } from 'typeorm';
+import { redis } from '../config/redis';
 import path from 'path';
 import fs from 'fs';
 
@@ -44,15 +45,20 @@ export class NotificationService {
 
         const tokens = activeTokens.map(t => t.token);
 
-        // Deduplication / Suppression logic (Simple 2s window)
-        // In a real system, we'd use Redis keys to prevent double-pushes for the same rideId+type
-        
+        // 2-second dedup window — prevents double-pushes when multiple events fire close together
+        const rideId = data?.rideId;
+        const type: string = data?.type || '';
+        if (rideId && type) {
+            const dedupKey = `notif:${userId}:${type}:${rideId}`;
+            const already = await redis.get(dedupKey);
+            if (already) return;
+            await redis.setex(dedupKey, 2, '1');
+        }
+
         console.log(`[NOTIFICATION_SEND] To ${userId} | Title: ${title} | Body: ${body} | Tokens: ${tokens.length}`);
 
         if (!this.initialized) return;
 
-        // Determine sound based on type
-        const type = data.type || '';
         const customSoundTypes = ['NEW_REQUEST', 'RIDE_ASSIGNED', 'RIDE_ARRIVED'];
         const sound = customSoundTypes.includes(type) ? 'keke_ring.wav' : 'default';
 

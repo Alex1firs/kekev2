@@ -60,7 +60,7 @@ export class AdminService {
      * Approve or Reject a driver
      * Logic: Mutation first, Audit Log second.
      */
-    static async updateDriverStatus(userId: string, status: DriverStatus, reason?: string) {
+    static async updateDriverStatus(userId: string, status: DriverStatus, reason?: string, adminId?: string) {
         const repo = AppDataSource.getRepository(DriverProfile);
         const profile = await repo.findOneBy({ userId });
         if (!profile) throw new Error("Driver profile not found");
@@ -93,7 +93,7 @@ export class AdminService {
           else if (status === DriverStatus.SUSPENDED) action = "SUSPEND_DRIVER";
 
           await auditRepo.save({
-            adminId: "SYSTEM_ADMIN",
+            adminId: adminId || "SYSTEM_ADMIN",
             action,
             entityType: "DRIVER_PROFILE",
             entityId: userId,

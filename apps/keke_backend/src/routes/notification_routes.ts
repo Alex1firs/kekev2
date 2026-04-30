@@ -7,7 +7,8 @@ const router = Router();
 // Register or update fcm token
 router.post('/tokens', authMiddleware, NotificationController.registerToken);
 
-// Deactivate token on logout
-router.delete('/tokens/:token', authMiddleware, NotificationController.deactivateToken);
+// Deactivate token on logout — no auth required; token value itself is the identifier.
+// A caller must know the exact FCM token string to deactivate it (low-risk endpoint).
+router.delete('/tokens/:token', NotificationController.deactivateToken);
 
 export default router;

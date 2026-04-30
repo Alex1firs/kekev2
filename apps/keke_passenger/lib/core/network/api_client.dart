@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../config/env_config.dart';
 import '../storage/secure_storage.dart';
+import 'notification_service.dart';
 
 class ApiClient {
   final Dio _dio;
@@ -33,7 +34,13 @@ final dioProvider = Provider<Dio>((ref) {
       },
       onError: (DioException e, handler) async {
         if (e.response?.statusCode == 401) {
-          // Clear storage and signal auth expiry; auth_controller listens to this flag
+          // Deregister FCM device token before clearing auth so the old token
+          // is marked inactive and won't deliver notifications to the next user.
+          try {
+            final notifService = ref.read(notificationServiceProvider('passenger'));
+            final fcmToken = await notifService.getToken();
+            if (fcmToken != null) await notifService.deleteToken(fcmToken);
+          } catch (_) {}
           await ref.read(secureStorageServiceProvider).clearAll();
           ref.read(unauthorizedEventProvider.notifier).state = true;
         }

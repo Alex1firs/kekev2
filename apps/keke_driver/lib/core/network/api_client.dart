@@ -38,14 +38,8 @@ final dioProvider = Provider<Dio>((ref) {
       },
       onError: (DioException e, handler) async {
         if (e.response?.statusCode == 401) {
-          // Deregister FCM device token before clearing auth so the old token
-          // is marked inactive and won't deliver notifications to the next user.
-          try {
-            final notifService = ref.read(notificationServiceProvider('driver'));
-            final fcmToken = await notifService.getToken();
-            if (fcmToken != null) await notifService.deleteToken(fcmToken);
-          } catch (_) {}
-          await ref.read(secureStorageServiceProvider).clearAll();
+          // Trigger logout callback — AuthController.logout() handles FCM
+          // token deregistration before clearing storage.
           final callback = ref.read(unauthorizedCallbackProvider);
           if (callback != null) {
             Future.microtask(callback);
@@ -61,4 +55,9 @@ final dioProvider = Provider<Dio>((ref) {
 
 final apiClientProvider = Provider<ApiClient>((ref) {
   return ApiClient(ref.watch(dioProvider));
+});
+
+final notificationServiceProvider = Provider.family<NotificationService, String>((ref, role) {
+  final dio = ref.watch(dioProvider);
+  return NotificationService(dio, role);
 });

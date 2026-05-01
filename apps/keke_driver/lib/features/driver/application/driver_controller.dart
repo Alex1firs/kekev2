@@ -14,7 +14,8 @@ import '../../../core/network/api_client.dart';
 import '../../auth/application/auth_controller.dart';
 import '../../auth/domain/auth_state.dart';
 import 'package:jwt_decoder/jwt_decoder.dart';
-import '../../core/network/notification_service.dart';
+import '../../../core/network/notification_service.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import '../../../core/services/sound_service.dart';
 
 class DriverController extends StateNotifier<DriverState> {
@@ -652,30 +653,29 @@ final driverControllerProvider = StateNotifierProvider<DriverController, DriverS
   final apiClient = ref.watch(apiClientProvider);
   final authState = ref.watch(authControllerProvider);
   
+  final socketService = ref.read(socketServiceProvider);
+  final notificationService = ref.read(notificationServiceProvider('driver'));
+  final soundService = ref.read(soundServiceProvider);
+
   String userId = 'guest';
   if (authState.status == AuthStatus.authenticated && authState.token != null) {
     try {
       final decodedToken = JwtDecoder.decode(authState.token!);
       final extractedId = decodedToken['userId'];
-      
+
       if (extractedId == null || extractedId.toString().isEmpty) {
         throw 'Missing userId in token';
       }
-      
+
       userId = extractedId.toString();
     } catch (e) {
       print('[CRITICAL:AUTH] JWT Decode failed or userId missing: $e');
       Future.microtask(() {
         ref.read(authControllerProvider.notifier).forceUnauthorizedCleanup();
       });
-      return DriverController(null, apiClient, 'session_invalid');
+      return DriverController(null, apiClient, notificationService, soundService, 'session_invalid');
     }
   }
-
-  // Initial socket
-  final socketService = ref.read(socketServiceProvider);
-  final notificationService = ref.read(notificationServiceProvider('driver'));
-  final soundService = ref.read(soundServiceProvider);
 
   final controller = DriverController(socketService, apiClient, notificationService, soundService, userId);
 

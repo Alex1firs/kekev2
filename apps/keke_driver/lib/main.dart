@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'core/routing/app_router.dart';
 import 'core/theme/app_theme.dart';
-import 'core/network/notification_service.dart';
+import 'core/network/api_client.dart';
 import 'core/services/location_foreground_task.dart';
 
 void main() async {

@@ -10,6 +10,7 @@ import '../../auth/application/auth_controller.dart';
 import '../../auth/domain/auth_state.dart';
 import 'package:jwt_decoder/jwt_decoder.dart';
 import '../../core/network/notification_service.dart';
+import '../domain/chat_message.dart';
 import '../../../core/services/sound_service.dart';
 
 class BookingController extends StateNotifier<BookingState> {
@@ -97,6 +98,15 @@ class BookingController extends StateNotifier<BookingState> {
              state = state.copyWith(step: BookingStep.started);
            }
            break;
+        case 'chat:message':
+          final msg = ChatMessage(
+            senderId:   data['senderId'] as String,
+            senderRole: data['senderRole'] as String,
+            message:    data['message'] as String,
+            timestamp:  DateTime.tryParse(data['timestamp'] as String? ?? '') ?? DateTime.now(),
+          );
+          state = state.copyWith(chatMessages: [...state.chatMessages, msg]);
+          break;
         case 'ride:cancelled':
         case 'ride:finished':
           print('[PASSENGER_SYNC] Ride finished/cancelled. Resetting state.');
@@ -134,6 +144,7 @@ class BookingController extends StateNotifier<BookingState> {
       clearAssignedDriver: true,
       clearRideId: true,
       assignedDriverLocation: null,
+      chatMessages: [],
     );
     _stopWatchdog();
   }
@@ -363,6 +374,16 @@ class BookingController extends StateNotifier<BookingState> {
     }
   }
   
+  void sendChatMessage(String message) {
+    if (_socketService == null || state.rideId == null || message.trim().isEmpty) return;
+    _socketService!.emit('chat:send', {
+      'rideId':     state.rideId,
+      'senderId':   passengerId,
+      'senderRole': 'passenger',
+      'message':    message.trim(),
+    });
+  }
+
   void cancelBooking() {
     if (_socketService != null && state.rideId != null) {
       print('[PASSENGER_LIFECYCLE] Requesting cancellation for: ${state.rideId}');

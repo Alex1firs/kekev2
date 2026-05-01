@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../application/driver_controller.dart';
 import '../../domain/driver_profile.dart';
 import '../../domain/driver_state.dart';
+import 'ride_chat_panel.dart';
 
 class TripOperationHUD extends ConsumerWidget {
   final DriverState state;
@@ -36,7 +37,7 @@ class TripOperationHUD extends ConsumerWidget {
             const SizedBox(height: 24),
             _buildMainAction(ref),
             const SizedBox(height: 16),
-            _buildPaxDetails(),
+            _buildPaxDetails(context),
             if (state.tripStep == TripStep.completed)
                _buildCompletionButton(ref),
           ],
@@ -118,22 +119,52 @@ class TripOperationHUD extends ConsumerWidget {
     );
   }
 
-  Widget _buildPaxDetails() {
+  Widget _buildPaxDetails(BuildContext context) {
+    final unread = state.chatMessages.where((m) => m.isPassenger).length;
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         CircleAvatar(backgroundColor: Colors.grey.shade900, child: const Icon(Icons.person, color: Colors.white)),
-        const SizedBox(width: 16),
-        Text(state.activeRequest!.passengerName, style: const TextStyle(color: Colors.white, fontSize: 18)),
-        const SizedBox(width: 24),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Text(state.activeRequest!.passengerName,
+              style: const TextStyle(color: Colors.white, fontSize: 18),
+              overflow: TextOverflow.ellipsis),
+        ),
+        // Chat button
+        Stack(
+          clipBehavior: Clip.none,
+          children: [
+            IconButton(
+              onPressed: () => showModalBottomSheet(
+                context: context,
+                isScrollControlled: true,
+                backgroundColor: Colors.transparent,
+                builder: (_) => SizedBox(
+                  height: MediaQuery.of(context).size.height * 0.6,
+                  child: const RideChatPanel(),
+                ),
+              ),
+              icon: const Icon(Icons.chat_bubble_outline, color: Colors.amberAccent),
+            ),
+            if (unread > 0)
+              Positioned(
+                right: 6,
+                top: 6,
+                child: Container(
+                  padding: const EdgeInsets.all(3),
+                  decoration: const BoxDecoration(color: Colors.red, shape: BoxShape.circle),
+                  child: Text('$unread', style: const TextStyle(color: Colors.white, fontSize: 10)),
+                ),
+              ),
+          ],
+        ),
         IconButton(
           onPressed: () async {
             final phone = state.activeRequest?.passengerPhone;
             if (phone != null && phone.isNotEmpty) {
               final uri = Uri(scheme: 'tel', path: phone);
-              if (await canLaunchUrl(uri)) {
-                await launchUrl(uri);
-              }
+              if (await canLaunchUrl(uri)) await launchUrl(uri);
             }
           },
           icon: const Icon(Icons.call, color: Colors.greenAccent),

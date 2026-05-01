@@ -1,4 +1,5 @@
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'chat_message.dart';
 
 enum BookingStep {
   loading,
@@ -37,6 +38,7 @@ class BookingState {
   final String? rideId;
   final LatLng? assignedDriverLocation;
   final DateTime? lastLocationUpdate;
+  final List<ChatMessage> chatMessages;
 
   const BookingState({
     this.step = BookingStep.loading,
@@ -56,6 +58,7 @@ class BookingState {
     this.rideId,
     this.assignedDriverLocation,
     this.lastLocationUpdate,
+    this.chatMessages = const [],
   });
 
   BookingState copyWith({
@@ -78,6 +81,7 @@ class BookingState {
     bool clearRideId = false,
     LatLng? assignedDriverLocation,
     DateTime? lastLocationUpdate,
+    List<ChatMessage>? chatMessages,
   }) {
     return BookingState(
       step: step ?? this.step,
@@ -97,6 +101,7 @@ class BookingState {
       rideId: clearRideId ? null : (rideId ?? this.rideId),
       assignedDriverLocation: assignedDriverLocation ?? this.assignedDriverLocation,
       lastLocationUpdate: lastLocationUpdate ?? this.lastLocationUpdate,
+      chatMessages: chatMessages ?? this.chatMessages,
     );
   }
 }

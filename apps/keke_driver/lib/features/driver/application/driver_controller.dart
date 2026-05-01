@@ -5,6 +5,7 @@ import 'package:dio/dio.dart' as dio;
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:geolocator/geolocator.dart';
 import '../../../core/services/location_foreground_task.dart';
+import '../domain/chat_message.dart';
 import '../domain/driver_profile.dart';
 import '../domain/driver_state.dart';
 import '../domain/trip_request.dart';
@@ -111,6 +112,15 @@ class DriverController extends StateNotifier<DriverState> {
             _stopWatchdog();
             finishAndGoAvailable();
           }
+          break;
+        case 'chat:message':
+          final msg = ChatMessage(
+            senderId:   data['senderId'] as String,
+            senderRole: data['senderRole'] as String,
+            message:    data['message'] as String,
+            timestamp:  DateTime.tryParse(data['timestamp'] as String? ?? '') ?? DateTime.now(),
+          );
+          state = state.copyWith(chatMessages: [...state.chatMessages, msg]);
           break;
       }
     });
@@ -574,6 +584,16 @@ class DriverController extends StateNotifier<DriverState> {
     );
   }
 
+  void sendChatMessage(String message) {
+    if (_socketService == null || state.activeRequest == null || message.trim().isEmpty) return;
+    _socketService!.emit('chat:send', {
+      'rideId':     state.activeRequest!.id,
+      'senderId':   _userId,
+      'senderRole': 'driver',
+      'message':    message.trim(),
+    });
+  }
+
   void finishAndGoAvailable() {
     state = state.copyWith(
       tripStep: TripStep.none,
@@ -581,6 +601,7 @@ class DriverController extends StateNotifier<DriverState> {
       waitTimeSeconds: 0,
       clearActiveRequest: true,
       clearCountdown: true,
+      chatMessages: [],
     );
     _stopWatchdog();
   }

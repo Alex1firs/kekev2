@@ -1,5 +1,6 @@
 import 'driver_profile.dart';
 import 'trip_request.dart';
+import 'chat_message.dart';
 
 class DriverState {
   final DriverProfile profile;
@@ -10,6 +11,7 @@ class DriverState {
   final bool isLoading;
   final String? errorMessage;
   final int waitTimeSeconds;
+  final List<ChatMessage> chatMessages;
 
   const DriverState({
     required this.profile,
@@ -20,6 +22,7 @@ class DriverState {
     this.isLoading = false,
     this.errorMessage,
     this.waitTimeSeconds = 0,
+    this.chatMessages = const [],
   });
 
   DriverState copyWith({
@@ -33,6 +36,7 @@ class DriverState {
     bool clearActiveRequest = false,
     bool clearCountdown = false,
     int? waitTimeSeconds,
+    List<ChatMessage>? chatMessages,
   }) {
     return DriverState(
       profile: profile ?? this.profile,
@@ -43,6 +47,7 @@ class DriverState {
       isLoading: isLoading ?? this.isLoading,
       errorMessage: errorMessage ?? this.errorMessage,
       waitTimeSeconds: waitTimeSeconds ?? this.waitTimeSeconds,
+      chatMessages: chatMessages ?? this.chatMessages,
     );
   }
 }

@@ -8,6 +8,7 @@ import '../../application/booking_controller.dart';
 import '../../application/wallet_controller.dart';
 import '../destination_search_screen.dart';
 import '../wallet_screen.dart';
+import 'ride_chat_panel.dart';
 
 class BookingSheet extends ConsumerWidget {
   const BookingSheet({super.key});
@@ -321,13 +322,30 @@ class BookingSheet extends ConsumerWidget {
             },
           ),
         ),
-        const SizedBox(height: 16),
-        
-        if (state.step != BookingStep.started)
+        const SizedBox(height: 12),
+
+        // Chat button — opens the in-ride chat panel
+        OutlinedButton.icon(
+          icon: const Icon(Icons.chat_bubble_outline),
+          label: Text(state.chatMessages.isEmpty ? 'Chat with Driver' : 'Chat (${state.chatMessages.length})'),
+          onPressed: () => showModalBottomSheet(
+            context: context,
+            isScrollControlled: true,
+            backgroundColor: Colors.transparent,
+            builder: (_) => SizedBox(
+              height: MediaQuery.of(context).size.height * 0.6,
+              child: const RideChatPanel(),
+            ),
+          ),
+        ),
+
+        if (state.step != BookingStep.started) ...[
+          const SizedBox(height: 8),
           ElevatedButton(
-            onPressed: () => ref.read(bookingControllerProvider.notifier).cancelBooking(), 
+            onPressed: () => ref.read(bookingControllerProvider.notifier).cancelBooking(),
             child: const Text('Cancel Trip'),
           ),
+        ],
       ],
     );
   }

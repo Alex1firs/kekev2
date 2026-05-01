@@ -55,6 +55,12 @@ const Schemas = {
         pickupAddress:      z.string().max(300).optional(),
         destinationAddress: z.string().max(300).optional(),
     }),
+    chatMessage: z.object({
+        rideId:     id(),
+        senderId:   id(),
+        senderRole: z.enum(['passenger', 'driver']),
+        message:    z.string().min(1).max(500),
+    }),
     rideCancel:       z.object({ rideId: id(), passengerId: id() }),
     rideAccept:       z.object({ rideId: id(), driverId: id() }),
     rideDriverAction: z.object({ rideId: id(), driverId: id() }),
@@ -208,6 +214,20 @@ export class SocketHandler {
                         this.rideExclusions.delete(rideId);
                         this.activeDispatches.delete(rideId);
                     }
+                });
+            });
+
+            // --- In-Ride Chat ---
+            socket.on('chat:send', (raw) => {
+                const data = validate(Schemas.chatMessage, raw, socket);
+                if (!data) return;
+                // Relay to everyone in the ride room (both passenger and driver are joined)
+                this.io.to(`ride:${data.rideId}`).emit('chat:message', {
+                    rideId:     data.rideId,
+                    senderId:   data.senderId,
+                    senderRole: data.senderRole,
+                    message:    data.message,
+                    timestamp:  new Date().toISOString(),
                 });
             });
 

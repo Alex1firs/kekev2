@@ -10,7 +10,8 @@ enum BookingStep {
   searching,            // Backend is looking for driver
   confirmed,            // Driver accepted
   arrived,              // Driver arrived at pickup
-  started               // Trip has started
+  started,              // Trip has started
+  completed,            // Trip finished — show receipt
 }
 
 class BookingState {
@@ -40,6 +41,15 @@ class BookingState {
   final DateTime? lastLocationUpdate;
   final List<ChatMessage> chatMessages;
 
+  // Receipt data — populated when ride:finished arrives
+  final String? receiptPickupAddress;
+  final String? receiptDestinationAddress;
+  final int? receiptFare;
+  final String? receiptPaymentMethod;
+  final Map<String, dynamic>? receiptDriver;
+  final String? receiptDistance;
+  final DateTime? receiptCompletedAt;
+
   const BookingState({
     this.step = BookingStep.loading,
     this.mapCenter,
@@ -59,6 +69,13 @@ class BookingState {
     this.assignedDriverLocation,
     this.lastLocationUpdate,
     this.chatMessages = const [],
+    this.receiptPickupAddress,
+    this.receiptDestinationAddress,
+    this.receiptFare,
+    this.receiptPaymentMethod,
+    this.receiptDriver,
+    this.receiptDistance,
+    this.receiptCompletedAt,
   });
 
   BookingState copyWith({
@@ -82,6 +99,13 @@ class BookingState {
     LatLng? assignedDriverLocation,
     DateTime? lastLocationUpdate,
     List<ChatMessage>? chatMessages,
+    String? receiptPickupAddress,
+    String? receiptDestinationAddress,
+    int? receiptFare,
+    String? receiptPaymentMethod,
+    Map<String, dynamic>? receiptDriver,
+    String? receiptDistance,
+    DateTime? receiptCompletedAt,
   }) {
     return BookingState(
       step: step ?? this.step,
@@ -102,6 +126,13 @@ class BookingState {
       assignedDriverLocation: assignedDriverLocation ?? this.assignedDriverLocation,
       lastLocationUpdate: lastLocationUpdate ?? this.lastLocationUpdate,
       chatMessages: chatMessages ?? this.chatMessages,
+      receiptPickupAddress: receiptPickupAddress ?? this.receiptPickupAddress,
+      receiptDestinationAddress: receiptDestinationAddress ?? this.receiptDestinationAddress,
+      receiptFare: receiptFare ?? this.receiptFare,
+      receiptPaymentMethod: receiptPaymentMethod ?? this.receiptPaymentMethod,
+      receiptDriver: receiptDriver ?? this.receiptDriver,
+      receiptDistance: receiptDistance ?? this.receiptDistance,
+      receiptCompletedAt: receiptCompletedAt ?? this.receiptCompletedAt,
     );
   }
 }

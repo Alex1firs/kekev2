@@ -9,6 +9,7 @@ import '../../application/wallet_controller.dart';
 import '../destination_search_screen.dart';
 import '../wallet_screen.dart';
 import 'ride_chat_panel.dart';
+import 'ride_receipt_sheet.dart';
 
 class BookingSheet extends ConsumerWidget {
   const BookingSheet({super.key});
@@ -64,6 +65,9 @@ class BookingSheet extends ConsumerWidget {
       case BookingStep.arrived:
       case BookingStep.started:
         return _buildConfirmedPanel(context, ref, state);
+
+      case BookingStep.completed:
+        return const RideReceiptSheet();
     }
   }
 

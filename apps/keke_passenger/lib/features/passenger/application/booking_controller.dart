@@ -108,10 +108,14 @@ class BookingController extends StateNotifier<BookingState> {
           state = state.copyWith(chatMessages: [...state.chatMessages, msg]);
           break;
         case 'ride:cancelled':
-        case 'ride:finished':
-          print('[PASSENGER_SYNC] Ride finished/cancelled. Resetting state.');
+          print('[PASSENGER_SYNC] Ride cancelled. Resetting state.');
           _stopWatchdog();
           _resetBookingState();
+          break;
+        case 'ride:finished':
+          print('[PASSENGER_SYNC] Ride finished. Showing receipt.');
+          _stopWatchdog();
+          _showReceipt();
           break;
         case 'ride:failed':
           state = state.copyWith(
@@ -324,6 +328,7 @@ class BookingController extends StateNotifier<BookingState> {
 
   Future<void> syncStatus() async {
     if (_apiClient == null || passengerId == 'unknown' || state.rideId == null) return;
+    if (state.step == BookingStep.completed) return; // receipt is showing, don't disturb
     try {
       final response = await _apiClient!.dio.get('/rides/active/passenger');
       final data = response.data;
@@ -374,6 +379,24 @@ class BookingController extends StateNotifier<BookingState> {
     }
   }
   
+  void _showReceipt() {
+    state = state.copyWith(
+      step: BookingStep.completed,
+      receiptPickupAddress: state.pickupAddress,
+      receiptDestinationAddress: state.destinationAddress,
+      receiptFare: state.estimatedFareAmount,
+      receiptPaymentMethod: state.paymentMethod,
+      receiptDriver: state.assignedDriver,
+      receiptDistance: state.estimatedDistance,
+      receiptCompletedAt: DateTime.now(),
+      chatMessages: [],
+    );
+  }
+
+  void dismissReceipt() {
+    _resetBookingState();
+  }
+
   void sendChatMessage(String message) {
     if (_socketService == null || state.rideId == null || message.trim().isEmpty) return;
     _socketService!.emit('chat:send', {

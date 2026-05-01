@@ -228,35 +228,22 @@ class BookingSheet extends ConsumerWidget {
           ),
         ),
         const SizedBox(height: 16),
-        
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('Wallet Balance', style: TextStyle(color: Colors.grey, fontSize: 12)),
-                Text('₦${NumberFormat('#,###.00').format(walletState.balance)}', style: const TextStyle(fontWeight: FontWeight.bold)),
-              ],
-            ),
-            TextButton(
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const WalletScreen()),
-              ),
-              child: const Text('Top Up'),
-            ),
-          ],
-        ),
-        
+
+        // Payment method selector
+        const Text('Pay with', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: Colors.black54)),
         const SizedBox(height: 8),
-        Row(
-          children: [
-            const Icon(Icons.payments_outlined, color: Colors.green, size: 20),
-            const SizedBox(width: 8),
-            const Text('Cash Payment', style: TextStyle(fontWeight: FontWeight.bold)),
-          ],
+        _PaymentSelector(
+          selected: state.paymentMethod,
+          walletBalance: walletState.balance,
+          fare: state.estimatedFareAmount ?? 0,
+          onSelect: (method) =>
+              ref.read(bookingControllerProvider.notifier).setPaymentMethod(method),
+          onTopUp: () => Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const WalletScreen()),
+          ),
         ),
+
         const SizedBox(height: 16),
         ElevatedButton(
           style: ElevatedButton.styleFrom(backgroundColor: Colors.amber, foregroundColor: Colors.black),
@@ -351,6 +338,154 @@ class BookingSheet extends ConsumerWidget {
           ),
         ],
       ],
+    );
+  }
+}
+
+// ─── Payment Method Selector ─────────────────────────────────────────────────
+
+class _PaymentSelector extends StatelessWidget {
+  final String selected;
+  final double walletBalance;
+  final int fare;
+  final ValueChanged<String> onSelect;
+  final VoidCallback onTopUp;
+
+  const _PaymentSelector({
+    required this.selected,
+    required this.walletBalance,
+    required this.fare,
+    required this.onSelect,
+    required this.onTopUp,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final canAffordWallet = walletBalance >= fare;
+    final fmt = NumberFormat('#,###.00');
+
+    return Row(
+      children: [
+        // Cash option
+        Expanded(
+          child: _PaymentOption(
+            label: 'Cash',
+            subtitle: 'Pay on arrival',
+            icon: Icons.money,
+            isSelected: selected == 'cash',
+            isEnabled: true,
+            onTap: () => onSelect('cash'),
+          ),
+        ),
+        const SizedBox(width: 10),
+        // Wallet option
+        Expanded(
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              _PaymentOption(
+                label: 'Wallet',
+                subtitle: canAffordWallet
+                    ? '₦${fmt.format(walletBalance)}'
+                    : 'Insufficient funds',
+                icon: Icons.account_balance_wallet_outlined,
+                isSelected: selected == 'wallet',
+                isEnabled: canAffordWallet,
+                onTap: canAffordWallet ? () => onSelect('wallet') : null,
+              ),
+              if (!canAffordWallet)
+                Positioned(
+                  right: 0,
+                  top: 0,
+                  child: GestureDetector(
+                    onTap: onTopUp,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFC107),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Text('Top Up',
+                          style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _PaymentOption extends StatelessWidget {
+  final String label;
+  final String subtitle;
+  final IconData icon;
+  final bool isSelected;
+  final bool isEnabled;
+  final VoidCallback? onTap;
+
+  const _PaymentOption({
+    required this.label,
+    required this.subtitle,
+    required this.icon,
+    required this.isSelected,
+    required this.isEnabled,
+    this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final selectedColor = const Color(0xFFFFC107);
+    final disabledColor = Colors.grey[200];
+
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: isSelected ? selectedColor.withOpacity(0.15) : (isEnabled ? Colors.white : disabledColor),
+          border: Border.all(
+            color: isSelected ? selectedColor : Colors.grey.shade300,
+            width: isSelected ? 2 : 1,
+          ),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Icon(icon,
+                size: 22,
+                color: isSelected
+                    ? Colors.amber.shade800
+                    : (isEnabled ? Colors.black54 : Colors.grey)),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(label,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 14,
+                        color: isEnabled ? Colors.black : Colors.grey,
+                      )),
+                  Text(subtitle,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: isEnabled ? Colors.black54 : Colors.grey,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis),
+                ],
+              ),
+            ),
+            if (isSelected)
+              Icon(Icons.check_circle, size: 18, color: Colors.amber.shade800),
+          ],
+        ),
+      ),
     );
   }
 }

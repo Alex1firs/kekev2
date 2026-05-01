@@ -188,6 +188,9 @@ class BookingController extends StateNotifier<BookingState> {
         }
       } catch (e) {
         print('Active ride recovery failed: $e');
+        state = state.copyWith(
+          errorMessage: 'Could not restore your active ride. Please check your connection.',
+        );
       }
     }
 
@@ -284,11 +287,14 @@ class BookingController extends StateNotifier<BookingState> {
 
     final rideId = 'RIDE-${DateTime.now().millisecondsSinceEpoch}';
     
+    // Join the ride room BEFORE emitting the request so no early broadcasts are missed
+    _socketService!.emit('join', {'userId': rideId, 'role': 'ride'});
+
     _socketService!.emit('ride:request', {
       'rideId': rideId,
       'passengerId': passengerId,
       'isCash': state.paymentMethod == 'cash',
-      'passengerName': '$firstName $lastName'.trim(), 
+      'passengerName': '$firstName $lastName'.trim(),
       'pickupAddress': state.pickupAddress,
       'pickupLat': state.pickupLocation!.latitude,
       'pickupLng': state.pickupLocation!.longitude,
@@ -297,9 +303,6 @@ class BookingController extends StateNotifier<BookingState> {
       'destinationLng': state.destinationLocation!.longitude,
       'fare': state.estimatedFareAmount,
     });
-    
-    // Join a ride-specific room
-    _socketService?.emit('join', {'userId': rideId, 'role': 'ride'});
     
     state = state.copyWith(
       step: BookingStep.searching,

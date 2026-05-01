@@ -245,6 +245,11 @@ class DriverController extends StateNotifier<DriverState> {
           }
         } catch (e) {
           print('Active ride recovery failed for driver: $e');
+          if (mounted) {
+            state = state.copyWith(
+              errorMessage: 'Could not restore your active ride. Please check your connection.',
+            );
+          }
         }
       } else {
         state = state.copyWith(isLoading: false);

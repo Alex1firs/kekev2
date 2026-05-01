@@ -47,6 +47,7 @@ const Schemas = {
         passengerId:        id(),
         fare:               z.number().min(100).max(50000),
         isCash:             z.boolean(),
+        passengerName:      z.string().max(100).optional(),
         pickupLat:          lat(),
         pickupLng:          lng(),
         destinationLat:     lat().optional(),
@@ -57,7 +58,13 @@ const Schemas = {
     rideCancel:       z.object({ rideId: id(), passengerId: id() }),
     rideAccept:       z.object({ rideId: id(), driverId: id() }),
     rideDriverAction: z.object({ rideId: id(), driverId: id() }),
-    rideComplete:     z.object({ rideId: id(), passengerId: id(), driverId: id() }),
+    rideComplete:     z.object({
+        rideId:          id(),
+        passengerId:     id(),
+        driverId:        id(),
+        totalFare:       z.number().min(100).max(50000).optional(),
+        waitTimeSeconds: z.number().int().min(0).optional(),
+    }),
 };
 
 function validate<T>(schema: z.ZodSchema<T>, data: unknown, socket: Socket): T | null {
@@ -339,7 +346,8 @@ export class SocketHandler {
                     const ride = await this.validateRideState(data.rideId, ['arrived', 'accepted']);
                     if (!ride) return;
                     await AppDataSource.getRepository(Ride).update(data.rideId, { status: 'in_progress' as any });
-                    this.broadcastToRide(data.rideId, 'ride:status_update', { rideId: data.rideId, status: 'in_progress' });
+                    // Send 'started' to match the passenger UI's expected status string
+                    this.broadcastToRide(data.rideId, 'ride:status_update', { rideId: data.rideId, status: 'started' });
                     NotificationService.sendToUser(ride.passengerId, UserRole.PASSENGER, 'Trip Started', 'You are now on your trip.', {
                         type: 'TRIP_STARTED', rideId: data.rideId, intent: 'active',
                     });
@@ -359,10 +367,13 @@ export class SocketHandler {
 
                     this.driverRideMap.delete(data.driverId);
 
-                    const fareToCharge = Number(ride.fare);
+                    // Use driver-supplied fare if it's ≥ original (covers wait surcharge);
+                    // fall back to the stored fare if driver sends nothing or less.
+                    const baseFare = Number(ride.fare);
+                    const fareToCharge = (data.totalFare && data.totalFare >= baseFare) ? data.totalFare : baseFare;
                     const isCashPayment = ride.paymentMode === 'cash';
 
-                    log.info(`Processing financials for completed ride ${data.rideId}`);
+                    log.info(`Processing financials for completed ride ${data.rideId} — fare: ${fareToCharge}`);
 
                     let paymentSucceeded = false;
                     try {
@@ -376,9 +387,8 @@ export class SocketHandler {
                         paymentSucceeded = true;
                     } catch (e: any) {
                         log.error(JSON.stringify({ level: 'error', event: 'payment_failed', rideId: data.rideId, error: e.message }));
-                        const rideRepo = AppDataSource.getRepository(Ride);
-                        await rideRepo.update(data.rideId, { paymentFailed: true } as any);
-                        // Alert admin so they can manually resolve
+                        await AppDataSource.getRepository(Ride).update(data.rideId, { paymentFailed: true } as any);
+                        // Notify admin for manual resolution; driver/passenger still see ride as done
                         this.io.to('admin').emit('ride:payment_failed', { rideId: data.rideId, error: e.message });
                         socket.emit('ride:payment_error', {
                             rideId: data.rideId,
@@ -386,13 +396,12 @@ export class SocketHandler {
                         });
                     }
 
-                    // Do not mark ride completed if payment failed — keeps audit trail clean
-                    if (!paymentSucceeded) return;
-
+                    // Always mark the ride completed so driver and passenger are never stuck.
+                    // paymentFailed=true is the signal for admin to reconcile manually.
                     const rideRepo = AppDataSource.getRepository(Ride);
                     await rideRepo.update(data.rideId, { status: 'completed' as any, completedAt: new Date() });
 
-                    this.io.to('admin').emit('ride:status_update', { rideId: data.rideId, status: 'completed' });
+                    this.io.to('admin').emit('ride:status_update', { rideId: data.rideId, status: paymentSucceeded ? 'completed' : 'completed_payment_failed' });
                     this.broadcastToRide(data.rideId, 'ride:finished', { rideId: data.rideId });
 
                     NotificationService.sendToUser(data.passengerId, UserRole.PASSENGER, 'Trip Completed', 'Hope you enjoyed the ride!', {

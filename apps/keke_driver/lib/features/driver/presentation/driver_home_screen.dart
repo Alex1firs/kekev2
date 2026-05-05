@@ -1,13 +1,16 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../../core/services/battery_optimization_service.dart';
 import '../../auth/application/auth_controller.dart';
 import '../application/driver_controller.dart';
 import '../domain/driver_profile.dart';
 import '../domain/driver_state.dart';
 import 'driver_profile_screen.dart';
 import 'earnings_screen.dart';
+import 'widgets/battery_optimization_sheet.dart';
 import 'widgets/incoming_request_card.dart';
 import 'widgets/trip_operation_hud.dart';
 
@@ -19,6 +22,60 @@ class DriverHomeScreen extends ConsumerStatefulWidget {
 }
 
 class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
+  // Called only when the driver flips the switch to online.
+  // Goes online immediately (non-blocking), then checks battery optimization
+  // so we never hold up the driver waiting for a permissions dialog.
+  void _handleGoOnline() {
+    ref.read(driverControllerProvider.notifier).toggleOnline();
+    if (Platform.isAndroid) _checkBatteryOptimization();
+  }
+
+  Future<void> _checkBatteryOptimization() async {
+    final active = await BatteryOptimizationService.isOptimizationActive();
+    if (!active || !mounted) return;
+
+    final shown = await BatteryOptimizationService.wasPromptShown();
+    await BatteryOptimizationService.markPromptShown();
+
+    if (!mounted) return;
+
+    if (!shown) {
+      // First time going online with optimization active — full explanation sheet.
+      showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        builder: (_) => const BatteryOptimizationSheet(),
+      );
+    } else {
+      // Subsequent attempts — lightweight snack bar with a direct "Fix" action.
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Row(
+            children: [
+              Icon(Icons.battery_alert_rounded,
+                  color: AppColors.primary, size: 18),
+              SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Battery optimization is active — you may miss trips.',
+                  style: TextStyle(color: AppColors.white, fontSize: 13),
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: AppColors.charcoal,
+          action: SnackBarAction(
+            label: 'Fix',
+            textColor: AppColors.primary,
+            onPressed: BatteryOptimizationService.openSettings,
+          ),
+          duration: const Duration(seconds: 6),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final driverState = ref.watch(driverControllerProvider);
@@ -130,8 +187,15 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
                     scale: 0.85,
                     child: Switch(
                       value: isOnline,
-                      onChanged: (_) =>
-                          ref.read(driverControllerProvider.notifier).toggleOnline(),
+                      onChanged: (goingOnline) {
+                        if (goingOnline) {
+                          _handleGoOnline();
+                        } else {
+                          ref
+                              .read(driverControllerProvider.notifier)
+                              .toggleOnline();
+                        }
+                      },
                       activeThumbColor: AppColors.charcoal,
                       activeTrackColor: AppColors.primary,
                       inactiveThumbColor: AppColors.lightGray,

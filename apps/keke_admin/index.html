@@ -56,8 +56,14 @@
                 <li data-section="finance">
                     <i class="fas fa-money-bill-wave"></i> <span>Finance</span>
                 </li>
+                <li data-section="payouts">
+                    <i class="fas fa-wallet"></i> <span>Payouts</span>
+                </li>
                 <li data-section="online-drivers">
                     <i class="fas fa-toggle-on"></i> <span>Online Drivers</span>
+                </li>
+                <li data-section="audit-log">
+                    <i class="fas fa-clipboard-list"></i> <span>Audit Log</span>
                 </li>
             </ul>
             <div class="sidebar-footer">
@@ -116,9 +122,7 @@
                                     <th>Action</th>
                                 </tr>
                             </thead>
-                            <tbody id="pending-drivers-list">
-                                <!-- Dynamic content -->
-                            </tbody>
+                            <tbody id="pending-drivers-list"></tbody>
                         </table>
                     </div>
 
@@ -133,9 +137,7 @@
                                     <th>Action</th>
                                 </tr>
                             </thead>
-                            <tbody id="incomplete-drivers-list">
-                                <!-- Dynamic content -->
-                            </tbody>
+                            <tbody id="incomplete-drivers-list"></tbody>
                         </table>
                     </div>
                 </section>
@@ -148,14 +150,13 @@
                                 <tr>
                                     <th>Ride ID</th>
                                     <th>Status</th>
+                                    <th>Payment</th>
                                     <th>Passenger</th>
                                     <th>Driver</th>
                                     <th>Fare</th>
                                 </tr>
                             </thead>
-                            <tbody id="active-rides-list">
-                                <!-- Dynamic content -->
-                            </tbody>
+                            <tbody id="active-rides-list"></tbody>
                         </table>
                     </div>
                 </section>
@@ -163,6 +164,10 @@
                 <!-- Finance Section -->
                 <section id="finance" class="content-section hidden">
                     <div class="finance-grid">
+                        <div class="stat-card">
+                            <h3>Platform Revenue (Accrued)</h3>
+                            <p id="finance-platform-revenue">₦0</p>
+                        </div>
                         <div class="stat-card">
                             <h3>Total Commission Debt</h3>
                             <p id="finance-total-debt">₦0</p>
@@ -179,16 +184,35 @@
                                 <tr>
                                     <th>Driver ID</th>
                                     <th>Commission Debt</th>
-                                    <th>Status</th>
+                                    <th>Cash Status</th>
                                 </tr>
                             </thead>
-                            <tbody id="debt-leaderboard">
-                                <!-- Dynamic content -->
-                            </tbody>
+                            <tbody id="debt-leaderboard"></tbody>
                         </table>
                     </div>
                 </section>
-                
+
+                <!-- Payouts Section -->
+                <section id="payouts" class="content-section hidden">
+                    <h2>Payout Requests</h2>
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Driver ID</th>
+                                    <th>Amount</th>
+                                    <th>Bank Code</th>
+                                    <th>Account No.</th>
+                                    <th>Status</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="payouts-list"></tbody>
+                        </table>
+                    </div>
+                </section>
+
                 <!-- Online Drivers Section -->
                 <section id="online-drivers" class="content-section hidden">
                      <div class="table-container">
@@ -196,15 +220,15 @@
                             <thead>
                                 <tr>
                                     <th>Driver ID</th>
-                                    <th>Location (Lat, Lng)</th>
+                                    <th>Latitude</th>
+                                    <th>Longitude</th>
                                 </tr>
                             </thead>
-                            <tbody id="online-drivers-list">
-                            </tbody>
+                            <tbody id="online-drivers-list"></tbody>
                         </table>
                     </div>
                 </section>
-                
+
                 <!-- History Section -->
                 <section id="history" class="content-section hidden">
                     <div class="table-container">
@@ -214,11 +238,30 @@
                                     <th>Date</th>
                                     <th>Ride ID</th>
                                     <th>Status</th>
+                                    <th>Payment</th>
                                     <th>Fare</th>
                                 </tr>
                             </thead>
-                            <tbody id="ride-history-list">
-                            </tbody>
+                            <tbody id="ride-history-list"></tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <!-- Audit Log Section -->
+                <section id="audit-log" class="content-section hidden">
+                    <h2>Admin Action Log</h2>
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Time</th>
+                                    <th>Admin</th>
+                                    <th>Action</th>
+                                    <th>Entity</th>
+                                    <th>Entity ID</th>
+                                </tr>
+                            </thead>
+                            <tbody id="audit-log-list"></tbody>
                         </table>
                     </div>
                 </section>
@@ -230,6 +273,6 @@
     <div id="toast-container" class="toast-container"></div>
 
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
-    <script src="app.js?v=2.3"></script>
+    <script src="app.js?v=3.0"></script>
 </body>
 </html>

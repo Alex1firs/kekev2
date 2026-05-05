@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:jwt_decoder/jwt_decoder.dart';
+import '../../../../core/theme/app_theme.dart';
 import '../application/wallet_controller.dart';
 import '../../auth/application/auth_controller.dart';
 import '../domain/wallet_state.dart';
@@ -15,19 +16,28 @@ class WalletScreen extends ConsumerWidget {
     final walletState = ref.watch(walletControllerProvider);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('My Wallet')),
+      backgroundColor: AppColors.snow,
+      appBar: AppBar(
+        backgroundColor: AppColors.charcoal,
+        foregroundColor: AppColors.white,
+        elevation: 0,
+        title: Text('My Wallet', style: AppTextStyles.title(color: AppColors.white)),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: AppColors.white),
+          onPressed: () => Navigator.pop(context),
+        ),
+      ),
       body: RefreshIndicator(
         onRefresh: () => ref.read(walletControllerProvider.notifier).refresh(),
+        color: AppColors.primary,
         child: CustomScrollView(
           slivers: [
-            SliverToBoxAdapter(child: _buildBalanceCard(context, ref, walletState)),
-            const SliverToBoxAdapter(
-              child: Padding(
-                padding: EdgeInsets.fromLTRB(20, 32, 20, 16),
-                child: Text('Transaction History', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              ),
+            SliverToBoxAdapter(
+              child: _buildBalanceCard(context, ref, walletState),
             ),
+            SliverToBoxAdapter(child: _buildSectionHeader('Transaction History')),
             _buildHistoryList(walletState),
+            const SliverToBoxAdapter(child: SizedBox(height: 32)),
           ],
         ),
       ),
@@ -37,47 +47,119 @@ class WalletScreen extends ConsumerWidget {
   Widget _buildBalanceCard(BuildContext context, WidgetRef ref, WalletState state) {
     return Container(
       margin: const EdgeInsets.all(20),
-      padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
-        color: Colors.amber,
+        gradient: const LinearGradient(
+          colors: [AppColors.charcoal, Color(0xFF1F2937)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
         borderRadius: BorderRadius.circular(24),
-        boxShadow: [BoxShadow(color: Colors.amber.withOpacity(0.3), blurRadius: 12, offset: const Offset(0, 6))],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('Available Balance', style: TextStyle(color: Colors.black54, fontWeight: FontWeight.w600)),
-          const SizedBox(height: 8),
-          Text(
-            '₦${NumberFormat('#,###.00').format(state.balance)}',
-            style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 24),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.black,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            ),
-            onPressed: () => _showTopupDialog(context, ref),
-            child: const Text('Fund Wallet'),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x30000000),
+            blurRadius: 16,
+            offset: Offset(0, 6),
           ),
         ],
       ),
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(
+                    Icons.account_balance_wallet_outlined,
+                    color: AppColors.primary,
+                    size: 20,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  'Keke Wallet',
+                  style: AppTextStyles.body(color: AppColors.lightGray),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            Text(
+              'Available Balance',
+              style: AppTextStyles.bodySmall(color: AppColors.midGray),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              '₦${NumberFormat('#,###.00').format(state.balance)}',
+              style: AppTextStyles.display(color: AppColors.white, weight: FontWeight.w800),
+            ),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: AppColors.charcoal,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  elevation: 0,
+                ),
+                onPressed: () => _showTopupDialog(context, ref),
+                icon: const Icon(Icons.add_rounded, size: 20),
+                label: Text(
+                  'Fund Wallet',
+                  style: AppTextStyles.body(
+                    color: AppColors.charcoal,
+                    weight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSectionHeader(String title) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+      child: Text(title, style: AppTextStyles.title(color: AppColors.charcoal)),
     );
   }
 
   Widget _buildHistoryList(WalletState state) {
     if (state.isLoading && state.history.isEmpty) {
-      return const SliverFillRemaining(child: Center(child: CircularProgressIndicator()));
+      return const SliverFillRemaining(
+        child: Center(
+          child: CircularProgressIndicator(color: AppColors.primary),
+        ),
+      );
     }
 
     if (state.history.isEmpty) {
-      return const SliverToBoxAdapter(
-        child: Center(
-          child: Padding(
-            padding: EdgeInsets.only(top: 100),
-            child: Text('No transactions yet.', style: TextStyle(color: Colors.grey)),
+      return SliverToBoxAdapter(
+        child: Padding(
+          padding: const EdgeInsets.only(top: 60),
+          child: Column(
+            children: [
+              const Icon(Icons.receipt_long_outlined, color: AppColors.border, size: 52),
+              const SizedBox(height: 12),
+              Text('No transactions yet', style: AppTextStyles.body(color: AppColors.lightGray)),
+              const SizedBox(height: 6),
+              Text(
+                'Fund your wallet to start riding',
+                style: AppTextStyles.bodySmall(color: AppColors.lightGray),
+              ),
+            ],
           ),
         ),
       );
@@ -89,16 +171,63 @@ class WalletScreen extends ConsumerWidget {
           final tx = state.history[index];
           final isCredit = tx.amount > 0;
 
-          return ListTile(
-            leading: CircleAvatar(
-              backgroundColor: isCredit ? Colors.green.shade50 : Colors.red.shade50,
-              child: Icon(isCredit ? Icons.add : Icons.remove, color: isCredit ? Colors.green : Colors.red),
+          return Container(
+            margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            decoration: BoxDecoration(
+              color: AppColors.white,
+              borderRadius: BorderRadius.circular(14),
+              boxShadow: const [
+                BoxShadow(color: Color(0x08000000), blurRadius: 6, offset: Offset(0, 2)),
+              ],
             ),
-            title: Text(tx.description),
-            subtitle: Text(DateFormat('MMM dd, yyyy • HH:mm').format(tx.date)),
-            trailing: Text(
-              '${isCredit ? "+" : ""}₦${tx.amount.abs().toStringAsFixed(0)}',
-              style: TextStyle(fontWeight: FontWeight.bold, color: isCredit ? Colors.green : Colors.red),
+            child: Row(
+              children: [
+                Container(
+                  width: 42,
+                  height: 42,
+                  decoration: BoxDecoration(
+                    color: isCredit
+                        ? const Color(0xFFD1FAE5)
+                        : const Color(0xFFFEE2E2),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    isCredit ? Icons.add_rounded : Icons.remove_rounded,
+                    color: isCredit ? AppColors.success : AppColors.error,
+                    size: 20,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        tx.description,
+                        style: AppTextStyles.body(
+                          color: AppColors.charcoal,
+                          weight: FontWeight.w600,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        DateFormat('MMM dd, yyyy • HH:mm').format(tx.date),
+                        style: AppTextStyles.caption(color: AppColors.midGray),
+                      ),
+                    ],
+                  ),
+                ),
+                Text(
+                  '${isCredit ? "+" : ""}₦${tx.amount.abs().toStringAsFixed(0)}',
+                  style: AppTextStyles.body(
+                    color: isCredit ? AppColors.success : AppColors.error,
+                    weight: FontWeight.w700,
+                  ),
+                ),
+              ],
             ),
           );
         },
@@ -110,70 +239,86 @@ class WalletScreen extends ConsumerWidget {
   void _showTopupDialog(BuildContext context, WidgetRef ref) {
     final amountController = TextEditingController();
     final emailController = TextEditingController();
+
+    final authState = ref.read(authControllerProvider);
+    if (authState.token != null) {
+      try {
+        final decoded = JwtDecoder.decode(authState.token!);
+        final phone = decoded['phone']?.toString();
+        if (phone != null) emailController.text = '$phone@keke.app';
+      } catch (_) {}
+    }
+
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Fund Wallet'),
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text('Fund Wallet', style: AppTextStyles.title(color: AppColors.charcoal)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            TextField(
+            TextFormField(
               controller: amountController,
               keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'Amount (₦)', hintText: 'e.g. 5000'),
+              style: AppTextStyles.body(color: AppColors.charcoal),
+              decoration: const InputDecoration(
+                labelText: 'Amount (₦)',
+                hintText: 'e.g. 5000',
+                prefixIcon: Icon(Icons.payments_outlined),
+              ),
             ),
-            const SizedBox(height: 12),
-            TextField(
+            const SizedBox(height: 16),
+            TextFormField(
               controller: emailController,
               keyboardType: TextInputType.emailAddress,
+              style: AppTextStyles.body(color: AppColors.charcoal),
               decoration: const InputDecoration(
                 labelText: 'Email (for receipt)',
                 hintText: 'Optional',
+                prefixIcon: Icon(Icons.email_outlined),
               ),
             ),
           ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text('Cancel', style: AppTextStyles.body(color: AppColors.midGray)),
+          ),
           ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              foregroundColor: AppColors.charcoal,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
             onPressed: () async {
               final amount = double.tryParse(amountController.text);
-              final authState = ref.read(authControllerProvider);
-              String fallbackEmail = 'user@keke.app';
-
-              if (authState.token != null) {
-                try {
-                  final decoded = JwtDecoder.decode(authState.token!);
-                  final phone = decoded['phone']?.toString();
-                  if (phone != null) {
-                    fallbackEmail = '$phone@keke.app';
-                  }
-                } catch (e) {
-                  print('[WALLET_ERROR] Email derivation failed: $e');
-                }
-              }
+              if (amount == null || amount <= 0) return;
 
               final email = emailController.text.trim().isNotEmpty
                   ? emailController.text.trim()
-                  : fallbackEmail;
+                  : 'user@keke.app';
 
-              if (amount != null && amount > 0) {
-                Navigator.pop(context);
-                final url = await ref.read(walletControllerProvider.notifier)
-                    .initializeTopup(amount, email);
-                if (url != null) {
-                   Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (context) => PaystackWebView(url: url)),
-                  ).then((success) {
-                    if (success == true) {
-                       ref.read(walletControllerProvider.notifier).refresh();
-                    }
-                  });
-                }
+              Navigator.pop(ctx);
+              final url = await ref
+                  .read(walletControllerProvider.notifier)
+                  .initializeTopup(amount, email);
+
+              if (url != null && context.mounted) {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => PaystackWebView(url: url),
+                  ),
+                ).then((success) {
+                  if (success == true) {
+                    ref.read(walletControllerProvider.notifier).refresh();
+                  }
+                });
               }
             },
-            child: const Text('Proceed'),
+            child: Text('Proceed', style: AppTextStyles.body(weight: FontWeight.w700)),
           ),
         ],
       ),

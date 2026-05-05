@@ -102,6 +102,11 @@ class DriverController extends StateNotifier<DriverState> {
           print('[DRIVER_SYNC] Socket reconnected. Triggering redundant healing...');
           syncStatus();
           break;
+        case 'error:debt_blocked':
+          print('[DEBT_BLOCK] Backend rejected cash ride acceptance — debt too high');
+          state = state.copyWith(errorMessage: data['message'] ?? 'Cash ride unavailable — clear debt first.');
+          _resetToAvailable();
+          break;
         case 'ride:expired':
           if (state.activeRequest?.id == data['rideId']) {
             _handleTimeout();
@@ -158,6 +163,16 @@ class DriverController extends StateNotifier<DriverState> {
   void _handleIncomingRequest(Map<String, dynamic> data) {
     if (state.operationStatus != OperationStatus.available) return;
 
+    // Debt gate: suppress cash requests when driver has cash-block-level debt
+    final incomingIsCash = data['isCash'] == true;
+    if (incomingIsCash && state.profile.debtAmount >= 2000) {
+      print('[DEBT_GATE] Suppressed cash request — driver debt ₦${state.profile.debtAmount}');
+      state = state.copyWith(
+        errorMessage: 'Cash ride unavailable — clear outstanding debt to accept cash bookings.',
+      );
+      return;
+    }
+
     final request = TripRequest(
       id: data['rideId'],
       passengerId: data['passengerId'] ?? 'unknown',
@@ -210,7 +225,7 @@ class DriverController extends StateNotifier<DriverState> {
             licenseUrl: data['licenseUrl'],
             idCardUrl: data['idCardUrl'],
             vehiclePaperUrl: data['vehiclePaperUrl'],
-            debtAmount: 0.0,
+            debtAmount: (data['commissionDebt'] as num?)?.toDouble() ?? 0.0,
           ),
           isLoading: false,
         );
@@ -304,7 +319,6 @@ class DriverController extends StateNotifier<DriverState> {
       if (!mounted) return;
 
       final rawData = response.data;
-      print('[DEBUG:ONBOARDING] Raw response: $rawData (Type: ${rawData.runtimeType})');
 
       if (rawData == null || rawData is! Map) {
         throw 'Invalid backend response: Expected Map, got ${rawData.runtimeType}';
@@ -313,8 +327,6 @@ class DriverController extends StateNotifier<DriverState> {
       final Map<String, dynamic> responseBody = Map<String, dynamic>.from(rawData);
       final newStatusStr = responseBody['status']?.toString() ?? 'pending_documents';
       final newStatus = _mapStatus(newStatusStr);
-
-      print('[DEBUG:ONBOARDING] Parsed status: $newStatus');
 
       state = state.copyWith(
         profile: state.profile.copyWith(
@@ -329,8 +341,6 @@ class DriverController extends StateNotifier<DriverState> {
       String msg = 'Onboarding failed';
       if (e is dio.DioException) {
         final errData = e.response?.data;
-        print('[DEBUG:ONBOARDING] Raw error response: $errData (Type: ${errData.runtimeType})');
-        
         if (errData is Map) {
           msg = 'Onboarding failed: ${errData['error'] ?? e.message}';
         } else if (errData is String && errData.isNotEmpty) {
@@ -341,7 +351,6 @@ class DriverController extends StateNotifier<DriverState> {
       } else {
         msg = 'Onboarding failed: ${e.toString()}';
       }
-      print('[DEBUG:ONBOARDING] Final error message: $msg');
       state = state.copyWith(errorMessage: msg);
     } finally {
       if (mounted) {
@@ -369,7 +378,6 @@ class DriverController extends StateNotifier<DriverState> {
       if (!mounted) return;
 
       final rawData = response.data;
-      print('[DEBUG:UPLOAD] Raw response: $rawData (Type: ${rawData.runtimeType})');
 
       if (rawData == null || rawData is! Map) {
         throw 'Invalid backend response: Expected Map, got ${rawData.runtimeType}';
@@ -379,8 +387,6 @@ class DriverController extends StateNotifier<DriverState> {
       final newStatusStr = responseBody['status']?.toString() ?? 'pending_documents';
       final newStatus = _mapStatus(newStatusStr);
       final filename = responseBody['filename']?.toString() ?? 'uploaded';
-
-      print('[DEBUG:UPLOAD] Parsed status: $newStatus, Filename: $filename');
 
       state = state.copyWith(
         profile: state.profile.copyWith(
@@ -395,8 +401,6 @@ class DriverController extends StateNotifier<DriverState> {
       String msg = 'Upload failed';
       if (e is dio.DioException) {
         final errData = e.response?.data;
-        print('[DEBUG:UPLOAD] Raw error response: $errData (Type: ${errData.runtimeType})');
-        
         if (errData is Map) {
           msg = 'Upload failed: ${errData['error'] ?? e.message}';
         } else if (errData is String && errData.isNotEmpty) {
@@ -413,7 +417,6 @@ class DriverController extends StateNotifier<DriverState> {
       } else {
         msg = 'Upload failed: ${e.toString()}';
       }
-      print('[DEBUG:UPLOAD] Final error message: $msg');
       state = state.copyWith(errorMessage: msg);
     } finally {
       if (mounted) {
@@ -424,17 +427,19 @@ class DriverController extends StateNotifier<DriverState> {
 
   void toggleOnline() {
     if (state.profile.status != DriverStatus.approved) {
-      print('[DEBUG:TOGGLE] Prevented online toggle, status is ${state.profile.status}');
+      return;
+    }
+
+    if (state.profile.debtAmount >= 5000 && state.operationStatus == OperationStatus.offline) {
+      state = state.copyWith(errorMessage: 'Account blocked: clear debt of ₦${state.profile.debtAmount.toStringAsFixed(0)} to go online.');
       return;
     }
 
     if (state.operationStatus == OperationStatus.offline) {
-      print('[DEBUG:TOGGLE] Driver going ONLINE. Starting heartbeat...');
       state = state.copyWith(operationStatus: OperationStatus.available);
       _startHeartbeat();
       _startLocationForegroundService();
     } else {
-      print('[DEBUG:TOGGLE] Driver going OFFLINE. Stopping heartbeat...');
       state = state.copyWith(operationStatus: OperationStatus.offline);
       _heartbeatTimer?.cancel();
       _stopLocationForegroundService();

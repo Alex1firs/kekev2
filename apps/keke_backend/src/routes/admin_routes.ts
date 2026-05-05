@@ -3,7 +3,9 @@ import { AdminService } from "../services/admin_service";
 import { adminAuth } from "../middleware/admin_auth";
 import { adminLimiter } from "../middleware/rate_limit";
 import { adminRejectionSchema } from "../services/validation_service";
-import { DriverStatus } from "../models/DriverProfile";
+import { DriverStatus, DriverProfile } from "../models/DriverProfile";
+import { AppDataSource } from "../config/data_source";
+import { AuditLog } from "../models/AuditLog";
 import path from "path";
 import fs from "fs";
 
@@ -218,6 +220,74 @@ router.get("/finance/payouts", async (req: Request, res: Response) => {
     try {
         const payouts = await AdminService.getPayouts();
         res.json(payouts);
+    } catch (err: any) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * POST /admin/finance/payouts/:id/process  — mark PROCESSING
+ * POST /admin/finance/payouts/:id/complete — mark SUCCESS
+ * POST /admin/finance/payouts/:id/fail     — mark FAILED
+ */
+router.post("/finance/payouts/:id/process", async (req: Request, res: Response) => {
+    try {
+        const adminId = `admin_${(req.headers['x-admin-key'] as string).slice(-8)}`;
+        const payout = await AdminService.updatePayoutStatus(req.params.id as string, 'processing' as any, adminId);
+        res.json(payout);
+    } catch (err: any) {
+        res.status(400).json({ error: err.message });
+    }
+});
+
+router.post("/finance/payouts/:id/complete", async (req: Request, res: Response) => {
+    try {
+        const adminId = `admin_${(req.headers['x-admin-key'] as string).slice(-8)}`;
+        const payout = await AdminService.updatePayoutStatus(req.params.id as string, 'success' as any, adminId);
+        res.json(payout);
+    } catch (err: any) {
+        res.status(400).json({ error: err.message });
+    }
+});
+
+router.post("/finance/payouts/:id/fail", async (req: Request, res: Response) => {
+    try {
+        const adminId = `admin_${(req.headers['x-admin-key'] as string).slice(-8)}`;
+        const payout = await AdminService.updatePayoutStatus(req.params.id as string, 'failed' as any, adminId);
+        res.json(payout);
+    } catch (err: any) {
+        res.status(400).json({ error: err.message });
+    }
+});
+
+/**
+ * GET /admin/audit-log
+ */
+router.get("/audit-log", async (req: Request, res: Response) => {
+    try {
+        const logs = await AppDataSource.getRepository(AuditLog).find({
+            order: { createdAt: "DESC" },
+            take: 100,
+        });
+        res.json(logs);
+    } catch (err: any) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * GET /admin/drivers/all
+ * All drivers with optional status filter (?status=approved|suspended|pending_review etc.)
+ */
+router.get("/drivers/all", async (req: Request, res: Response) => {
+    try {
+        const where = req.query.status ? { status: req.query.status as any } : {};
+        const drivers = await AppDataSource.getRepository(DriverProfile).find({
+            where,
+            order: { createdAt: "DESC" },
+            take: 200,
+        });
+        res.json(drivers);
     } catch (err: any) {
         res.status(500).json({ error: err.message });
     }

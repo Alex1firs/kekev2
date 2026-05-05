@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../../../../core/theme/app_theme.dart';
 import '../../domain/booking_state.dart';
 import '../../application/booking_controller.dart';
 import '../../application/wallet_controller.dart';
@@ -22,21 +23,37 @@ class BookingSheet extends ConsumerWidget {
       alignment: Alignment.bottomCenter,
       child: Container(
         decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.only(
-            topLeft: Radius.circular(24),
-            topRight: Radius.circular(24),
-          ),
-          boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 10, offset: Offset(0, -2))],
+          color: AppColors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          boxShadow: [BoxShadow(color: Color(0x18000000), blurRadius: 20, offset: Offset(0, -4))],
         ),
         child: SafeArea(
           top: false,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-            child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 300),
-              child: _buildPanelForState(context, ref, state),
-            ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const _SheetHandle(),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 4, 20, 16),
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 280),
+                  switchInCurve: Curves.easeOutCubic,
+                  switchOutCurve: Curves.easeInCubic,
+                  transitionBuilder: (child, animation) => FadeTransition(
+                    opacity: animation,
+                    child: SlideTransition(
+                      position: Tween<Offset>(begin: const Offset(0, 0.06), end: Offset.zero)
+                          .animate(animation),
+                      child: child,
+                    ),
+                  ),
+                  child: KeyedSubtree(
+                    key: ValueKey(state.step),
+                    child: _buildPanelForState(context, ref, state),
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -47,31 +64,29 @@ class BookingSheet extends ConsumerWidget {
     switch (state.step) {
       case BookingStep.loading:
       case BookingStep.idle:
-        return const SizedBox(height: 120, child: Center(child: CircularProgressIndicator()));
-        
+        return const SizedBox(
+          height: 120,
+          child: Center(child: CircularProgressIndicator()),
+        );
       case BookingStep.selectingPickup:
-        return _buildPickupSelection(context, ref, state);
-        
+        return _buildPickupPanel(context, ref, state);
       case BookingStep.selectingDestination:
-        return _buildDestinationSelection(context, ref, state);
-        
+        return _buildDestinationPanel(context, ref, state);
       case BookingStep.previewEstimate:
-        return _buildFareEstimate(context, ref, state);
-
+        return _buildFarePanel(context, ref, state);
       case BookingStep.searching:
         return _buildSearchingPanel(context, ref, state);
-        
       case BookingStep.confirmed:
       case BookingStep.arrived:
       case BookingStep.started:
-        return _buildConfirmedPanel(context, ref, state);
-
+        return _buildRideActivePanel(context, ref, state);
       case BookingStep.completed:
         return const RideReceiptSheet();
     }
   }
 
-  Widget _buildPickupSelection(BuildContext context, WidgetRef ref, BookingState state) {
+  // ── Pickup selection ─────────────────────────────────────────────────────
+  Widget _buildPickupPanel(BuildContext context, WidgetRef ref, BookingState state) {
     final isMoving = state.isCameraMoving;
     final address = state.pickupAddress ?? 'Locating...';
 
@@ -79,40 +94,22 @@ class BookingSheet extends ConsumerWidget {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Text('Confirm Your Pickup', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-        const SizedBox(height: 12),
-        InkWell(
+        Text('Confirm Pickup', style: AppTextStyles.title()),
+        const SizedBox(height: 14),
+        _AddressRow(
+          icon: Icons.radio_button_checked,
+          iconColor: AppColors.primary,
+          text: isMoving ? 'Moving map...' : address,
           onTap: isMoving ? null : () async {
-            final result = await Navigator.push(
+            final result = await Navigator.push<Map<String, dynamic>>(
               context,
-              MaterialPageRoute(builder: (context) => const DestinationSearchScreen(hintText: 'Enter Pickup Location')),
+              MaterialPageRoute(builder: (_) => const DestinationSearchScreen(hintText: 'Enter Pickup Location')),
             );
-            if (result != null && result is Map<String, dynamic>) {
+            if (result != null) {
               ref.read(bookingControllerProvider.notifier).setPickup(
-                    result['address'] as String,
-                    result['location'] as LatLng,
-                  );
+                result['address'] as String, result['location'] as LatLng);
             }
           },
-          borderRadius: BorderRadius.circular(8),
-          child: Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(8)),
-            child: Row(
-              children: [
-                const Icon(Icons.circle, color: Colors.amber, size: 16),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    isMoving ? 'Moving map...' : address,
-                    style: const TextStyle(fontSize: 16),
-                    maxLines: 1, 
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
-          ),
         ),
         const SizedBox(height: 16),
         ElevatedButton(
@@ -125,66 +122,76 @@ class BookingSheet extends ConsumerWidget {
     );
   }
 
-  Widget _buildDestinationSelection(BuildContext context, WidgetRef ref, BookingState state) {
+  // ── Destination selection ─────────────────────────────────────────────────
+  Widget _buildDestinationPanel(BuildContext context, WidgetRef ref, BookingState state) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            const Text('Where to?', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            Text('Where to?', style: AppTextStyles.title()),
+            const Spacer(),
             IconButton(
-              icon: const Icon(Icons.close),
+              icon: const Icon(Icons.close, color: AppColors.midGray),
               onPressed: () => ref.read(bookingControllerProvider.notifier).retreatToPickup(),
-            )
+              visualDensity: VisualDensity.compact,
+            ),
           ],
         ),
         const SizedBox(height: 12),
-        ListTile(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-          tileColor: Colors.grey.shade100,
-          leading: const Icon(Icons.search),
-          title: const Text('Search Destination...'),
+        _AddressRow(
+          icon: Icons.radio_button_checked,
+          iconColor: AppColors.primary,
+          text: state.pickupAddress ?? 'Pickup',
+          isSubtle: true,
+        ),
+        const SizedBox(height: 6),
+        GestureDetector(
           onTap: () async {
-            final result = await Navigator.push(
+            final result = await Navigator.push<Map<String, dynamic>>(
               context,
-              MaterialPageRoute(builder: (context) => const DestinationSearchScreen()),
+              MaterialPageRoute(builder: (_) => const DestinationSearchScreen()),
             );
-            if (result != null && result is Map<String, dynamic>) {
+            if (result != null) {
               ref.read(bookingControllerProvider.notifier).setDestination(
-                    result['address'] as String,
-                    result['location'] as LatLng,
-                  );
+                result['address'] as String, result['location'] as LatLng);
             }
           },
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+            decoration: BoxDecoration(
+              color: AppColors.paleGray,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.border),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.search, color: AppColors.midGray, size: 20),
+                const SizedBox(width: 10),
+                Text('Search destination...', style: AppTextStyles.body(color: AppColors.lightGray)),
+              ],
+            ),
+          ),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
       ],
     );
   }
 
-  Widget _buildFareEstimate(BuildContext context, WidgetRef ref, BookingState state) {
+  // ── Fare estimate ─────────────────────────────────────────────────────────
+  Widget _buildFarePanel(BuildContext context, WidgetRef ref, BookingState state) {
     if (state.errorMessage != null && state.estimatedFareAmount == null) {
-      return SizedBox(
-        height: 180,
-        child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(state.errorMessage!, style: const TextStyle(color: Colors.red)),
-              const SizedBox(height: 16),
-              ElevatedButton(
-                onPressed: () => ref.read(bookingControllerProvider.notifier).retreatToPickup(),
-                child: const Text('Try Again'),
-              ),
-            ],
-          ),
-        ),
+      return _ErrorState(
+        message: state.errorMessage!,
+        onRetry: () => ref.read(bookingControllerProvider.notifier).retreatToPickup(),
       );
     }
     if (state.estimatedFareAmount == null) {
-      return const SizedBox(height: 180, child: Center(child: CircularProgressIndicator()));
+      return const SizedBox(
+        height: 180,
+        child: Center(child: CircularProgressIndicator()),
+      );
     }
 
     final walletState = ref.watch(walletControllerProvider);
@@ -195,144 +202,227 @@ class BookingSheet extends ConsumerWidget {
       children: [
         Row(
           children: [
-            IconButton(
-              icon: const Icon(Icons.arrow_back),
-              onPressed: () => ref.read(bookingControllerProvider.notifier).retreatToPickup(),
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(),
+            GestureDetector(
+              onTap: () => ref.read(bookingControllerProvider.notifier).retreatToPickup(),
+              child: const Icon(Icons.arrow_back, color: AppColors.charcoal),
             ),
             const SizedBox(width: 12),
-            const Text('Ride Details', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            Text('Your Ride', style: AppTextStyles.title()),
           ],
         ),
         const SizedBox(height: 16),
-        
+
+        // Keke fare card
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            border: Border.all(color: Colors.amber.shade300, width: 2),
-            borderRadius: BorderRadius.circular(12),
+            gradient: LinearGradient(
+              colors: [AppColors.primaryLight, AppColors.white],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: AppColors.primary.withOpacity(0.4), width: 1.5),
           ),
           child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('Keke Ride', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                  Text('${state.estimatedTime} • ${state.estimatedDistance}', style: const TextStyle(color: Colors.grey)),
-                ],
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: AppColors.primary,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(Icons.electric_rickshaw, size: 26, color: AppColors.charcoal),
               ),
-              Text('₦${state.estimatedFareAmount}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Keke Napep', style: AppTextStyles.body(weight: FontWeight.w700)),
+                    Text('${state.estimatedTime ?? '—'} · ${state.estimatedDistance ?? '—'}',
+                        style: AppTextStyles.bodySmall()),
+                  ],
+                ),
+              ),
+              Text(
+                '₦${NumberFormat('#,###').format(state.estimatedFareAmount)}',
+                style: AppTextStyles.headline(color: AppColors.primaryDark),
+              ),
             ],
           ),
         ),
         const SizedBox(height: 16),
 
-        // Payment method selector
-        const Text('Pay with', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: Colors.black54)),
+        Text('Pay with', style: AppTextStyles.label(weight: FontWeight.w600)),
         const SizedBox(height: 8),
         _PaymentSelector(
           selected: state.paymentMethod,
           walletBalance: walletState.balance,
           fare: state.estimatedFareAmount ?? 0,
-          onSelect: (method) =>
-              ref.read(bookingControllerProvider.notifier).setPaymentMethod(method),
-          onTopUp: () => Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const WalletScreen()),
-          ),
+          onSelect: (m) => ref.read(bookingControllerProvider.notifier).setPaymentMethod(m),
+          onTopUp: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const WalletScreen())),
         ),
-
         const SizedBox(height: 16),
+
         ElevatedButton(
-          style: ElevatedButton.styleFrom(backgroundColor: Colors.amber, foregroundColor: Colors.black),
           onPressed: () => ref.read(bookingControllerProvider.notifier).requestRide(),
-          child: const Padding(
-            padding: EdgeInsets.symmetric(vertical: 12.0),
-            child: Text('REQUEST KEKE', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-          ),
+          child: const Text('Request Keke'),
         ),
       ],
     );
   }
 
+  // ── Searching ─────────────────────────────────────────────────────────────
   Widget _buildSearchingPanel(BuildContext context, WidgetRef ref, BookingState state) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        const SizedBox(height: 20),
-        const CircularProgressIndicator(color: Colors.amber),
-        const SizedBox(height: 24),
-        const Text('Finding your driver...', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
         const SizedBox(height: 8),
-        const Text('Connecting to nearby available Keke drivers in Awka', style: TextStyle(color: Colors.grey)),
-        const SizedBox(height: 24),
-        TextButton(
-          onPressed: () => ref.read(bookingControllerProvider.notifier).cancelBooking(),
-          child: const Text('Cancel Request', style: TextStyle(color: Colors.redAccent)),
+        const SizedBox(
+          width: 44,
+          height: 44,
+          child: CircularProgressIndicator(strokeWidth: 3, color: AppColors.primary),
         ),
+        const SizedBox(height: 20),
+        Text('Finding your driver...', style: AppTextStyles.title()),
+        const SizedBox(height: 6),
+        Text(
+          'Connecting to nearby Keke drivers in Awka',
+          style: AppTextStyles.bodySmall(),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 24),
+        OutlinedButton(
+          style: OutlinedButton.styleFrom(
+            foregroundColor: AppColors.error,
+            side: const BorderSide(color: AppColors.error),
+          ),
+          onPressed: () => ref.read(bookingControllerProvider.notifier).cancelBooking(),
+          child: const Text('Cancel Request'),
+        ),
+        const SizedBox(height: 4),
       ],
     );
   }
 
-  Widget _buildConfirmedPanel(BuildContext context, WidgetRef ref, BookingState state) {
+  // ── Active ride ───────────────────────────────────────────────────────────
+  Widget _buildRideActivePanel(BuildContext context, WidgetRef ref, BookingState state) {
     final driver = state.assignedDriver;
-    if (driver == null) return const SizedBox.shrink();
+    if (driver == null) return const SizedBox(height: 80, child: Center(child: CircularProgressIndicator()));
 
-    String titleText = 'Driver Assigned!';
-    Color titleColor = Colors.green;
-    
-    if (state.step == BookingStep.arrived) {
-      titleText = 'Driver has arrived!';
-      titleColor = Colors.amber.shade700;
-    } else if (state.step == BookingStep.started) {
-      titleText = 'Heading to destination...';
-      titleColor = Colors.blue;
+    Color statusColor;
+    String statusText;
+    IconData statusIcon;
+
+    switch (state.step) {
+      case BookingStep.arrived:
+        statusColor = AppColors.warning;
+        statusText = 'Driver has arrived!';
+        statusIcon = Icons.location_on;
+        break;
+      case BookingStep.started:
+        statusColor = AppColors.success;
+        statusText = 'On the way to destination';
+        statusIcon = Icons.electric_rickshaw;
+        break;
+      default:
+        statusColor = AppColors.success;
+        statusText = 'Driver is on the way';
+        statusIcon = Icons.directions;
     }
 
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(titleText, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: titleColor)),
-        const SizedBox(height: 16),
-        ListTile(
-          contentPadding: EdgeInsets.zero,
-          leading: const CircleAvatar(child: Icon(Icons.person)),
-          title: Text(driver['name'] ?? 'Driver', style: const TextStyle(fontWeight: FontWeight.bold)),
-          subtitle: Text('${driver['model']} • ${driver['plate']}'),
-          trailing: IconButton(
-            icon: const Icon(Icons.call, color: Colors.green),
-            onPressed: () async {
-              final phone = driver['phone']?.toString();
-              if (phone != null && phone.isNotEmpty) {
-                final uri = Uri(scheme: 'tel', path: phone);
-                if (await canLaunchUrl(uri)) await launchUrl(uri);
-              }
-            },
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: statusColor.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Row(
+            children: [
+              Icon(statusIcon, color: statusColor, size: 18),
+              const SizedBox(width: 10),
+              Text(statusText, style: AppTextStyles.bodySmall(color: statusColor, weight: FontWeight.w700)),
+            ],
           ),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 14),
 
-        // Chat button — opens the in-ride chat panel
-        OutlinedButton.icon(
-          icon: const Icon(Icons.chat_bubble_outline),
-          label: Text(state.chatMessages.isEmpty ? 'Chat with Driver' : 'Chat (${state.chatMessages.length})'),
-          onPressed: () => showModalBottomSheet(
-            context: context,
-            isScrollControlled: true,
-            backgroundColor: Colors.transparent,
-            builder: (_) => SizedBox(
-              height: MediaQuery.of(context).size.height * 0.6,
-              child: const RideChatPanel(),
-            ),
+        // Driver card
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: AppColors.surfaceVariant,
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 22,
+                backgroundColor: AppColors.primaryLight,
+                child: Text(
+                  (driver['name'] as String? ?? 'D').substring(0, 1).toUpperCase(),
+                  style: AppTextStyles.title(color: AppColors.primaryDark),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(driver['name'] ?? 'Driver', style: AppTextStyles.body(weight: FontWeight.w700)),
+                    Text('${driver['model'] ?? '—'} · ${driver['plate'] ?? '—'}',
+                        style: AppTextStyles.bodySmall()),
+                  ],
+                ),
+              ),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _CircleActionButton(
+                    icon: Icons.chat_bubble_outline_rounded,
+                    color: AppColors.primary,
+                    label: state.chatMessages.isNotEmpty ? '${state.chatMessages.length}' : null,
+                    onTap: () => showModalBottomSheet(
+                      context: context,
+                      isScrollControlled: true,
+                      backgroundColor: Colors.transparent,
+                      builder: (_) => SizedBox(
+                        height: MediaQuery.of(context).size.height * 0.6,
+                        child: const RideChatPanel(),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  _CircleActionButton(
+                    icon: Icons.call_rounded,
+                    color: AppColors.success,
+                    onTap: () async {
+                      final phone = driver['phone']?.toString();
+                      if (phone != null && phone.isNotEmpty) {
+                        final uri = Uri(scheme: 'tel', path: phone);
+                        if (await canLaunchUrl(uri)) await launchUrl(uri);
+                      }
+                    },
+                  ),
+                ],
+              ),
+            ],
           ),
         ),
 
         if (state.step != BookingStep.started) ...[
-          const SizedBox(height: 8),
-          ElevatedButton(
+          const SizedBox(height: 12),
+          OutlinedButton(
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.error,
+              side: const BorderSide(color: AppColors.error),
+            ),
             onPressed: () => ref.read(bookingControllerProvider.notifier).cancelBooking(),
             child: const Text('Cancel Trip'),
           ),
@@ -342,7 +432,147 @@ class BookingSheet extends ConsumerWidget {
   }
 }
 
-// ─── Payment Method Selector ─────────────────────────────────────────────────
+// ── Shared sub-widgets ─────────────────────────────────────────────────────
+
+class _SheetHandle extends StatelessWidget {
+  const _SheetHandle();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 10, bottom: 2),
+      child: Center(
+        child: Container(
+          width: 36, height: 4,
+          decoration: BoxDecoration(
+            color: AppColors.border,
+            borderRadius: BorderRadius.circular(2),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AddressRow extends StatelessWidget {
+  final IconData icon;
+  final Color iconColor;
+  final String text;
+  final bool isSubtle;
+  final VoidCallback? onTap;
+
+  const _AddressRow({
+    required this.icon,
+    required this.iconColor,
+    required this.text,
+    this.isSubtle = false,
+    this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+        decoration: BoxDecoration(
+          color: isSubtle ? AppColors.surfaceVariant : AppColors.paleGray,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppColors.border),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, color: iconColor, size: 16),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                text,
+                style: AppTextStyles.body(
+                    color: isSubtle ? AppColors.midGray : AppColors.charcoal),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            if (onTap != null) const Icon(Icons.chevron_right, color: AppColors.lightGray, size: 18),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ErrorState extends StatelessWidget {
+  final String message;
+  final VoidCallback onRetry;
+
+  const _ErrorState({required this.message, required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 180,
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.wifi_off_rounded, size: 40, color: AppColors.lightGray),
+            const SizedBox(height: 12),
+            Text(message, style: AppTextStyles.bodySmall(), textAlign: TextAlign.center),
+            const SizedBox(height: 16),
+            ElevatedButton(onPressed: onRetry, child: const Text('Try Again')),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CircleActionButton extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final String? label;
+  final VoidCallback onTap;
+
+  const _CircleActionButton({
+    required this.icon,
+    required this.color,
+    required this.onTap,
+    this.label,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        GestureDetector(
+          onTap: onTap,
+          child: Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(icon, color: color, size: 20),
+          ),
+        ),
+        if (label != null)
+          Positioned(
+            right: -4,
+            top: -4,
+            child: Container(
+              padding: const EdgeInsets.all(3),
+              decoration: const BoxDecoration(color: AppColors.error, shape: BoxShape.circle),
+              child: Text(label!, style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+// ── Payment Method Selector ────────────────────────────────────────────────
 
 class _PaymentSelector extends StatelessWidget {
   final String selected;
@@ -362,32 +592,28 @@ class _PaymentSelector extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final canAffordWallet = walletBalance >= fare;
-    final fmt = NumberFormat('#,###.00');
+    final fmt = NumberFormat('#,###');
 
     return Row(
       children: [
-        // Cash option
         Expanded(
           child: _PaymentOption(
             label: 'Cash',
             subtitle: 'Pay on arrival',
-            icon: Icons.money,
+            icon: Icons.payments_outlined,
             isSelected: selected == 'cash',
             isEnabled: true,
             onTap: () => onSelect('cash'),
           ),
         ),
         const SizedBox(width: 10),
-        // Wallet option
         Expanded(
           child: Stack(
             clipBehavior: Clip.none,
             children: [
               _PaymentOption(
                 label: 'Wallet',
-                subtitle: canAffordWallet
-                    ? '₦${fmt.format(walletBalance)}'
-                    : 'Insufficient funds',
+                subtitle: canAffordWallet ? '₦${fmt.format(walletBalance)}' : 'Insufficient',
                 icon: Icons.account_balance_wallet_outlined,
                 isSelected: selected == 'wallet',
                 isEnabled: canAffordWallet,
@@ -396,17 +622,17 @@ class _PaymentSelector extends StatelessWidget {
               if (!canAffordWallet)
                 Positioned(
                   right: 0,
-                  top: 0,
+                  top: -6,
                   child: GestureDetector(
                     onTap: onTopUp,
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFFFC107),
-                        borderRadius: BorderRadius.circular(12),
+                        color: AppColors.primary,
+                        borderRadius: BorderRadius.circular(10),
                       ),
-                      child: const Text('Top Up',
-                          style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                      child: Text('Top Up',
+                          style: AppTextStyles.caption(color: AppColors.charcoal, weight: FontWeight.w700)),
                     ),
                   ),
                 ),
@@ -437,18 +663,17 @@ class _PaymentOption extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final selectedColor = const Color(0xFFFFC107);
-    final disabledColor = Colors.grey[200];
-
     return GestureDetector(
       onTap: onTap,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 180),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
         decoration: BoxDecoration(
-          color: isSelected ? selectedColor.withOpacity(0.15) : (isEnabled ? Colors.white : disabledColor),
+          color: isSelected
+              ? AppColors.primaryLight
+              : (isEnabled ? AppColors.white : AppColors.surfaceVariant),
           border: Border.all(
-            color: isSelected ? selectedColor : Colors.grey.shade300,
+            color: isSelected ? AppColors.primary : AppColors.border,
             width: isSelected ? 2 : 1,
           ),
           borderRadius: BorderRadius.circular(12),
@@ -456,33 +681,29 @@ class _PaymentOption extends StatelessWidget {
         child: Row(
           children: [
             Icon(icon,
-                size: 22,
+                size: 20,
                 color: isSelected
-                    ? Colors.amber.shade800
-                    : (isEnabled ? Colors.black54 : Colors.grey)),
+                    ? AppColors.primaryDark
+                    : (isEnabled ? AppColors.midGray : AppColors.lightGray)),
             const SizedBox(width: 8),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(label,
-                      style: TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 14,
-                        color: isEnabled ? Colors.black : Colors.grey,
-                      )),
+                      style: AppTextStyles.body(
+                          weight: FontWeight.w700,
+                          color: isEnabled ? AppColors.charcoal : AppColors.lightGray)),
                   Text(subtitle,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: isEnabled ? Colors.black54 : Colors.grey,
-                      ),
+                      style: AppTextStyles.caption(
+                          color: isEnabled ? AppColors.midGray : AppColors.lightGray),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis),
                 ],
               ),
             ),
             if (isSelected)
-              Icon(Icons.check_circle, size: 18, color: Colors.amber.shade800),
+              const Icon(Icons.check_circle_rounded, size: 16, color: AppColors.primaryDark),
           ],
         ),
       ),

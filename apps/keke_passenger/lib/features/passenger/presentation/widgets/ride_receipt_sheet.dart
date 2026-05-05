@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import '../../../../../core/theme/app_theme.dart';
 import '../../application/booking_controller.dart';
-import '../../domain/booking_state.dart';
 
 class RideReceiptSheet extends ConsumerWidget {
   const RideReceiptSheet({super.key});
@@ -20,123 +20,198 @@ class RideReceiptSheet extends ConsumerWidget {
 
     return Container(
       decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        color: AppColors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
       child: SafeArea(
         top: false,
         child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+          padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               // Handle
               Center(
                 child: Container(
-                  width: 40, height: 4,
+                  width: 36,
+                  height: 4,
                   margin: const EdgeInsets.only(bottom: 20),
-                  decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2)),
+                  decoration: BoxDecoration(
+                    color: AppColors.border,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
                 ),
               ),
 
               // Success icon + heading
-              const Center(
-                child: CircleAvatar(
-                  radius: 32,
-                  backgroundColor: Color(0xFFFFC107),
-                  child: Icon(Icons.check, color: Colors.black, size: 36),
+              Center(
+                child: Container(
+                  width: 64,
+                  height: 64,
+                  decoration: const BoxDecoration(
+                    color: AppColors.primaryLight,
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.check_rounded,
+                    color: AppColors.primaryDark,
+                    size: 36,
+                  ),
                 ),
               ),
-              const SizedBox(height: 12),
-              const Center(
-                child: Text('Trip Completed!',
-                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 14),
+              Text(
+                'Trip Complete!',
+                textAlign: TextAlign.center,
+                style: AppTextStyles.headline(
+                    color: AppColors.charcoal, weight: FontWeight.w800),
               ),
-              Center(
-                child: Text('$dateStr · $timeStr',
-                    style: TextStyle(color: Colors.grey[600], fontSize: 13)),
+              const SizedBox(height: 4),
+              Text(
+                '$dateStr · $timeStr',
+                textAlign: TextAlign.center,
+                style: AppTextStyles.bodySmall(color: AppColors.midGray),
               ),
 
               const SizedBox(height: 24),
-              const Divider(),
+              const _Divider(),
 
-              // Fare
-              _ReceiptRow(
-                icon: Icons.payments_outlined,
-                label: 'Total Fare',
-                value: '₦${NumberFormat('#,###').format(fare)}',
-                valueStyle: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-              ),
-              _ReceiptRow(
-                icon: isCash ? Icons.money : Icons.account_balance_wallet_outlined,
-                label: 'Payment',
-                value: isCash ? 'Cash' : 'Wallet',
-              ),
-
-              const Divider(),
-
-              // Route
-              _RouteRow(
-                pickup: state.receiptPickupAddress ?? '—',
-                destination: state.receiptDestinationAddress ?? '—',
-              ),
-
-              if (state.receiptDistance != null) ...[
-                const SizedBox(height: 4),
-                Row(
-                  children: [
-                    Icon(Icons.straighten, size: 16, color: Colors.grey[500]),
-                    const SizedBox(width: 6),
-                    Text(state.receiptDistance!,
-                        style: TextStyle(color: Colors.grey[600], fontSize: 13)),
-                  ],
+              // Fare highlight
+              Container(
+                padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
+                decoration: BoxDecoration(
+                  color: AppColors.paleGray,
+                  borderRadius: BorderRadius.circular(16),
                 ),
-              ],
-
-              const Divider(),
-
-              // Driver
-              if (driver != null) ...[
-                Row(
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const CircleAvatar(
-                      radius: 22,
-                      backgroundColor: Color(0xFFF5F5F5),
-                      child: Icon(Icons.person, color: Colors.black54),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Total Fare',
+                            style: AppTextStyles.caption(color: AppColors.midGray)),
+                        Text(
+                          '₦${NumberFormat('#,###').format(fare)}',
+                          style: AppTextStyles.display(
+                              color: AppColors.charcoal, weight: FontWeight.w800),
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                      decoration: BoxDecoration(
+                        color: isCash
+                            ? const Color(0xFFFEF9C3)
+                            : AppColors.primaryLight,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Row(
                         children: [
-                          Text(driver['name'] ?? 'Driver',
-                              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
+                          Icon(
+                            isCash
+                                ? Icons.money_rounded
+                                : Icons.account_balance_wallet_outlined,
+                            size: 16,
+                            color: isCash
+                                ? const Color(0xFF92400E)
+                                : AppColors.primaryDark,
+                          ),
+                          const SizedBox(width: 6),
                           Text(
-                            '${driver['vehicleModel'] ?? ''} · ${driver['vehiclePlate'] ?? ''}'.trim().replaceAll(RegExp(r'^\s*·\s*|\s*·\s*$'), ''),
-                            style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                            isCash ? 'Cash' : 'Wallet',
+                            style: AppTextStyles.bodySmall(
+                              color: isCash
+                                  ? const Color(0xFF92400E)
+                                  : AppColors.primaryDark,
+                              weight: FontWeight.w700,
+                            ),
                           ),
                         ],
                       ),
                     ),
                   ],
                 ),
-                const Divider(),
+              ),
+
+              const SizedBox(height: 16),
+              const _Divider(),
+              const SizedBox(height: 4),
+
+              // Route
+              _RouteSection(
+                pickup: state.receiptPickupAddress ?? '—',
+                destination: state.receiptDestinationAddress ?? '—',
+                distance: state.receiptDistance,
+              ),
+
+              const SizedBox(height: 4),
+              const _Divider(),
+
+              // Driver card
+              if (driver != null) ...[
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Container(
+                      width: 44,
+                      height: 44,
+                      decoration: const BoxDecoration(
+                        color: AppColors.paleGray,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.electric_rickshaw,
+                          color: AppColors.midGray, size: 22),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            driver['name'] ?? 'Driver',
+                            style: AppTextStyles.body(
+                                color: AppColors.charcoal,
+                                weight: FontWeight.w600),
+                          ),
+                          Text(
+                            [
+                              driver['vehicleModel'],
+                              driver['vehiclePlate'],
+                            ]
+                                .where((v) => v != null && v.toString().isNotEmpty)
+                                .join(' · '),
+                            style: AppTextStyles.bodySmall(color: AppColors.midGray),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                const _Divider(),
               ],
 
-              const SizedBox(height: 8),
+              const SizedBox(height: 20),
 
-              // Done button
               ElevatedButton(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFFFFC107),
-                  foregroundColor: Colors.black,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: AppColors.charcoal,
+                  padding: const EdgeInsets.symmetric(vertical: 18),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  elevation: 0,
                 ),
-                onPressed: () => ref.read(bookingControllerProvider.notifier).dismissReceipt(),
-                child: const Text('Done', style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+                onPressed: () =>
+                    ref.read(bookingControllerProvider.notifier).dismissReceipt(),
+                child: Text(
+                  'Done',
+                  style: AppTextStyles.body(
+                      color: AppColors.charcoal, weight: FontWeight.w700),
+                ),
               ),
-              const SizedBox(height: 8),
             ],
           ),
         ),
@@ -145,68 +220,86 @@ class RideReceiptSheet extends ConsumerWidget {
   }
 }
 
-class _ReceiptRow extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final String value;
-  final TextStyle? valueStyle;
+class _Divider extends StatelessWidget {
+  const _Divider();
 
-  const _ReceiptRow({
-    required this.icon,
-    required this.label,
-    required this.value,
-    this.valueStyle,
+  @override
+  Widget build(BuildContext context) {
+    return const Divider(height: 1, color: AppColors.border);
+  }
+}
+
+class _RouteSection extends StatelessWidget {
+  final String pickup;
+  final String destination;
+  final String? distance;
+
+  const _RouteSection({
+    required this.pickup,
+    required this.destination,
+    this.distance,
   });
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 10),
-      child: Row(
-        children: [
-          Icon(icon, size: 20, color: Colors.grey[600]),
-          const SizedBox(width: 12),
-          Text(label, style: TextStyle(color: Colors.grey[700], fontSize: 14)),
-          const Spacer(),
-          Text(value, style: valueStyle ?? const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
-        ],
-      ),
-    );
-  }
-}
-
-class _RouteRow extends StatelessWidget {
-  final String pickup;
-  final String destination;
-
-  const _RouteRow({required this.pickup, required this.destination});
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 10),
+      padding: const EdgeInsets.symmetric(vertical: 12),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Column(
             children: [
-              const Icon(Icons.radio_button_checked, size: 18, color: Color(0xFFFFC107)),
-              Container(width: 2, height: 32, color: Colors.grey[300]),
-              const Icon(Icons.location_on, size: 18, color: Colors.redAccent),
+              Container(
+                width: 10,
+                height: 10,
+                decoration: const BoxDecoration(
+                  color: AppColors.primary,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              Container(width: 2, height: 36, color: AppColors.border),
+              Container(
+                width: 10,
+                height: 10,
+                decoration: const BoxDecoration(
+                  color: AppColors.error,
+                  shape: BoxShape.circle,
+                ),
+              ),
             ],
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 14),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(pickup,
-                    style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 14),
-                    maxLines: 2, overflow: TextOverflow.ellipsis),
-                const SizedBox(height: 16),
-                Text(destination,
-                    style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 14),
-                    maxLines: 2, overflow: TextOverflow.ellipsis),
+                Text(
+                  pickup,
+                  style: AppTextStyles.body(
+                      color: AppColors.charcoal, weight: FontWeight.w500),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 18),
+                Text(
+                  destination,
+                  style: AppTextStyles.body(
+                      color: AppColors.darkGray, weight: FontWeight.w500),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                if (distance != null) ...[
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      const Icon(Icons.straighten_rounded,
+                          size: 14, color: AppColors.midGray),
+                      const SizedBox(width: 4),
+                      Text(distance!,
+                          style: AppTextStyles.caption(color: AppColors.midGray)),
+                    ],
+                  ),
+                ],
               ],
             ),
           ),

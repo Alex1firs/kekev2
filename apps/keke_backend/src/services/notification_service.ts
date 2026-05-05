@@ -13,17 +13,28 @@ export class NotificationService {
     static initialize() {
         if (this.initialized) return;
 
+        // Prefer env var (base64-encoded JSON) — set FIREBASE_SERVICE_ACCOUNT_JSON in production
+        if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+            try {
+                const serviceAccount = JSON.parse(
+                    Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT_JSON, 'base64').toString('utf8')
+                );
+                admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+                this.initialized = true;
+                return;
+            } catch (e) {
+                console.error('[NOTIFICATION_SERVICE] Failed to parse FIREBASE_SERVICE_ACCOUNT_JSON env var');
+            }
+        }
+
+        // Fall back to file (development only — do NOT commit firebase-admin.json to production repos)
         const serviceAccountPath = path.join(__dirname, '../config/firebase-admin.json');
-        
         if (fs.existsSync(serviceAccountPath)) {
             const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, 'utf8'));
-            admin.initializeApp({
-                credential: admin.credential.cert(serviceAccount)
-            });
+            admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
             this.initialized = true;
-            console.log('[NOTIFICATION_SERVICE] Firebase Admin initialized.');
         } else {
-            console.warn('[NOTIFICATION_SERVICE] Missing firebase-admin.json. Notifications will be logged to console only.');
+            console.warn('[NOTIFICATION_SERVICE] No Firebase credentials found. Push notifications disabled.');
         }
     }
 

@@ -9,7 +9,7 @@ import '../../../core/network/api_client.dart';
 import '../../auth/application/auth_controller.dart';
 import '../../auth/domain/auth_state.dart';
 import 'package:jwt_decoder/jwt_decoder.dart';
-import '../../core/network/notification_service.dart';
+import '../../../core/network/notification_service.dart';
 import '../domain/chat_message.dart';
 import '../../../core/services/sound_service.dart';
 

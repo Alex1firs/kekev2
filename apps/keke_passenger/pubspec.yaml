@@ -24,6 +24,7 @@ dependencies:
   webview_flutter: ^4.10.0
   jwt_decoder: ^2.0.1
   url_launcher: ^6.3.0
+  google_fonts: ^6.2.1
 
 dev_dependencies:
   flutter_test:

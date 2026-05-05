@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
-import 'dart:async';
-import 'dart:io';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
+import '../../../../core/theme/app_theme.dart';
 import '../application/driver_controller.dart';
 import '../domain/driver_profile.dart';
 
@@ -19,12 +18,10 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   final _plateController = TextEditingController();
   final _modelController = TextEditingController();
   int _currentStep = 0;
-  final Map<String, String> _uploadedDocs = {};
 
   @override
   void initState() {
     super.initState();
-    // Pre-fill controllers with existing data if available (Sync with network truth)
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final profile = ref.read(driverControllerProvider).profile;
       _plateController.text = profile.vehiclePlate ?? '';
@@ -62,97 +59,121 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   Widget build(BuildContext context) {
     final driverState = ref.watch(driverControllerProvider);
     final profile = driverState.profile;
-    
-    // Strict completion check: All 3 URLs must exist in the backend-synced profile
-    final bool allDocsUploaded = profile.licenseUrl != null && 
-                               profile.idCardUrl != null && 
-                               profile.vehiclePaperUrl != null;
+
+    final bool allDocsUploaded = profile.licenseUrl != null &&
+        profile.idCardUrl != null &&
+        profile.vehiclePaperUrl != null;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Driver Onboarding')),
-      body: Stepper(
-        currentStep: _currentStep,
-        onStepContinue: () {
-          if (_currentStep == 1 && !allDocsUploaded) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Please upload all 3 required documents to continue.'),
-                backgroundColor: Colors.orange,
-              ),
-            );
-            return;
-          }
-          _nextStep();
-        },
-        onStepCancel: () => setState(() => _currentStep--),
-        controlsBuilder: (context, details) {
-          final isStep2 = _currentStep == 1;
-          final bool canContinue = !driverState.isLoading && (!isStep2 || allDocsUploaded);
-
-          return Padding(
-            padding: const EdgeInsets.only(top: 24.0),
-            child: SizedBox(
-              width: double.infinity,
-              height: 50,
-              child: ElevatedButton(
-                onPressed: canContinue ? details.onStepContinue : null,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: canContinue ? Colors.amber : Colors.grey,
-                  foregroundColor: Colors.black,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                ),
-                child: Text(driverState.isLoading ? 'Processing...' : (allDocsUploaded && isStep2 ? 'Finalize & Submit' : 'Continue')),
-              ),
+      backgroundColor: AppColors.snow,
+      body: Column(
+        children: [
+          // Header
+          Container(
+            color: AppColors.charcoal,
+            padding: EdgeInsets.fromLTRB(
+              24,
+              MediaQuery.of(context).padding.top + 16,
+              24,
+              28,
             ),
-          );
-        },
-        steps: [
-          Step(
-            title: const Text('Vehicle Info'),
-            isActive: _currentStep >= 0,
-            content: Column(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                TextField(
-                  controller: _firstNameController,
-                  decoration: const InputDecoration(labelText: 'First Name'),
-                  textCapitalization: TextCapitalization.words,
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.electric_rickshaw,
+                      color: AppColors.primary, size: 24),
                 ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _lastNameController,
-                  decoration: const InputDecoration(labelText: 'Last Name'),
-                  textCapitalization: TextCapitalization.words,
+                const SizedBox(height: 20),
+                Text(
+                  'Driver Onboarding',
+                  style: AppTextStyles.headline(color: AppColors.white),
                 ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _plateController,
-                  decoration: const InputDecoration(labelText: 'Keke License Plate (e.g. ANK-123)'),
+                const SizedBox(height: 6),
+                Text(
+                  'Complete your profile to start accepting rides',
+                  style: AppTextStyles.body(color: AppColors.midGray),
                 ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _modelController,
-                  decoration: const InputDecoration(labelText: 'Vehicle Model (e.g. TVS King)'),
-                ),
+                const SizedBox(height: 24),
+                _StepProgress(current: _currentStep, total: 2),
               ],
             ),
           ),
-          Step(
-            title: const Text('Documents Upload'),
-            isActive: _currentStep >= 1,
-            content: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(24),
+              child: _currentStep == 0
+                  ? _buildVehicleInfoStep(driverState)
+                  : _buildDocumentsStep(profile, driverState, allDocsUploaded),
+            ),
+          ),
+
+          // Bottom action
+          Padding(
+            padding: EdgeInsets.fromLTRB(
+              24, 0, 24, MediaQuery.of(context).padding.bottom + 20),
+            child: Column(
               children: [
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 8.0),
-                  child: Text('Please upload clear photos of your documents for verification.', style: TextStyle(fontSize: 14)),
-                ),
-                _buildDocTile('Driver\'s License', Icons.badge_outlined, 'license'),
-                _buildDocTile('Vehicle Papers', Icons.description_outlined, 'vehicle_paper'),
-                _buildDocTile('NIN ID Card', Icons.credit_card_outlined, 'id_card'),
-                const SizedBox(height: 16),
-                const Text(
-                  'Your documents are stored securely and only accessible to authorized Keke reviewers.',
-                  style: TextStyle(fontSize: 11, color: Colors.grey),
+                if (driverState.errorMessage != null) ...[
+                  _ErrorBanner(message: driverState.errorMessage!),
+                  const SizedBox(height: 12),
+                ],
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      foregroundColor: AppColors.charcoal,
+                      padding: const EdgeInsets.symmetric(vertical: 18),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      elevation: 0,
+                    ),
+                    onPressed: driverState.isLoading ||
+                            (_currentStep == 1 && !allDocsUploaded)
+                        ? null
+                        : () {
+                            if (_currentStep == 1 && !allDocsUploaded) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  backgroundColor: AppColors.primary,
+                                  content: Text(
+                                    'Please upload all 3 required documents.',
+                                    style: AppTextStyles.body(color: AppColors.charcoal),
+                                  ),
+                                ),
+                              );
+                              return;
+                            }
+                            _nextStep();
+                          },
+                    child: driverState.isLoading
+                        ? const SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2.5,
+                              color: AppColors.charcoal,
+                            ),
+                          )
+                        : Text(
+                            _currentStep == 1 && allDocsUploaded
+                                ? 'Submit for Review'
+                                : 'Continue',
+                            style: AppTextStyles.body(
+                              color: AppColors.charcoal,
+                              weight: FontWeight.w700,
+                            ),
+                          ),
+                  ),
                 ),
               ],
             ),
@@ -162,62 +183,302 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     );
   }
 
-  Widget _buildDocTile(String title, IconData icon, String type) {
-    final driverState = ref.watch(driverControllerProvider);
-    final profile = driverState.profile;
-    
-    // Check backend sync first
-    String? backendUrl;
-    if (type == 'license') backendUrl = profile.licenseUrl;
-    else if (type == 'id_card') backendUrl = profile.idCardUrl;
-    else if (type == 'vehicle_paper') backendUrl = profile.vehiclePaperUrl;
+  Widget _buildVehicleInfoStep(dynamic driverState) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Your Details', style: AppTextStyles.title(color: AppColors.charcoal)),
+        const SizedBox(height: 20),
+        Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('First Name',
+                      style: AppTextStyles.label(
+                          color: AppColors.darkGray, weight: FontWeight.w600)),
+                  const SizedBox(height: 6),
+                  TextFormField(
+                    controller: _firstNameController,
+                    decoration: const InputDecoration(hintText: 'e.g. Emeka'),
+                    textCapitalization: TextCapitalization.words,
+                    textInputAction: TextInputAction.next,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Last Name',
+                      style: AppTextStyles.label(
+                          color: AppColors.darkGray, weight: FontWeight.w600)),
+                  const SizedBox(height: 6),
+                  TextFormField(
+                    controller: _lastNameController,
+                    decoration: const InputDecoration(hintText: 'e.g. Okonkwo'),
+                    textCapitalization: TextCapitalization.words,
+                    textInputAction: TextInputAction.next,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 20),
+        Text('Keke Plate Number',
+            style: AppTextStyles.label(
+                color: AppColors.darkGray, weight: FontWeight.w600)),
+        const SizedBox(height: 6),
+        TextFormField(
+          controller: _plateController,
+          decoration: const InputDecoration(
+            hintText: 'e.g. ANK-123KW',
+            prefixIcon: Icon(Icons.electric_rickshaw),
+          ),
+          textInputAction: TextInputAction.next,
+        ),
+        const SizedBox(height: 20),
+        Text('Vehicle Model',
+            style: AppTextStyles.label(
+                color: AppColors.darkGray, weight: FontWeight.w600)),
+        const SizedBox(height: 6),
+        TextFormField(
+          controller: _modelController,
+          decoration: const InputDecoration(
+            hintText: 'e.g. TVS King Deluxe',
+            prefixIcon: Icon(Icons.electric_rickshaw),
+          ),
+          textInputAction: TextInputAction.done,
+        ),
+      ],
+    );
+  }
 
-    final bool isUploaded = backendUrl != null;
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      decoration: BoxDecoration(
-        color: Colors.white10,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: isUploaded ? Colors.green.withOpacity(0.5) : Colors.white24),
-      ),
-      child: ListTile(
-        leading: Icon(icon, color: isUploaded ? Colors.green : Colors.amber),
-        title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
-        subtitle: isUploaded 
-            ? const Text('✓ Document Verified', style: TextStyle(color: Colors.green)) 
-            : const Text('Tap to capture', style: TextStyle(color: Colors.grey, fontSize: 12)),
-        trailing: isUploaded 
-          ? ActionChip(
-              label: const Text('Retake', style: TextStyle(fontSize: 12, color: Colors.black)),
-              backgroundColor: Colors.amber,
-              onPressed: driverState.isLoading ? null : () => _pickAndUpload(type),
-            )
-          : const Icon(Icons.add_a_photo, color: Colors.amber),
-        onTap: driverState.isLoading ? null : () => _pickAndUpload(type),
-      ),
+  Widget _buildDocumentsStep(
+      DriverProfile profile, dynamic driverState, bool allDone) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Upload Documents', style: AppTextStyles.title(color: AppColors.charcoal)),
+        const SizedBox(height: 6),
+        Text(
+          'Upload clear photos. Documents are reviewed within 24 hours.',
+          style: AppTextStyles.body(color: AppColors.midGray),
+        ),
+        const SizedBox(height: 24),
+        _DocTile(
+          title: "Driver's License",
+          icon: Icons.badge_outlined,
+          type: 'license',
+          isUploaded: profile.licenseUrl != null,
+          isLoading: driverState.isLoading,
+          onUpload: _pickAndUpload,
+        ),
+        const SizedBox(height: 12),
+        _DocTile(
+          title: 'Vehicle Papers',
+          icon: Icons.description_outlined,
+          type: 'vehicle_paper',
+          isUploaded: profile.vehiclePaperUrl != null,
+          isLoading: driverState.isLoading,
+          onUpload: _pickAndUpload,
+        ),
+        const SizedBox(height: 12),
+        _DocTile(
+          title: 'NIN / ID Card',
+          icon: Icons.credit_card_outlined,
+          type: 'id_card',
+          isUploaded: profile.idCardUrl != null,
+          isLoading: driverState.isLoading,
+          onUpload: _pickAndUpload,
+        ),
+        const SizedBox(height: 16),
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: AppColors.paleGray,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.lock_outline, color: AppColors.midGray, size: 18),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Documents are stored securely and only accessible to authorised Keke reviewers.',
+                  style: AppTextStyles.caption(color: AppColors.midGray),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
   Future<void> _pickAndUpload(String type) async {
     final picker = ImagePicker();
     final XFile? image = await picker.pickImage(
-      source: ImageSource.camera, 
+      source: ImageSource.camera,
       imageQuality: 70,
       maxWidth: 1024,
       maxHeight: 1024,
     );
-    
+
     if (image != null) {
       try {
-        await ref.read(driverControllerProvider.notifier).uploadDocument(image.path, type);
+        await ref
+            .read(driverControllerProvider.notifier)
+            .uploadDocument(image.path, type);
       } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Upload failed: ${e.toString()}'), backgroundColor: Colors.red),
+            SnackBar(
+              content: Text('Upload failed: ${e.toString()}'),
+              backgroundColor: AppColors.error,
+            ),
           );
         }
       }
     }
+  }
+}
+
+class _StepProgress extends StatelessWidget {
+  final int current;
+  final int total;
+
+  const _StepProgress({required this.current, required this.total});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: List.generate(total, (i) {
+        final active = i <= current;
+        return Expanded(
+          child: Container(
+            margin: EdgeInsets.only(right: i < total - 1 ? 6 : 0),
+            height: 4,
+            decoration: BoxDecoration(
+              color: active ? AppColors.primary : AppColors.darkGray,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+        );
+      }),
+    );
+  }
+}
+
+class _DocTile extends StatelessWidget {
+  final String title;
+  final IconData icon;
+  final String type;
+  final bool isUploaded;
+  final bool isLoading;
+  final Future<void> Function(String) onUpload;
+
+  const _DocTile({
+    required this.title,
+    required this.icon,
+    required this.type,
+    required this.isUploaded,
+    required this.isLoading,
+    required this.onUpload,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: isLoading ? null : () => onUpload(type),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: AppColors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: isUploaded ? AppColors.success.withOpacity(0.4) : AppColors.border,
+          ),
+          boxShadow: const [
+            BoxShadow(color: Color(0x08000000), blurRadius: 6, offset: Offset(0, 2)),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: isUploaded
+                    ? AppColors.success.withOpacity(0.12)
+                    : AppColors.paleGray,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(
+                icon,
+                color: isUploaded ? AppColors.success : AppColors.midGray,
+                size: 22,
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: AppTextStyles.body(
+                      color: AppColors.charcoal,
+                      weight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    isUploaded ? 'Uploaded — tap to retake' : 'Tap to capture photo',
+                    style: AppTextStyles.caption(
+                      color: isUploaded ? AppColors.success : AppColors.midGray,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (isUploaded)
+              const Icon(Icons.check_circle, color: AppColors.success, size: 22)
+            else
+              const Icon(Icons.add_a_photo_outlined, color: AppColors.primary, size: 22),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ErrorBanner extends StatelessWidget {
+  final String message;
+  const _ErrorBanner({required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppColors.errorLight,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.error.withOpacity(0.3)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.error_outline, color: AppColors.error, size: 18),
+          const SizedBox(width: 10),
+          Expanded(
+              child: Text(message,
+                  style: AppTextStyles.bodySmall(color: AppColors.error))),
+        ],
+      ),
+    );
   }
 }

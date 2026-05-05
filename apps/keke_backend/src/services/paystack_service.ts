@@ -13,10 +13,13 @@ export class PaystackService {
     /**
      * Initialize Paystack Top-up
      */
-    static async initializeTopup(userId: string, email: string, amount: number): Promise<{ authorization_url: string; reference: string }> {
+    static async initializeTopup(
+        userId: string,
+        email: string,
+        amount: number,
+        role: 'passenger' | 'driver' = 'passenger'
+    ): Promise<{ authorization_url: string; reference: string }> {
         const reference = `KEKE-${Date.now()}-${Math.random().toString(36).substring(7)}`;
-
-        // Convert NGN to Kobo (Paystack expected unit)
         const amountInKobo = Math.round(amount * 100);
 
         const response = await axios.post(
@@ -25,7 +28,7 @@ export class PaystackService {
                 email,
                 amount: amountInKobo,
                 reference,
-                metadata: { userId, type: "wallet_topup" }
+                metadata: { userId, type: "wallet_topup", role }
             },
             {
                 headers: {
@@ -36,13 +39,13 @@ export class PaystackService {
         );
 
         if (response.data.status) {
-            // Save initial transaction record
             const tx = AppDataSource.getRepository(Transaction).create({
                 userId,
                 amount,
                 reference,
-                status: TransactionStatus.PENDING
-            });
+                status: TransactionStatus.PENDING,
+            }) as any;
+            tx.role = role;
             await AppDataSource.getRepository(Transaction).save(tx);
 
             return {

@@ -42,8 +42,51 @@ router.post("/topup/init", authMiddleware, topupLimiter, async (req: AuthRequest
         if (!email || !amount || amount <= 0) {
             return res.status(400).json({ error: "Invalid email or amount" });
         }
+        // role defaults to 'passenger'; pass role:'driver' to credit driver balance
         const result = await PaystackService.initializeTopup(userId, email, amount);
         res.json(result);
+    } catch (err: any) {
+        res.status(500).json({ error: "Internal Server Error" });
+    }
+});
+
+// Driver-specific top-up: credits driverAvailableBalance (usable to settle commission debt)
+router.post("/topup/driver/init", authMiddleware, topupLimiter, async (req: AuthRequest, res: Response) => {
+    try {
+        const userId = req.user!.userId;
+        const { email, amount } = req.body;
+        if (!email || !amount || amount <= 0) {
+            return res.status(400).json({ error: "Invalid email or amount" });
+        }
+        const result = await PaystackService.initializeTopup(userId, email, amount, 'driver');
+        res.json(result);
+    } catch (err: any) {
+        res.status(500).json({ error: "Internal Server Error" });
+    }
+});
+
+// Driver requests a payout of available balance to their bank account
+router.post("/payout/init", authMiddleware, async (req: AuthRequest, res: Response) => {
+    try {
+        const userId = req.user!.userId;
+        const { amount, bankCode, accountNumber } = req.body;
+        if (!amount || amount <= 0 || !bankCode || !accountNumber) {
+            return res.status(400).json({ error: "amount, bankCode, and accountNumber are required" });
+        }
+        const payout = await WalletService.initiatePayout(userId, Number(amount), bankCode.toString(), accountNumber.toString());
+        res.json({ payout });
+    } catch (err: any) {
+        const status = err.message?.includes('Insufficient') ? 400 : 500;
+        res.status(status).json({ error: err.message });
+    }
+});
+
+// Apply existing driverAvailableBalance directly to commission debt
+router.post("/debt/repay", authMiddleware, async (req: AuthRequest, res: Response) => {
+    try {
+        const userId = req.user!.userId;
+        const { applied, remainingDebt } = await WalletService.repayDebtFromBalance(userId);
+        res.json({ applied, remainingDebt });
     } catch (err: any) {
         res.status(500).json({ error: "Internal Server Error" });
     }

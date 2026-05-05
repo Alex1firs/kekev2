@@ -102,7 +102,8 @@ class NotificationService {
   }
 }
 
-final notificationServiceProvider = Provider.family<NotificationService, String>((ref, role) {
+// ignore: provider_dependencies
+final ProviderFamily<NotificationService, String> notificationServiceProvider = Provider.family<NotificationService, String>((ref, role) {
   final apiClient = ref.watch(apiClientProvider);
   return NotificationService(apiClient, role);
 });

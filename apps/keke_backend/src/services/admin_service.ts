@@ -2,7 +2,9 @@ import { AppDataSource } from "../config/data_source";
 import { DriverProfile, DriverStatus } from "../models/DriverProfile";
 import { Ride, RideStatus } from "../models/Ride";
 import { Wallet } from "../models/Wallet";
-import { PayoutRecord } from "../models/PayoutRecord";
+import { LedgerEntry, BalanceType } from "../models/LedgerEntry";
+import { PayoutRecord, PayoutStatus } from "../models/PayoutRecord";
+import { AuditLog } from "../models/AuditLog";
 import { redis } from "../config/redis";
 
 export class AdminService {
@@ -86,7 +88,7 @@ export class AdminService {
         
         // --- Audit Logging (Successful Mutation) ---
         try {
-          const auditRepo = AppDataSource.getRepository(require("../models").AuditLog);
+          const auditRepo = AppDataSource.getRepository(AuditLog);
           let action = "UPDATE_DRIVER_STATUS";
           if (status === DriverStatus.APPROVED) action = "APPROVE_DRIVER";
           else if (status === DriverStatus.REJECTED) action = "REJECT_DRIVER";
@@ -142,17 +144,26 @@ export class AdminService {
      * Get Finance Summary
      */
     static async getFinanceSummary() {
-        const result = await AppDataSource.getRepository(Wallet)
-            .createQueryBuilder("w")
-            .select("SUM(w.driverCommissionDebt)", "totalCommissionDebt")
-            .addSelect("SUM(w.driverAvailableBalance)", "totalAvailableBalance")
-            .addSelect("COUNT(*)", "activeWallets")
-            .getRawOne();
+        const [walletResult, platformResult] = await Promise.all([
+            AppDataSource.getRepository(Wallet)
+                .createQueryBuilder("w")
+                .select("SUM(w.driverCommissionDebt)", "totalCommissionDebt")
+                .addSelect("SUM(w.driverAvailableBalance)", "totalAvailableBalance")
+                .addSelect("COUNT(*)", "activeWallets")
+                .getRawOne(),
+            AppDataSource.getRepository(LedgerEntry)
+                .createQueryBuilder("le")
+                .where("le.walletId = :walletId", { walletId: 'PLATFORM' })
+                .andWhere("le.balanceType = :type", { type: BalanceType.PLATFORM_REVENUE })
+                .select("SUM(le.amount)", "total")
+                .getRawOne(),
+        ]);
 
         return {
-            totalCommissionDebt: parseFloat(result?.totalCommissionDebt || "0"),
-            totalAvailableBalance: parseFloat(result?.totalAvailableBalance || "0"),
-            activeWallets: parseInt(result?.activeWallets || "0"),
+            totalCommissionDebt: parseFloat(walletResult?.totalCommissionDebt || "0"),
+            totalAvailableBalance: parseFloat(walletResult?.totalAvailableBalance || "0"),
+            activeWallets: parseInt(walletResult?.activeWallets || "0"),
+            platformRevenue: parseFloat(platformResult?.total || "0"),
         };
     }
 
@@ -189,5 +200,37 @@ export class AdminService {
             order: { createdAt: "DESC" },
             take: 50
         });
+    }
+
+    /**
+     * Update payout status (admin action: processing / success / failed)
+     */
+    static async updatePayoutStatus(payoutId: string, status: PayoutStatus, adminId: string): Promise<PayoutRecord> {
+        const repo = AppDataSource.getRepository(PayoutRecord);
+        const payout = await repo.findOne({ where: { id: payoutId } });
+        if (!payout) throw new Error('Payout record not found');
+
+        const allowedTransitions: Record<string, PayoutStatus[]> = {
+            [PayoutStatus.PENDING]:    [PayoutStatus.PROCESSING, PayoutStatus.FAILED],
+            [PayoutStatus.PROCESSING]: [PayoutStatus.SUCCESS, PayoutStatus.FAILED],
+        };
+        if (!allowedTransitions[payout.status]?.includes(status)) {
+            throw new Error(`Cannot transition payout from ${payout.status} to ${status}`);
+        }
+
+        payout.status = status;
+        await repo.save(payout);
+
+        await AppDataSource.getRepository(AuditLog).save(
+            AppDataSource.getRepository(AuditLog).create({
+                adminId,
+                action: `PAYOUT_${status.toUpperCase()}`,
+                entityType: 'PAYOUT',
+                entityId: payoutId,
+                details: { amount: payout.amount, driverId: payout.driverId, status },
+            })
+        );
+
+        return payout;
     }
 }

@@ -52,6 +52,66 @@ class DriverFinanceController extends StateNotifier<DriverFinanceState> {
   }
 
   Future<void> refresh() => _loadData();
+
+  /// Submit a payout request. Debits driverAvailableBalance and creates a PayoutRecord.
+  Future<bool> initiatePayout(double amount, String bankCode, String accountNumber) async {
+    try {
+      await _apiClient.dio.post('/finance/payout/init', data: {
+        'amount': amount,
+        'bankCode': bankCode,
+        'accountNumber': accountNumber,
+      });
+      await _loadData();
+      return true;
+    } on dio.DioException catch (e) {
+      if (mounted) {
+        state = state.copyWith(errorMessage: e.response?.data?['error']?.toString() ?? 'Payout request failed');
+      }
+      return false;
+    } catch (_) {
+      if (mounted) state = state.copyWith(errorMessage: 'Payout request failed');
+      return false;
+    }
+  }
+
+  /// Initialize a Paystack top-up for the driver wallet.
+  /// Returns the authorization_url on success, null on failure.
+  Future<String?> topupWallet(double amount, String email) async {
+    try {
+      final response = await _apiClient.dio.post('/finance/topup/driver/init', data: {
+        'email': email,
+        'amount': amount,
+      });
+      return response.data['authorization_url'] as String?;
+    } on dio.DioException catch (e) {
+      if (mounted) {
+        state = state.copyWith(errorMessage: e.response?.data?['error']?.toString() ?? 'Top-up failed');
+      }
+      return null;
+    } catch (_) {
+      if (mounted) state = state.copyWith(errorMessage: 'Top-up failed');
+      return null;
+    }
+  }
+
+  /// Apply existing driverAvailableBalance directly against commission debt.
+  /// Returns amount applied. Refreshes state afterward.
+  Future<double> repayDebt() async {
+    try {
+      final response = await _apiClient.dio.post('/finance/debt/repay');
+      final applied = (response.data['applied'] as num?)?.toDouble() ?? 0.0;
+      await _loadData();
+      return applied;
+    } on dio.DioException catch (e) {
+      if (mounted) {
+        state = state.copyWith(errorMessage: e.response?.data?['error']?.toString() ?? 'Repayment failed');
+      }
+      return 0;
+    } catch (_) {
+      if (mounted) state = state.copyWith(errorMessage: 'Repayment failed');
+      return 0;
+    }
+  }
 }
 
 final driverFinanceControllerProvider = StateNotifierProvider<DriverFinanceController, DriverFinanceState>((ref) {

@@ -5,13 +5,18 @@ export enum BalanceType {
     PASSENGER = "passenger",
     DRIVER_AVAILABLE = "driver_available",
     DRIVER_PENDING = "driver_pending",
-    DRIVER_COMMISSION_DEBT = "driver_commission_debt"
+    DRIVER_COMMISSION_DEBT = "driver_commission_debt",
+    PLATFORM_REVENUE = "platform_revenue"
 }
 
 export enum TransactionType {
     TOPUP = "topup",
     TRIP_PAYMENT = "trip_payment",
     COMMISSION_CHARGE = "commission_charge",
+    COMMISSION_CREDIT = "commission_credit",
+    CASH_RECEIVED = "cash_received",
+    CASH_EXTERNALIZED = "cash_externalized",
+    DEBT_RECOVERY = "debt_recovery",
     PAYOUT = "payout",
     REFUND = "refund"
 }

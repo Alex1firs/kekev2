@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { AppDataSource } from "../config/data_source";
 import { DriverProfile, DriverStatus } from "../models/DriverProfile";
+import { Wallet } from "../models/Wallet";
 import { onboardingLimiter } from "../middleware/rate_limit";
 import { upload } from "../middleware/upload_middleware";
 import { driverOnboardingSchema } from "../services/validation_service";
@@ -123,6 +124,9 @@ router.get("/status/:userId", authMiddleware, async (req: AuthRequest, res: Resp
             return res.json({ status: "unregistered" });
         }
 
+        const wallet = await AppDataSource.getRepository(Wallet).findOneBy({ userId: req.params.userId as string });
+        const commissionDebt = wallet ? Number(wallet.driverCommissionDebt) : 0;
+
         res.json({
             status: profile.status,
             rejectionReason: profile.rejectionReason,
@@ -130,6 +134,7 @@ router.get("/status/:userId", authMiddleware, async (req: AuthRequest, res: Resp
             vehicleModel: profile.vehicleModel,
             firstName: profile.firstName,
             lastName: profile.lastName,
+            commissionDebt,
         });
     } catch (err: any) {
         res.status(500).json({ error: err.message });

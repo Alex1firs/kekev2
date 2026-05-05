@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../../../core/theme/app_theme.dart';
 import '../../application/driver_controller.dart';
 import '../../domain/chat_message.dart';
 
@@ -48,62 +49,93 @@ class _RideChatPanelState extends ConsumerState<RideChatPanel> {
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
 
     return Container(
-      decoration: BoxDecoration(
-        color: const Color(0xFF1E1E1E),
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-        boxShadow: [BoxShadow(color: Colors.black54, blurRadius: 12)],
+      decoration: const BoxDecoration(
+        color: AppColors.charcoal,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        boxShadow: [
+          BoxShadow(color: Color(0x44000000), blurRadius: 20, offset: Offset(0, -4)),
+        ],
       ),
       child: Column(
         children: [
-          Container(
-            margin: const EdgeInsets.symmetric(vertical: 8),
-            width: 40,
-            height: 4,
-            decoration: BoxDecoration(
-              color: Colors.grey[700],
-              borderRadius: BorderRadius.circular(2),
+          // Handle
+          Padding(
+            padding: const EdgeInsets.only(top: 12, bottom: 4),
+            child: Center(
+              child: Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: AppColors.darkGray,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
             ),
           ),
-          const Padding(
-            padding: EdgeInsets.only(bottom: 8),
-            child: Text('Chat with Passenger',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white)),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+            child: Row(
+              children: [
+                Text(
+                  'Chat with Passenger',
+                  style: AppTextStyles.title(color: AppColors.white),
+                ),
+                const Spacer(),
+                IconButton(
+                  icon: const Icon(Icons.close, size: 20, color: AppColors.midGray),
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ],
+            ),
           ),
-          Divider(height: 1, color: Colors.grey[800]),
+          Divider(height: 1, color: AppColors.darkGray),
+
           Expanded(
             child: messages.isEmpty
-                ? const Center(
-                    child: Text('No messages yet.',
-                        style: TextStyle(color: Colors.grey)),
+                ? Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.chat_bubble_outline,
+                            size: 40, color: AppColors.darkGray),
+                        const SizedBox(height: 12),
+                        Text(
+                          'No messages yet',
+                          style: AppTextStyles.body(color: AppColors.midGray),
+                        ),
+                      ],
+                    ),
                   )
                 : ListView.builder(
                     controller: _scrollController,
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                     itemCount: messages.length,
                     itemBuilder: (_, i) => _MessageBubble(message: messages[i]),
                   ),
           ),
-          Divider(height: 1, color: Colors.grey[800]),
+
+          Divider(height: 1, color: AppColors.darkGray),
           Padding(
             padding: EdgeInsets.only(
-              left: 12,
-              right: 8,
-              top: 8,
-              bottom: MediaQuery.of(context).viewInsets.bottom + 8,
+              left: 16,
+              right: 12,
+              top: 10,
+              bottom: MediaQuery.of(context).viewInsets.bottom + 12,
             ),
             child: Row(
               children: [
                 Expanded(
                   child: TextField(
                     controller: _controller,
-                    style: const TextStyle(color: Colors.white),
                     textCapitalization: TextCapitalization.sentences,
+                    style: AppTextStyles.body(color: AppColors.white),
                     decoration: InputDecoration(
                       hintText: 'Type a message...',
-                      hintStyle: const TextStyle(color: Colors.grey),
+                      hintStyle: AppTextStyles.body(color: AppColors.midGray),
                       filled: true,
-                      fillColor: const Color(0xFF2C2C2C),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                      fillColor: AppColors.darkGray,
+                      contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 10),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(24),
                         borderSide: BorderSide.none,
@@ -112,12 +144,18 @@ class _RideChatPanelState extends ConsumerState<RideChatPanel> {
                     onSubmitted: (_) => _send(),
                   ),
                 ),
-                const SizedBox(width: 8),
-                CircleAvatar(
-                  backgroundColor: const Color(0xFFFFC107),
-                  child: IconButton(
-                    icon: const Icon(Icons.send, color: Colors.black, size: 20),
-                    onPressed: _send,
+                const SizedBox(width: 10),
+                GestureDetector(
+                  onTap: _send,
+                  child: Container(
+                    width: 44,
+                    height: 44,
+                    decoration: const BoxDecoration(
+                      color: AppColors.primary,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.send_rounded,
+                        color: AppColors.charcoal, size: 20),
                   ),
                 ),
               ],
@@ -141,30 +179,34 @@ class _MessageBubble extends StatelessWidget {
       child: Container(
         margin: const EdgeInsets.symmetric(vertical: 4),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.7),
+        constraints:
+            BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.72),
         decoration: BoxDecoration(
-          color: isMe ? const Color(0xFFFFC107) : const Color(0xFF2C2C2C),
+          color: isMe ? AppColors.primary : AppColors.darkGray,
           borderRadius: BorderRadius.only(
-            topLeft:     const Radius.circular(16),
-            topRight:    const Radius.circular(16),
-            bottomLeft:  Radius.circular(isMe ? 16 : 4),
+            topLeft: const Radius.circular(16),
+            topRight: const Radius.circular(16),
+            bottomLeft: Radius.circular(isMe ? 16 : 4),
             bottomRight: Radius.circular(isMe ? 4 : 16),
           ),
         ),
         child: Column(
-          crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+          crossAxisAlignment:
+              isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
           children: [
-            Text(message.message,
-                style: TextStyle(
-                  color: isMe ? Colors.black87 : Colors.white,
-                  fontSize: 15,
-                )),
+            Text(
+              message.message,
+              style: AppTextStyles.body(
+                color: isMe ? AppColors.charcoal : AppColors.white,
+              ),
+            ),
             const SizedBox(height: 2),
             Text(
               _formatTime(message.timestamp),
-              style: TextStyle(
-                color: isMe ? Colors.black45 : Colors.grey,
-                fontSize: 11,
+              style: AppTextStyles.caption(
+                color: isMe
+                    ? AppColors.charcoal.withOpacity(0.5)
+                    : AppColors.midGray,
               ),
             ),
           ],
@@ -174,8 +216,6 @@ class _MessageBubble extends StatelessWidget {
   }
 
   String _formatTime(DateTime dt) {
-    final h = dt.hour.toString().padLeft(2, '0');
-    final m = dt.minute.toString().padLeft(2, '0');
-    return '$h:$m';
+    return '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
   }
 }

@@ -8,7 +8,7 @@ import { AppDataSource } from '../config/data_source';
 import { Ride } from '../models/Ride';
 import { DriverProfile } from '../models/DriverProfile';
 import { redis } from '../config/redis';
-import { WalletService } from '../services/wallet_service';
+import { WalletService, DEBT_CASH_BLOCK, DEBT_HARD_BLOCK } from '../services/wallet_service';
 
 const _jwtSecret = process.env.JWT_SECRET;
 if (!_jwtSecret) {
@@ -177,7 +177,7 @@ export class SocketHandler {
                 const request = validate(Schemas.rideRequest, raw, socket);
                 if (!request) return;
 
-                const { rideId, pickupLat, pickupLng, passengerId, fare, isCash, pickupAddress, destinationAddress } = request;
+                const { rideId, pickupLat, pickupLng, destinationLat, destinationLng, passengerId, fare, isCash, pickupAddress, destinationAddress } = request;
 
                 try {
                     const rideRepo = AppDataSource.getRepository(Ride);
@@ -186,6 +186,7 @@ export class SocketHandler {
                         paymentMode: isCash ? 'cash' : 'wallet',
                         status: 'searching' as any,
                         pickupAddress, destinationAddress, pickupLat, pickupLng,
+                        destinationLat, destinationLng,
                     });
                     await rideRepo.save(ride);
                 } catch (err) {
@@ -286,6 +287,20 @@ export class SocketHandler {
                         log.warn(`[SOCKET_BLOCK] Ride acceptance blocked for driver ${data.driverId} (Status: ${profile?.status})`);
                         socket.emit('error:suspended', { message: 'Operational activity blocked.' });
                         return;
+                    }
+
+                    // Debt gate for cash rides
+                    const ride = await AppDataSource.getRepository(Ride).findOne({ where: { rideId: data.rideId } });
+                    if (ride?.paymentMode === 'cash') {
+                        const debt = await WalletService.getDriverDebt(data.driverId);
+                        if (debt >= DEBT_CASH_BLOCK) {
+                            log.warn(`[DEBT_BLOCK] Cash ride blocked for driver ${data.driverId} — debt ₦${debt}`);
+                            socket.emit('error:debt_blocked', {
+                                message: 'Cash ride unavailable — clear outstanding debt to accept cash bookings.',
+                                debt,
+                            });
+                            return;
+                        }
                     }
 
                     // Atomic UPDATE: claims the ride only if still 'searching'.
@@ -436,6 +451,7 @@ export class SocketHandler {
 
     private async startDispatchLoop(rideId: string, lat: number, lng: number, payload: any) {
         const radiuses = [3, 5];
+        const isCash = payload.isCash === true;
         this.activeDispatches.set(rideId, new Set());
 
         for (const radius of radiuses) {
@@ -450,12 +466,36 @@ export class SocketHandler {
                 return;
             }
 
-            log.info(`Searching in ${radius}km radius for ride ${rideId}`);
+            log.info(`Searching in ${radius}km radius for ride ${rideId} (${isCash ? 'cash' : 'wallet'})`);
             this.io.to(`ride:${rideId}`).emit('ride:searching', { radius });
 
             const nearbyDrivers = await DispatchService.findNearbyDrivers(lat, lng, radius);
             const exclusions = this.rideExclusions.get(rideId) || new Set();
-            const targetDrivers = nearbyDrivers.filter(id => !exclusions.has(id));
+            let eligible = nearbyDrivers.filter(id => !exclusions.has(id));
+
+            // Filter out suspended/rejected drivers — they must not receive ride requests
+            if (eligible.length > 0) {
+                const profiles = await AppDataSource.getRepository(DriverProfile).findBy(
+                    eligible.map(id => ({ userId: id }))
+                );
+                const blockedIds = new Set(
+                    profiles
+                        .filter(p => p.status === 'suspended' || p.status === 'rejected')
+                        .map(p => p.userId)
+                );
+                if (blockedIds.size > 0) {
+                    eligible = eligible.filter(id => !blockedIds.has(id));
+                    log.info(`[DISPATCH] Filtered ${blockedIds.size} suspended/rejected drivers for ride ${rideId}`);
+                }
+            }
+
+            // For cash rides, strip out debt-blocked drivers before dispatching
+            if (isCash && eligible.length > 0) {
+                eligible = await WalletService.filterCashEligibleDrivers(eligible);
+                log.info(`[DISPATCH] Cash ride ${rideId}: ${eligible.length} eligible after debt filter at ${radius}km`);
+            }
+
+            const targetDrivers = eligible;
 
             if (targetDrivers.length > 0) {
                 const notifiedSet = this.activeDispatches.get(rideId) || new Set();

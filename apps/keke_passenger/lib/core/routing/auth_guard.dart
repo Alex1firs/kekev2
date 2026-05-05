@@ -13,9 +13,16 @@ class AuthGuard extends ChangeNotifier {
   }
 
   String? redirectHook(BuildContext context, GoRouterState state) {
+    // SCREENSHOT MODE: bypass all auth redirects
+    const kScreenshotMode = bool.fromEnvironment('SCREENSHOT_MODE', defaultValue: false);
+    if (kScreenshotMode) return null;
+
     final authState = _ref.read(authControllerProvider);
     final isSplash = state.matchedLocation == '/splash';
-    final isAuthRoute = state.matchedLocation == '/login' || state.matchedLocation == '/signup';
+    final isAuthRoute = state.matchedLocation == '/login' ||
+                        state.matchedLocation == '/signup' ||
+                        state.matchedLocation == '/verify-email' ||
+                        state.matchedLocation == '/forgot-password';
 
     if (authState.status == AuthStatus.initializing) {
       // Must stay on splash page while restoring session
@@ -34,6 +41,10 @@ class AuthGuard extends ChangeNotifier {
         return '/login'; // Unauthenticated users sent to login from any protected route/splash
       }
       return null;
+    }
+
+    if (authState.status == AuthStatus.needsEmailVerification) {
+      return null; // Stay wherever we are (VerifyEmailScreen via Navigator.push)
     }
 
     return null;

@@ -22,7 +22,10 @@ class AuthGuard extends ChangeNotifier {
 
     final loc = state.matchedLocation;
     final isSplash = loc == '/splash';
-    final isAuthRoute = loc == '/login' || loc == '/signup';
+    final isAuthRoute = loc == '/login' ||
+                        loc == '/signup' ||
+                        loc == '/verify-email' ||
+                        loc == '/forgot-password';
     final isOnboarding = loc == '/onboarding';
     final isStatusPage = loc == '/status';
 
@@ -31,13 +34,18 @@ class AuthGuard extends ChangeNotifier {
       return isSplash ? null : '/splash';
     }
 
-    // 2. Unauthenticated state
+    // 2. Needs email verification - stay wherever we are
+    if (authState.status == AuthStatus.needsEmailVerification) {
+      return null;
+    }
+
+    // 3. Unauthenticated state
     if (authState.status == AuthStatus.unauthenticated) {
       if (!isAuthRoute) return '/login';
       return null;
     }
 
-    // 3. Authenticated state - Handle Driver Status
+    // 4. Authenticated state - Handle Driver Status
     if (authState.status == AuthStatus.authenticated) {
       final status = driverState.profile.status;
 

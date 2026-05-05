@@ -13,14 +13,11 @@ const JWT_SECRET: string = _jwtSecret;
 export interface AuthRequest extends Request {
     user?: {
         userId: string;
-        phone: string;
+        email: string;
         role: string;
     };
 }
 
-/**
- * Middleware to verify JWT token from Authorization header
- */
 export const authMiddleware = (req: AuthRequest, res: Response, next: NextFunction) => {
     const authHeader = req.headers.authorization;
 

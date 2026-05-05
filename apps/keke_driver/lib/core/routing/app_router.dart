@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import '../../features/auth/presentation/login_screen.dart';
 import '../../features/auth/presentation/signup_screen.dart';
 import '../../features/auth/presentation/splash_screen.dart';
+import '../../features/auth/presentation/verify_email_screen.dart';
 import '../../features/driver/presentation/onboarding_screen.dart';
 import '../../features/driver/presentation/status_info_screen.dart';
 import '../../features/driver/presentation/driver_home_screen.dart';
@@ -34,6 +35,17 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         path: '/signup',
         name: 'signup',
         builder: (context, state) => const SignupScreen(),
+      ),
+      GoRoute(
+        path: '/verify-email',
+        name: 'verify-email',
+        builder: (context, state) {
+          final extra = state.extra as Map<String, dynamic>?;
+          return VerifyEmailScreen(
+            email: extra?['email'] as String? ?? '',
+            devOtp: extra?['devOtp'] as String?,
+          );
+        },
       ),
       GoRoute(
         path: '/onboarding',

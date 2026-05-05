@@ -12,6 +12,9 @@ export class User {
     id!: string;
 
     @Column({ unique: true })
+    email!: string;
+
+    @Column({ nullable: true })
     phone!: string;
 
     @Column()
@@ -25,6 +28,12 @@ export class User {
 
     @Column({ type: "enum", enum: UserRole, default: UserRole.PASSENGER })
     role!: UserRole;
+
+    @Column({ default: false })
+    emailVerified!: boolean;
+
+    @Column({ type: "timestamp", nullable: true })
+    emailVerifiedAt!: Date | null;
 
     @CreateDateColumn()
     createdAt!: Date;

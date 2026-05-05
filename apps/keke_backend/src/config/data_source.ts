@@ -6,7 +6,10 @@ import dotenv from "dotenv";
 dotenv.config();
 
 const DATABASE_URL = process.env.DATABASE_URL || "postgres://localhost:5432/keke";
-const IS_PROD = process.env.NODE_ENV === 'production';
+// Set DATABASE_SSL=true only when connecting to a managed/external Postgres
+// that has SSL configured (e.g. DigitalOcean Managed DB). Leave unset for
+// Docker-internal Postgres — the containerised DB has no SSL by default.
+const USE_SSL = process.env.DATABASE_SSL === 'true';
 
 export const AppDataSource = new DataSource({
     type: "postgres",
@@ -16,7 +19,7 @@ export const AppDataSource = new DataSource({
     entities: [Wallet, LedgerEntry, Transaction, PayoutRecord, DriverProfile, Ride, AuditLog, User, DeviceToken],
     migrations: ["dist/migrations/*.js"],
     subscribers: [],
-    ssl: IS_PROD ? { rejectUnauthorized: false } : false,
+    ssl: USE_SSL ? { rejectUnauthorized: false } : false,
     extra: {
         max: 20,
         idleTimeoutMillis: 30000,

@@ -86,8 +86,19 @@ class DriverController extends StateNotifier<DriverState> {
         case 'ride:request':
           _handleIncomingRequest(data);
           break;
+        case 'ride:confirmed':
+          // Server-authoritative: DB transaction committed, ride is ours.
+          // Moved here from acceptRequest() to prevent optimistic ghost state.
+          if (state.activeRequest?.id.toString() == data['rideId']?.toString()) {
+            state = state.copyWith(
+              tripStep: TripStep.accepted,
+              countdown: null,
+            );
+            _startWatchdog();
+          }
+          break;
         case 'ride:cancelled':
-          // Robust comparison: check toString() to avoid type mismatch, 
+          // Robust comparison: check toString() to avoid type mismatch,
           // or fallback to any active request if payload is the "dismissal" shape
           final incomingRideId = data['rideId']?.toString();
           final currentRideId = state.activeRequest?.id.toString();

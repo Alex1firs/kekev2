@@ -73,12 +73,44 @@ export class PaystackService {
      * Finalize Top-up via Webhook (Idempotent)
      */
     static async handleWebhook(event: any): Promise<void> {
-        if (event.event === "charge.success") {
-            const data = event.data;
-            const reference = data.reference;
-            const amountInNaira = data.amount / 100;
+        const eventType  = event?.event ?? 'unknown';
+        const reference  = event?.data?.reference ?? 'unknown';
+        const amountNaira = (event?.data?.amount ?? 0) / 100;
 
-            await WalletService.finalizeTopup(reference, amountInNaira);
+        console.log(JSON.stringify({
+            level: 'info', tag: 'WEBHOOK',
+            event: eventType, reference, amount: amountNaira,
+            ts: new Date().toISOString(),
+        }));
+
+        if (eventType !== "charge.success") {
+            console.log(JSON.stringify({
+                level: 'info', tag: 'WEBHOOK',
+                action: 'ignored_unhandled_event', event: eventType, reference,
+                ts: new Date().toISOString(),
+            }));
+            return;
+        }
+
+        try {
+            await WalletService.finalizeTopup(reference, amountNaira);
+            console.log(JSON.stringify({
+                level: 'info', tag: 'WEBHOOK',
+                action: 'processed', reference, amount: amountNaira,
+                ts: new Date().toISOString(),
+            }));
+        } catch (err: any) {
+            if (err.message?.includes('Transaction record not found')) {
+                // Unknown reference — Paystack sent a webhook for a transaction we never
+                // created (or already cleaned up). Return 200 so Paystack stops retrying.
+                console.log(JSON.stringify({
+                    level: 'warn', tag: 'WEBHOOK',
+                    action: 'ignored_unknown_reference', reference,
+                    ts: new Date().toISOString(),
+                }));
+                return;
+            }
+            throw err;
         }
     }
 

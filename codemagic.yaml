@@ -9,9 +9,6 @@ workflows:
       flutter: stable
       groups:
         - ios_credentials
-      ios_signing:
-        distribution_type: app_store
-        bundle_identifier: ng.kekeride.driver
 
     triggering:
       events:
@@ -21,6 +18,18 @@ workflows:
           include: true
 
     scripts:
+      - name: Set up keychain and certificate
+        script: |
+          keychain initialize
+          echo "$CM_CERTIFICATE" | base64 --decode > /tmp/dist.p12
+          keychain add-certificates --certificate /tmp/dist.p12 --certificate-password "$CM_CERTIFICATE_PASSWORD"
+
+      - name: Set up provisioning profile
+        script: |
+          PROFILES_HOME="$HOME/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$PROFILES_HOME"
+          echo "$CM_PROVISIONING_PROFILE" | base64 --decode > "$PROFILES_HOME/KekeRideDriver_AppStore.mobileprovision"
+
       - name: Get Flutter packages
         script: |
           cd apps/keke_driver
@@ -39,10 +48,10 @@ workflows:
       - name: Package and sign IPA
         script: |
           cd apps/keke_driver
-          xcode-project use-profiles
           xcode-project build-ipa \
             --workspace ios/Runner.xcworkspace \
-            --scheme Runner
+            --scheme Runner \
+            --config Release
 
     artifacts:
       - apps/keke_driver/build/ios/ipa/*.ipa

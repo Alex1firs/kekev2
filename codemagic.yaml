@@ -21,29 +21,14 @@ workflows:
       - name: Set up keychain and certificate
         script: |
           keychain initialize
-          python3 -c "
-import base64, os, sys
-cert = os.environ.get('CM_CERTIFICATE', '')
-if not cert:
-    print('ERROR: CM_CERTIFICATE is empty'); sys.exit(1)
-open('/tmp/dist.p12', 'wb').write(base64.b64decode(cert))
-print('Certificate decoded OK')
-"
+          python3 -c "import base64,os; open('/tmp/dist.p12','wb').write(base64.b64decode(os.environ['CM_CERTIFICATE']))"
           keychain add-certificates --certificate /tmp/dist.p12 --certificate-password "$CM_CERTIFICATE_PASSWORD"
 
       - name: Set up provisioning profile
         script: |
           PROFILES_HOME="$HOME/Library/MobileDevice/Provisioning Profiles"
           mkdir -p "$PROFILES_HOME"
-          python3 -c "
-import base64, os, sys
-profile = os.environ.get('CM_PROVISIONING_PROFILE', '')
-if not profile:
-    print('ERROR: CM_PROVISIONING_PROFILE is empty'); sys.exit(1)
-profiles_home = os.path.expanduser('~/Library/MobileDevice/Provisioning Profiles')
-open(profiles_home + '/KekeRideDriver_AppStore.mobileprovision', 'wb').write(base64.b64decode(profile))
-print('Profile decoded OK')
-"
+          python3 -c "import base64,os; open(os.path.expanduser('~/Library/MobileDevice/Provisioning Profiles/KekeRideDriver_AppStore.mobileprovision'),'wb').write(base64.b64decode(os.environ['CM_PROVISIONING_PROFILE']))"
 
       - name: Get Flutter packages
         script: |

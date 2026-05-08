@@ -49,7 +49,7 @@ workflows:
         script: |
           cd apps/keke_driver
           flutter build ipa --release \
-            --build-number=$BUILD_NUMBER \
+            --build-number=$((BUILD_NUMBER + 100)) \
             --export-options-plist=/Users/builder/export_options.plist
 
     artifacts:

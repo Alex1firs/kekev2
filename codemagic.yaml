@@ -1,0 +1,60 @@
+workflows:
+  keke-driver-ios:
+    name: Keke Driver — iOS App Store
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+
+    environment:
+      xcode: 26.4
+      flutter: stable
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: ng.kekeride.driver
+      vars:
+        APP_STORE_CONNECT_KEY_IDENTIFIER: Encrypted(...) # replace after encrypting in Codemagic UI
+        APP_STORE_CONNECT_ISSUER_ID: Encrypted(...)      # replace after encrypting in Codemagic UI
+      app_store_connect:
+        key_identifier: $APP_STORE_CONNECT_KEY_IDENTIFIER
+        issuer_id: $APP_STORE_CONNECT_ISSUER_ID
+        private_key: $APP_STORE_CONNECT_PRIVATE_KEY
+
+    triggering:
+      events:
+        - tag
+      tag_patterns:
+        - pattern: 'driver-v*'
+          include: true
+
+    scripts:
+      - name: Get Flutter packages
+        script: |
+          cd apps/keke_driver
+          flutter pub get
+
+      - name: Install CocoaPods
+        script: |
+          cd apps/keke_driver/ios
+          pod install
+
+      - name: Build iOS release
+        script: |
+          cd apps/keke_driver
+          flutter build ios --release --no-codesign
+
+      - name: Package and sign IPA
+        script: |
+          cd apps/keke_driver
+          xcode-project use-profiles
+          xcode-project build-ipa \
+            --workspace ios/Runner.xcworkspace \
+            --scheme Runner
+
+    artifacts:
+      - apps/keke_driver/build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+        # submit_to_app_store: true   # uncomment for direct App Store release

@@ -40,18 +40,16 @@ workflows:
           cd apps/keke_driver/ios
           pod install
 
-      - name: Build iOS release
+      - name: Set up Xcode code signing
         script: |
-          cd apps/keke_driver
-          flutter build ios --release --no-codesign
+          xcode-project use-profiles \
+            --project apps/keke_driver/ios/Runner.xcodeproj
 
-      - name: Package and sign IPA
+      - name: Build IPA
         script: |
           cd apps/keke_driver
-          xcode-project build-ipa \
-            --workspace ios/Runner.xcworkspace \
-            --scheme Runner \
-            --config Release
+          flutter build ipa --release \
+            --export-options-plist=/Users/builder/export_options.plist
 
     artifacts:
       - apps/keke_driver/build/ios/ipa/*.ipa

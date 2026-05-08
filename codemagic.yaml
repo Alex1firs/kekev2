@@ -10,13 +10,6 @@ workflows:
       ios_signing:
         distribution_type: app_store
         bundle_identifier: ng.kekeride.driver
-      vars:
-        APP_STORE_CONNECT_KEY_IDENTIFIER: Encrypted(...) # replace after encrypting in Codemagic UI
-        APP_STORE_CONNECT_ISSUER_ID: Encrypted(...)      # replace after encrypting in Codemagic UI
-      app_store_connect:
-        key_identifier: $APP_STORE_CONNECT_KEY_IDENTIFIER
-        issuer_id: $APP_STORE_CONNECT_ISSUER_ID
-        private_key: $APP_STORE_CONNECT_PRIVATE_KEY
 
     triggering:
       events:
@@ -55,6 +48,7 @@ workflows:
 
     publishing:
       app_store_connect:
-        auth: integration
+        api_key: $APP_STORE_CONNECT_PRIVATE_KEY
+        key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
+        issuer_id: $APP_STORE_CONNECT_ISSUER_ID
         submit_to_testflight: true
-        # submit_to_app_store: true   # uncomment for direct App Store release

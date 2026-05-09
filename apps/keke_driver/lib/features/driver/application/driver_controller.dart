@@ -28,6 +28,7 @@ class DriverController extends StateNotifier<DriverState> {
   Timer? _heartbeatTimer;
   Timer? _waitTimer;
   Timer? _watchdogTimer;
+  Timer? _errorClearTimer;
   StreamSubscription? _socketSubscription;
   StreamSubscription? _notificationSubscription;
   final NotificationService _notificationService;
@@ -115,7 +116,8 @@ class DriverController extends StateNotifier<DriverState> {
           break;
         case 'error:debt_blocked':
           print('[DEBT_BLOCK] Backend rejected cash ride acceptance — debt too high');
-          state = state.copyWith(errorMessage: data['message'] ?? 'Cash ride unavailable — clear debt first.');
+          state = state.copyWith(errorMessage: 'Cash ride unavailable — visit Finance to clear your debt.');
+          _scheduleErrorClear();
           _resetToAvailable();
           break;
         case 'ride:expired':
@@ -130,13 +132,17 @@ class DriverController extends StateNotifier<DriverState> {
           }
           break;
         case 'chat:message':
-          final msg = ChatMessage(
-            senderId:   data['senderId'] as String,
-            senderRole: data['senderRole'] as String,
-            message:    data['message'] as String,
-            timestamp:  DateTime.tryParse(data['timestamp'] as String? ?? '') ?? DateTime.now(),
-          );
-          state = state.copyWith(chatMessages: [...state.chatMessages, msg]);
+          try {
+            final msg = ChatMessage(
+              senderId:   data['senderId']?.toString() ?? '',
+              senderRole: data['senderRole']?.toString() ?? 'passenger',
+              message:    data['message']?.toString() ?? '',
+              timestamp:  DateTime.tryParse(data['timestamp']?.toString() ?? '') ?? DateTime.now(),
+            );
+            state = state.copyWith(chatMessages: [...state.chatMessages, msg]);
+          } catch (e) {
+            print('[DRIVER] Failed to parse chat message: $e');
+          }
           break;
       }
     });
@@ -159,6 +165,10 @@ class DriverController extends StateNotifier<DriverState> {
         lat = position.latitude;
         lng = position.longitude;
       } catch (_) {
+        if (mounted) {
+          state = state.copyWith(errorMessage: 'Location unavailable — move to an open area.');
+          _scheduleErrorClear();
+        }
         return;
       }
       if (!mounted) return;
@@ -179,35 +189,45 @@ class DriverController extends StateNotifier<DriverState> {
     if (incomingIsCash && state.profile.debtAmount >= 2000) {
       print('[DEBT_GATE] Suppressed cash request — driver debt ₦${state.profile.debtAmount}');
       state = state.copyWith(
-        errorMessage: 'Cash ride unavailable — clear outstanding debt to accept cash bookings.',
+        errorMessage: 'Cash ride unavailable — visit Finance to clear your debt.',
       );
+      _scheduleErrorClear();
       return;
     }
 
-    final request = TripRequest(
-      id: data['rideId'],
-      passengerId: data['passengerId'] ?? 'unknown',
-      isCash: data['isCash'] ?? true,
-      passengerName: data['passengerName'],
-      passengerPhone: data['passengerPhone']?.toString(),
-      pickupAddress: data['pickupAddress'],
-      pickupLocation: LatLng(data['pickupLat'], data['pickupLng']),
-      destinationAddress: data['destinationAddress'],
-      destinationLocation: LatLng(data['destinationLat'], data['destinationLng']),
-      fare: (data['fare'] as num).toDouble(),
-      distance: 0,
-      countdownSeconds: 30,
-    );
+    try {
+      final pickupLat = (data['pickupLat'] as num?)?.toDouble() ?? 0.0;
+      final pickupLng = (data['pickupLng'] as num?)?.toDouble() ?? 0.0;
+      final destLat = (data['destinationLat'] as num?)?.toDouble() ?? 0.0;
+      final destLng = (data['destinationLng'] as num?)?.toDouble() ?? 0.0;
+      final fare = (data['fare'] as num?)?.toDouble() ?? 0.0;
 
-    state = state.copyWith(
-      operationStatus: OperationStatus.busy,
-      activeRequest: request,
-      countdown: 30,
-    );
+      final request = TripRequest(
+        id: data['rideId'],
+        passengerId: data['passengerId']?.toString() ?? 'unknown',
+        isCash: data['isCash'] == true,
+        passengerName: data['passengerName']?.toString() ?? 'Passenger',
+        passengerPhone: data['passengerPhone']?.toString(),
+        pickupAddress: data['pickupAddress']?.toString() ?? '',
+        pickupLocation: LatLng(pickupLat, pickupLng),
+        destinationAddress: data['destinationAddress']?.toString() ?? '',
+        destinationLocation: LatLng(destLat, destLng),
+        fare: fare,
+        distance: 0,
+        countdownSeconds: 30,
+      );
 
-    _startCountdown();
-    // 🔔 PLAY SOUND: Foreground alert for driver
-    _soundService.playRequestSound();
+      state = state.copyWith(
+        operationStatus: OperationStatus.busy,
+        activeRequest: request,
+        countdown: 30,
+      );
+
+      _startCountdown();
+      _soundService.playRequestSound();
+    } catch (e) {
+      print('[DRIVER] Failed to parse incoming request: $e');
+    }
   }
 
 
@@ -292,7 +312,7 @@ class DriverController extends StateNotifier<DriverState> {
       }
     } catch (e) {
       if (!mounted) return;
-      state = state.copyWith(isLoading: false, errorMessage: 'Failed to sync status: ${e.toString()}');
+      state = state.copyWith(isLoading: false, errorMessage: 'Couldn\'t load your driver profile. Please check your connection.');
     }
   }
 
@@ -349,18 +369,13 @@ class DriverController extends StateNotifier<DriverState> {
       );
     } catch (e) {
       if (!mounted) return;
-      String msg = 'Onboarding failed';
+      String msg;
       if (e is dio.DioException) {
         final errData = e.response?.data;
-        if (errData is Map) {
-          msg = 'Onboarding failed: ${errData['error'] ?? e.message}';
-        } else if (errData is String && errData.isNotEmpty) {
-          msg = 'Onboarding failed: $errData';
-        } else {
-          msg = 'Onboarding failed: ${e.message}';
-        }
+        msg = (errData is Map ? errData['message']?.toString() : null)
+            ?? 'We couldn\'t submit your details. Please try again.';
       } else {
-        msg = 'Onboarding failed: ${e.toString()}';
+        msg = 'We couldn\'t submit your details. Please try again.';
       }
       state = state.copyWith(errorMessage: msg);
     } finally {
@@ -409,24 +424,17 @@ class DriverController extends StateNotifier<DriverState> {
       );
     } catch (e) {
       if (!mounted) return;
-      String msg = 'Upload failed';
+      String msg;
       if (e is dio.DioException) {
-        final errData = e.response?.data;
-        if (errData is Map) {
-          msg = 'Upload failed: ${errData['error'] ?? e.message}';
-        } else if (errData is String && errData.isNotEmpty) {
-          if (errData.contains('413 Request Entity Too Large') || e.response?.statusCode == 413) {
-            msg = 'Upload failed: The selected photo is too large for upload. Please try again.';
-          } else if (errData.startsWith('<html>')) {
-            msg = 'Upload failed: Server error (${e.response?.statusCode ?? "Unknown"})';
-          } else {
-            msg = 'Upload failed: $errData';
-          }
+        if (e.response?.statusCode == 413) {
+          msg = 'This photo is too large. Please try a clearer, smaller image.';
         } else {
-          msg = 'Upload failed: ${e.message}';
+          final errData = e.response?.data;
+          msg = (errData is Map ? errData['message']?.toString() : null)
+              ?? 'Document upload failed. Please try again.';
         }
       } else {
-        msg = 'Upload failed: ${e.toString()}';
+        msg = 'Document upload failed. Please try again.';
       }
       state = state.copyWith(errorMessage: msg);
     } finally {
@@ -442,7 +450,8 @@ class DriverController extends StateNotifier<DriverState> {
     }
 
     if (state.profile.debtAmount >= 5000 && state.operationStatus == OperationStatus.offline) {
-      state = state.copyWith(errorMessage: 'Account blocked: clear debt of ₦${state.profile.debtAmount.toStringAsFixed(0)} to go online.');
+      state = state.copyWith(errorMessage: 'Account blocked — visit Finance to clear your debt and go online.');
+      _scheduleErrorClear();
       return;
     }
 
@@ -479,7 +488,7 @@ class DriverController extends StateNotifier<DriverState> {
 
   void acceptRequest() {
     if (_socketService == null || state.activeRequest == null) return;
-    
+
     _socketService!.emit('ride:accept', {
       'rideId': state.activeRequest!.id,
       'driverId': _userId,
@@ -490,12 +499,10 @@ class DriverController extends StateNotifier<DriverState> {
       }
     });
 
+    // Do NOT optimistically set TripStep.accepted here.
+    // ride:confirmed from the server is the sole authority — it handles state and watchdog.
+    // Cancel the countdown timer so it freezes; ride:confirmed will clear it.
     _countdownTimer?.cancel();
-    state = state.copyWith(
-      tripStep: TripStep.accepted,
-      countdown: null,
-    );
-    _startWatchdog();
   }
 
   void rejectRequest() {
@@ -622,6 +629,18 @@ class DriverController extends StateNotifier<DriverState> {
     _stopWatchdog();
   }
 
+  void clearError() {
+    _errorClearTimer?.cancel();
+    if (mounted) state = state.copyWith(clearErrorMessage: true);
+  }
+
+  void _scheduleErrorClear({int seconds = 5}) {
+    _errorClearTimer?.cancel();
+    _errorClearTimer = Timer(Duration(seconds: seconds), () {
+      if (mounted) state = state.copyWith(clearErrorMessage: true);
+    });
+  }
+
   Future<void> syncStatus() async {
     try {
       final response = await _apiClient.dio.get('/rides/active/driver');
@@ -685,6 +704,7 @@ class DriverController extends StateNotifier<DriverState> {
     _countdownTimer?.cancel();
     _heartbeatTimer?.cancel();
     _watchdogTimer?.cancel();
+    _errorClearTimer?.cancel();
     _socketSubscription?.cancel();
     _notificationSubscription?.cancel();
     super.dispose();

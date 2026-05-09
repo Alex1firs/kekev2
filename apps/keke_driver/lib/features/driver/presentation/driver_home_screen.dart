@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -110,7 +111,10 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
               bottom: 100,
               left: 20,
               right: 20,
-              child: _ErrorToast(message: driverState.errorMessage!),
+              child: _ErrorToast(
+                message: driverState.errorMessage!,
+                onDismiss: () => ref.read(driverControllerProvider.notifier).clearError(),
+              ),
             ),
 
           if (driverState.activeRequest != null && driverState.tripStep == TripStep.none)
@@ -319,9 +323,30 @@ class _HeaderIconButton extends StatelessWidget {
   }
 }
 
-class _ErrorToast extends StatelessWidget {
+class _ErrorToast extends StatefulWidget {
   final String message;
-  const _ErrorToast({required this.message});
+  final VoidCallback onDismiss;
+
+  const _ErrorToast({required this.message, required this.onDismiss});
+
+  @override
+  State<_ErrorToast> createState() => _ErrorToastState();
+}
+
+class _ErrorToastState extends State<_ErrorToast> {
+  late final Timer _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer(const Duration(seconds: 5), widget.onDismiss);
+  }
+
+  @override
+  void dispose() {
+    _timer.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -338,10 +363,14 @@ class _ErrorToast extends StatelessWidget {
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              message,
+              widget.message,
               style: AppTextStyles.bodySmall(color: AppColors.white),
-              textAlign: TextAlign.center,
             ),
+          ),
+          const SizedBox(width: 8),
+          GestureDetector(
+            onTap: widget.onDismiss,
+            child: const Icon(Icons.close, color: AppColors.lightGray, size: 16),
           ),
         ],
       ),

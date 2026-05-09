@@ -43,11 +43,11 @@ class DriverFinanceController extends StateNotifier<DriverFinanceState> {
       if (!mounted) return;
       state = state.copyWith(
         isLoading: false,
-        errorMessage: e.response?.data?['error']?.toString() ?? 'Failed to load earnings',
+        errorMessage: e.response?.data?['message']?.toString() ?? 'Couldn\'t load your earnings. Please try again.',
       );
     } catch (e) {
       if (!mounted) return;
-      state = state.copyWith(isLoading: false, errorMessage: 'Failed to load earnings');
+      state = state.copyWith(isLoading: false, errorMessage: 'Couldn\'t load your earnings. Please try again.');
     }
   }
 
@@ -65,11 +65,11 @@ class DriverFinanceController extends StateNotifier<DriverFinanceState> {
       return true;
     } on dio.DioException catch (e) {
       if (mounted) {
-        state = state.copyWith(errorMessage: e.response?.data?['error']?.toString() ?? 'Payout request failed');
+        state = state.copyWith(errorMessage: e.response?.data?['message']?.toString() ?? 'Payout request failed. Please try again.');
       }
       return false;
     } catch (_) {
-      if (mounted) state = state.copyWith(errorMessage: 'Payout request failed');
+      if (mounted) state = state.copyWith(errorMessage: 'Payout request failed. Please try again.');
       return false;
     }
   }
@@ -85,11 +85,11 @@ class DriverFinanceController extends StateNotifier<DriverFinanceState> {
       return response.data['authorization_url'] as String?;
     } on dio.DioException catch (e) {
       if (mounted) {
-        state = state.copyWith(errorMessage: e.response?.data?['error']?.toString() ?? 'Top-up failed');
+        state = state.copyWith(errorMessage: e.response?.data?['message']?.toString() ?? 'Top-up failed. Please try again.');
       }
       return null;
     } catch (_) {
-      if (mounted) state = state.copyWith(errorMessage: 'Top-up failed');
+      if (mounted) state = state.copyWith(errorMessage: 'Top-up failed. Please try again.');
       return null;
     }
   }
@@ -104,11 +104,11 @@ class DriverFinanceController extends StateNotifier<DriverFinanceState> {
       return applied;
     } on dio.DioException catch (e) {
       if (mounted) {
-        state = state.copyWith(errorMessage: e.response?.data?['error']?.toString() ?? 'Repayment failed');
+        state = state.copyWith(errorMessage: e.response?.data?['message']?.toString() ?? 'Repayment failed. Please try again.');
       }
       return 0;
     } catch (_) {
-      if (mounted) state = state.copyWith(errorMessage: 'Repayment failed');
+      if (mounted) state = state.copyWith(errorMessage: 'Repayment failed. Please try again.');
       return 0;
     }
   }

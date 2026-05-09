@@ -35,6 +35,7 @@ class DriverState {
     String? errorMessage,
     bool clearActiveRequest = false,
     bool clearCountdown = false,
+    bool clearErrorMessage = false,
     int? waitTimeSeconds,
     List<ChatMessage>? chatMessages,
   }) {
@@ -45,7 +46,7 @@ class DriverState {
       activeRequest: clearActiveRequest ? null : (activeRequest ?? this.activeRequest),
       countdown: clearCountdown ? null : (countdown ?? this.countdown),
       isLoading: isLoading ?? this.isLoading,
-      errorMessage: errorMessage ?? this.errorMessage,
+      errorMessage: clearErrorMessage ? null : (errorMessage ?? this.errorMessage),
       waitTimeSeconds: waitTimeSeconds ?? this.waitTimeSeconds,
       chatMessages: chatMessages ?? this.chatMessages,
     );

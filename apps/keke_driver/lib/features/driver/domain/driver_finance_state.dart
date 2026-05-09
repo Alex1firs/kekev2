@@ -53,14 +53,15 @@ class DriverHistoryEntry {
 
   factory DriverHistoryEntry.fromJson(Map<String, dynamic> json) {
     final type = json['transactionType'] as String? ?? '';
-    final amount = double.parse(json['amount'].toString());
+    final amount = double.tryParse(json['amount']?.toString() ?? '') ?? 0.0;
     final description = json['metadata']?['description'] as String? ?? _descriptionForType(type, amount);
+    final date = DateTime.tryParse(json['createdAt']?.toString() ?? '') ?? DateTime.now();
     return DriverHistoryEntry(
-      id: json['id'],
+      id: json['id']?.toString() ?? '',
       amount: amount,
       type: type,
       description: description,
-      date: DateTime.parse(json['createdAt']),
+      date: date,
     );
   }
 

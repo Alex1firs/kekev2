@@ -65,3 +65,70 @@ workflows:
         key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
         issuer_id: $APP_STORE_CONNECT_ISSUER_ID
         submit_to_testflight: true
+
+  keke-passenger-ios:
+    name: Keke Passenger — iOS App Store
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+
+    environment:
+      xcode: 26.4
+      flutter: stable
+      groups:
+        - ios_credentials
+
+    triggering:
+      events:
+        - tag
+      tag_patterns:
+        - pattern: 'passenger-v*'
+          include: true
+
+    scripts:
+      - name: Set up keychain and certificate
+        script: |
+          keychain initialize
+          python3 -c "import base64,os; open('/tmp/dist.p12','wb').write(base64.b64decode(os.environ['CM_CERTIFICATE']))"
+          keychain add-certificates --certificate /tmp/dist.p12 --certificate-password "$CM_CERTIFICATE_PASSWORD"
+
+      - name: Set up provisioning profile
+        script: |
+          PROFILES_HOME="$HOME/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$PROFILES_HOME"
+          python3 -c "import base64,os; open(os.path.expanduser('~/Library/MobileDevice/Provisioning Profiles/KekeRidePassenger_AppStore.mobileprovision'),'wb').write(base64.b64decode(os.environ['CM_PROVISIONING_PROFILE_PASSENGER']))"
+
+      - name: Get Flutter packages
+        script: |
+          cd apps/keke_passenger
+          flutter pub get
+
+      - name: Install CocoaPods
+        script: |
+          cd apps/keke_passenger/ios
+          pod install
+
+      - name: Set up Xcode code signing
+        script: |
+          xcode-project use-profiles \
+            --project apps/keke_passenger/ios/Runner.xcodeproj
+
+      - name: Build IPA
+        script: |
+          cd apps/keke_passenger
+          flutter build ipa --release \
+            --build-number=$((BUILD_NUMBER + 100)) \
+            --dart-define=GOOGLE_MAPS_API_KEY=$GOOGLE_MAPS_API_KEY \
+            --dart-define=API_URL=https://api.kekeride.ng/api/v1 \
+            --dart-define=ENV=prod \
+            --export-options-plist=/Users/builder/export_options.plist
+
+    artifacts:
+      - apps/keke_passenger/build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+
+    publishing:
+      app_store_connect:
+        api_key: $APP_STORE_CONNECT_PRIVATE_KEY
+        key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
+        issuer_id: $APP_STORE_CONNECT_ISSUER_ID
+        submit_to_testflight: true

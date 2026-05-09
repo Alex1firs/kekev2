@@ -86,7 +86,9 @@ const PORT = process.env.PORT || 3000;
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
   const status = err.statusCode || err.status || 500;
   console.error(JSON.stringify({ level: 'error', url: req.originalUrl, error: err.message }));
-  res.status(status).json({ error: status < 500 ? err.message : 'Internal Server Error' });
+  const code = err.code || (status < 500 ? 'VALIDATION_ERROR' : 'INTERNAL_ERROR');
+  const message = status < 500 ? err.message : 'Something went wrong. Please try again.';
+  res.status(status).json({ code, message });
 });
 
 AppDataSource.initialize()

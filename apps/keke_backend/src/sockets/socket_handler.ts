@@ -124,11 +124,13 @@ export class SocketHandler {
                         const profile = await AppDataSource.getRepository(DriverProfile).findOneBy({ userId: data.userId });
                         if (profile?.status === 'suspended') {
                             log.warn(`[SOCKET_AUTH] Suspended driver ${data.userId} attempted to join.`);
-                            socket.emit('error:suspended', { message: 'Your account is suspended. Contact support.' });
+                            socket.emit('error:suspended', { code: 'DRIVER_SUSPENDED', message: 'Your account is suspended. Please contact support.' });
                             return socket.disconnect();
                         }
                     } catch (err) {
                         log.error('Failed to verify driver status during join:', err);
+                        socket.emit('ride:error', { code: 'INTERNAL_ERROR', message: 'Could not verify your account status. Please reconnect.' });
+                        return;
                     }
                 }
 
@@ -147,11 +149,12 @@ export class SocketHandler {
                     const profile = await AppDataSource.getRepository(DriverProfile).findOneBy({ userId: data.driverId });
                     if (!profile || profile.status === 'suspended' || profile.status === 'rejected') {
                         log.warn(`[SOCKET_BLOCK] Heartbeat rejected for driver ${data.driverId} (Status: ${profile?.status})`);
-                        socket.emit('error:suspended', { message: 'Operational activity blocked.' });
+                        socket.emit('error:suspended', { code: 'DRIVER_SUSPENDED', message: 'Your account access is restricted. Please contact support.' });
                         return;
                     }
                 } catch (err) {
                     log.error('Heartbeat status check failed:', err);
+                    // Non-critical: allow heartbeat to proceed on transient DB errors
                 }
 
                 await DispatchService.updateDriverLocation(data.driverId, data.lat, data.lng);
@@ -274,6 +277,7 @@ export class SocketHandler {
                     log.info(`Ride ${data.rideId} canceled by passenger ${data.passengerId}`);
                 } catch (err) {
                     log.error('Failed to cancel ride:', err);
+                    socket.emit('ride:error', { code: 'INTERNAL_ERROR', message: 'Could not cancel the ride right now. Please try again.' });
                 }
             });
 
@@ -285,7 +289,7 @@ export class SocketHandler {
                     const profile = await AppDataSource.getRepository(DriverProfile).findOneBy({ userId: data.driverId });
                     if (!profile || profile.status === 'suspended' || profile.status === 'rejected') {
                         log.warn(`[SOCKET_BLOCK] Ride acceptance blocked for driver ${data.driverId} (Status: ${profile?.status})`);
-                        socket.emit('error:suspended', { message: 'Operational activity blocked.' });
+                        socket.emit('error:suspended', { code: 'DRIVER_SUSPENDED', message: 'Your account access is restricted. Please contact support.' });
                         return;
                     }
 
@@ -296,8 +300,8 @@ export class SocketHandler {
                         if (debt >= DEBT_CASH_BLOCK) {
                             log.warn(`[DEBT_BLOCK] Cash ride blocked for driver ${data.driverId} — debt ₦${debt}`);
                             socket.emit('error:debt_blocked', {
-                                message: 'Cash ride unavailable — clear outstanding debt to accept cash bookings.',
-                                debt,
+                                code: 'DEBT_CASH_BLOCKED',
+                                message: 'You cannot accept cash rides until your outstanding balance is cleared. Go to your wallet to pay.',
                             });
                             return;
                         }
@@ -316,7 +320,7 @@ export class SocketHandler {
                         .execute();
 
                     if (!updateResult.affected || updateResult.affected === 0) {
-                        socket.emit('ride:expired', { rideId: data.rideId, message: 'Ride already taken or cancelled' });
+                        socket.emit('ride:expired', { code: 'RIDE_ALREADY_TAKEN', rideId: data.rideId, message: 'This ride is no longer available.' });
                         return;
                     }
 
@@ -345,6 +349,7 @@ export class SocketHandler {
                     this.activeDispatches.delete(data.rideId);
                 } catch (err) {
                     log.error('ride:accept failed:', err);
+                    socket.emit('ride:error', { code: 'INTERNAL_ERROR', message: 'Could not accept the ride right now. Please try again.' });
                 }
             });
 
@@ -370,6 +375,7 @@ export class SocketHandler {
                     this.io.to('admin').emit('ride:status_update', { rideId: data.rideId, status: 'arrived' });
                 } catch (err) {
                     log.error('Failed to update ride to arrived:', err);
+                    socket.emit('ride:error', { code: 'INTERNAL_ERROR', message: 'Could not update your arrival status. Please try again.' });
                 }
             });
 
@@ -389,6 +395,7 @@ export class SocketHandler {
                     this.io.to('admin').emit('ride:status_update', { rideId: data.rideId, status: 'in_progress' });
                 } catch (err) {
                     log.error('Failed to update ride to in_progress:', err);
+                    socket.emit('ride:error', { code: 'INTERNAL_ERROR', message: 'Could not start the trip right now. Please try again.' });
                 }
             });
 
@@ -444,6 +451,7 @@ export class SocketHandler {
                     });
                 } catch (err) {
                     log.error('Ride completion lifecycle failed:', err);
+                    socket.emit('ride:error', { code: 'INTERNAL_ERROR', message: 'Could not complete the ride right now. Please try again.' });
                 }
             });
         });

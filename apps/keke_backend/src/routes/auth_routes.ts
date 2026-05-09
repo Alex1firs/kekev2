@@ -6,6 +6,7 @@ import { EmailService } from "../services/email_service";
 import { DriverProfile } from "../models/DriverProfile";
 import { authMiddleware, AuthRequest } from "../middleware/auth_middleware";
 import { redis } from "../config/redis";
+import { errBody, ErrorCode } from "../utils/errors";
 
 const router = Router();
 
@@ -29,13 +30,13 @@ async function handleSignup(req: Request, res: Response, role: UserRole) {
         const { email, password, first_name, last_name, phone } = req.body;
 
         if (!email || !password || !first_name || !last_name) {
-            return res.status(400).json({ error: "Missing required fields" });
+            return res.status(400).json(errBody(ErrorCode.MISSING_FIELDS, "Please fill in all required fields."));
         }
         if (!AuthService.validateEmail(email)) {
-            return res.status(400).json({ error: "Invalid email address" });
+            return res.status(400).json(errBody(ErrorCode.INVALID_EMAIL, "Please enter a valid email address."));
         }
         if (password.length < 8) {
-            return res.status(400).json({ error: "Password must be at least 8 characters" });
+            return res.status(400).json(errBody(ErrorCode.WEAK_PASSWORD, "Password must be at least 8 characters."));
         }
 
         const normalizedEmail = AuthService.normalizeEmail(email);
@@ -43,7 +44,7 @@ async function handleSignup(req: Request, res: Response, role: UserRole) {
 
         const existing = await userRepo.findOneBy({ email: normalizedEmail });
         if (existing) {
-            return res.status(409).json({ error: "Email address already registered" });
+            return res.status(409).json(errBody(ErrorCode.EMAIL_ALREADY_REGISTERED, "An account with this email already exists. Please log in."));
         }
 
         const hashedPassword = await AuthService.hashPassword(password);
@@ -82,7 +83,8 @@ async function handleSignup(req: Request, res: Response, role: UserRole) {
         return res.status(201).json(response);
 
     } catch (err: any) {
-        return res.status(500).json({ error: err.message });
+        console.error('[AUTH] Signup error:', err?.message);
+        return res.status(500).json(errBody(ErrorCode.INTERNAL_ERROR, "Something went wrong. Please try again."));
     }
 }
 
@@ -90,14 +92,14 @@ async function handleLogin(req: Request, res: Response) {
     try {
         const { email, password } = req.body;
         if (!email || !password) {
-            return res.status(400).json({ error: "Missing email or password" });
+            return res.status(400).json(errBody(ErrorCode.MISSING_FIELDS, "Please enter your email and password."));
         }
 
         const normalizedEmail = AuthService.normalizeEmail(email);
         const user = await AppDataSource.getRepository(User).findOneBy({ email: normalizedEmail });
 
         if (!user || !(await AuthService.comparePassword(password, user.password))) {
-            return res.status(401).json({ error: "Invalid credentials" });
+            return res.status(401).json(errBody(ErrorCode.INVALID_CREDENTIALS, "Incorrect email or password. Please try again."));
         }
 
         if (!user.emailVerified) {
@@ -106,8 +108,8 @@ async function handleLogin(req: Request, res: Response) {
             await EmailService.sendVerificationOtp(normalizedEmail, otp);
 
             const response: any = {
-                error: "EMAIL_NOT_VERIFIED",
-                message: "Your email is not verified. A new code has been sent.",
+                code: ErrorCode.EMAIL_NOT_VERIFIED,
+                message: "Your email is not verified yet. We've sent a new code to your email.",
                 email: normalizedEmail,
             };
             if (process.env.NODE_ENV !== 'production') {
@@ -119,7 +121,8 @@ async function handleLogin(req: Request, res: Response) {
         const token = AuthService.generateToken(user);
         return res.json({ token });
     } catch (err: any) {
-        return res.status(500).json({ error: err.message });
+        console.error('[AUTH] Login error:', err?.message);
+        return res.status(500).json(errBody(ErrorCode.INTERNAL_ERROR, "Something went wrong. Please try again."));
     }
 }
 
@@ -130,10 +133,10 @@ router.post("/login", handleLogin);
 // --- Identity Endpoint ---
 router.get("/me", authMiddleware, async (req: AuthRequest, res: Response) => {
     try {
-        if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+        if (!req.user) return res.status(401).json(errBody(ErrorCode.SESSION_EXPIRED, "Your session has expired. Please log in again."));
 
         const user = await AppDataSource.getRepository(User).findOneBy({ id: req.user.userId });
-        if (!user) return res.status(404).json({ error: "User not found" });
+        if (!user) return res.status(404).json(errBody(ErrorCode.USER_NOT_FOUND, "Account not found."));
 
         return res.json({
             id: user.id,
@@ -145,7 +148,8 @@ router.get("/me", authMiddleware, async (req: AuthRequest, res: Response) => {
             emailVerified: user.emailVerified,
         });
     } catch (err: any) {
-        return res.status(500).json({ error: err.message });
+        console.error('[AUTH] /me error:', err?.message);
+        return res.status(500).json(errBody(ErrorCode.INTERNAL_ERROR, "Something went wrong. Please try again."));
     }
 });
 
@@ -153,7 +157,7 @@ router.get("/me", authMiddleware, async (req: AuthRequest, res: Response) => {
 router.post("/email-verification/request", async (req: Request, res: Response) => {
     try {
         const { email } = req.body;
-        if (!email) return res.status(400).json({ error: "Email is required" });
+        if (!email) return res.status(400).json(errBody(ErrorCode.MISSING_FIELDS, "Email is required."));
 
         const normalizedEmail = AuthService.normalizeEmail(email);
         const user = await AppDataSource.getRepository(User).findOneBy({ email: normalizedEmail });
@@ -167,7 +171,7 @@ router.post("/email-verification/request", async (req: Request, res: Response) =
         const cooldownKey = `email_verify_cooldown:${normalizedEmail}`;
         const onCooldown = await redis.get(cooldownKey);
         if (onCooldown) {
-            return res.status(429).json({ error: "Please wait before requesting another code." });
+            return res.status(429).json(errBody(ErrorCode.RATE_LIMITED, "Please wait a moment before requesting another code."));
         }
 
         const otp = generateOtp();
@@ -181,27 +185,28 @@ router.post("/email-verification/request", async (req: Request, res: Response) =
         }
         return res.json(response);
     } catch (err: any) {
-        return res.status(500).json({ error: "Internal Server Error" });
+        console.error('[AUTH] Email verification request error:', err?.message);
+        return res.status(500).json(errBody(ErrorCode.INTERNAL_ERROR, "We couldn't send the verification code right now. Please try again."));
     }
 });
 
 router.post("/email-verification/confirm", async (req: Request, res: Response) => {
     try {
         const { email, otp } = req.body;
-        if (!email || !otp) return res.status(400).json({ error: "email and otp are required" });
+        if (!email || !otp) return res.status(400).json(errBody(ErrorCode.MISSING_FIELDS, "Email and verification code are required."));
 
         const normalizedEmail = AuthService.normalizeEmail(email);
 
         const attemptsKey = `email_verify_attempts:${normalizedEmail}`;
         const attempts = parseInt(await redis.get(attemptsKey) || '0');
         if (attempts >= 5) {
-            return res.status(429).json({ error: "Too many failed attempts. Request a new code." });
+            return res.status(429).json(errBody(ErrorCode.RATE_LIMITED, "Too many attempts. Please request a new code."));
         }
 
         const valid = await verifyAndConsumeOtp(`email_verify:${normalizedEmail}`, otp.toString());
         if (!valid) {
             await redis.set(attemptsKey, (attempts + 1).toString(), 'EX', 600);
-            return res.status(400).json({ error: "Invalid or expired code" });
+            return res.status(400).json(errBody(ErrorCode.INVALID_OTP, "That code is incorrect or has expired. Please try again."));
         }
 
         await redis.del(attemptsKey);
@@ -209,16 +214,17 @@ router.post("/email-verification/confirm", async (req: Request, res: Response) =
 
         const userRepo = AppDataSource.getRepository(User);
         const user = await userRepo.findOneBy({ email: normalizedEmail });
-        if (!user) return res.status(404).json({ error: "User not found" });
+        if (!user) return res.status(404).json(errBody(ErrorCode.USER_NOT_FOUND, "Account not found."));
 
         user.emailVerified = true;
         user.emailVerifiedAt = new Date();
         await userRepo.save(user);
 
         const token = AuthService.generateToken(user);
-        return res.json({ token, message: "Email verified successfully" });
+        return res.json({ token, message: "Email verified successfully." });
     } catch (err: any) {
-        return res.status(500).json({ error: "Internal Server Error" });
+        console.error('[AUTH] Email verification confirm error:', err?.message);
+        return res.status(500).json(errBody(ErrorCode.INTERNAL_ERROR, "Something went wrong. Please try again."));
     }
 });
 
@@ -226,7 +232,7 @@ router.post("/email-verification/confirm", async (req: Request, res: Response) =
 router.post("/reset-password/request", async (req: Request, res: Response) => {
     try {
         const { email } = req.body;
-        if (!email) return res.status(400).json({ error: "Email is required" });
+        if (!email) return res.status(400).json(errBody(ErrorCode.MISSING_FIELDS, "Email is required."));
 
         const normalizedEmail = AuthService.normalizeEmail(email);
         const user = await AppDataSource.getRepository(User).findOneBy({ email: normalizedEmail });
@@ -238,7 +244,7 @@ router.post("/reset-password/request", async (req: Request, res: Response) => {
         const cooldownKey = `pwd_reset_cooldown:${normalizedEmail}`;
         const onCooldown = await redis.get(cooldownKey);
         if (onCooldown) {
-            return res.status(429).json({ error: "Please wait before requesting another reset code." });
+            return res.status(429).json(errBody(ErrorCode.RATE_LIMITED, "Please wait a moment before requesting another reset code."));
         }
 
         const otp = generateOtp();
@@ -252,7 +258,8 @@ router.post("/reset-password/request", async (req: Request, res: Response) => {
         }
         return res.json(response);
     } catch (err: any) {
-        return res.status(500).json({ error: "Internal Server Error" });
+        console.error('[AUTH] Password reset request error:', err?.message);
+        return res.status(500).json(errBody(ErrorCode.INTERNAL_ERROR, "We couldn't send the reset code right now. Please try again."));
     }
 });
 
@@ -260,10 +267,10 @@ router.post("/reset-password/confirm", async (req: Request, res: Response) => {
     try {
         const { email, otp, newPassword } = req.body;
         if (!email || !otp || !newPassword) {
-            return res.status(400).json({ error: "email, otp, and newPassword are required" });
+            return res.status(400).json(errBody(ErrorCode.MISSING_FIELDS, "Email, code, and new password are required."));
         }
         if (newPassword.length < 8) {
-            return res.status(400).json({ error: "Password must be at least 8 characters" });
+            return res.status(400).json(errBody(ErrorCode.WEAK_PASSWORD, "Password must be at least 8 characters."));
         }
 
         const normalizedEmail = AuthService.normalizeEmail(email);
@@ -271,13 +278,13 @@ router.post("/reset-password/confirm", async (req: Request, res: Response) => {
         const attemptsKey = `pwd_reset_attempts:${normalizedEmail}`;
         const attempts = parseInt(await redis.get(attemptsKey) || '0');
         if (attempts >= 5) {
-            return res.status(429).json({ error: "Too many failed attempts. Request a new code." });
+            return res.status(429).json(errBody(ErrorCode.RATE_LIMITED, "Too many attempts. Please request a new code."));
         }
 
         const valid = await verifyAndConsumeOtp(`pwd_reset:${normalizedEmail}`, otp.toString());
         if (!valid) {
             await redis.set(attemptsKey, (attempts + 1).toString(), 'EX', 600);
-            return res.status(400).json({ error: "Invalid or expired code" });
+            return res.status(400).json(errBody(ErrorCode.INVALID_OTP, "That code is incorrect or has expired. Please try again."));
         }
 
         await redis.del(attemptsKey);
@@ -285,15 +292,16 @@ router.post("/reset-password/confirm", async (req: Request, res: Response) => {
 
         const userRepo = AppDataSource.getRepository(User);
         const user = await userRepo.findOneBy({ email: normalizedEmail });
-        if (!user) return res.status(404).json({ error: "User not found" });
+        if (!user) return res.status(404).json(errBody(ErrorCode.USER_NOT_FOUND, "Account not found."));
 
         user.password = await AuthService.hashPassword(newPassword);
         await userRepo.save(user);
 
         const token = AuthService.generateToken(user);
-        return res.json({ token, message: "Password updated successfully" });
+        return res.json({ token, message: "Password updated successfully." });
     } catch (err: any) {
-        return res.status(500).json({ error: "Internal Server Error" });
+        console.error('[AUTH] Password reset confirm error:', err?.message);
+        return res.status(500).json(errBody(ErrorCode.INTERNAL_ERROR, "Something went wrong. Please try again."));
     }
 });
 

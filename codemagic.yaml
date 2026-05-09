@@ -50,6 +50,9 @@ workflows:
           cd apps/keke_driver
           flutter build ipa --release \
             --build-number=$((BUILD_NUMBER + 100)) \
+            --dart-define=GOOGLE_MAPS_API_KEY=$GOOGLE_MAPS_API_KEY \
+            --dart-define=API_URL=https://api.kekeride.ng/api/v1 \
+            --dart-define=ENV=prod \
             --export-options-plist=/Users/builder/export_options.plist
 
     artifacts:

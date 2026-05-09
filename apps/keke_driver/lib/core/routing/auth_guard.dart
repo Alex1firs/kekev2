@@ -11,9 +11,16 @@ class AuthGuard extends ChangeNotifier {
   final Ref _ref;
 
   AuthGuard(this._ref) {
-    // Notify GoRouter whenever these states change
-    _ref.listen(authControllerProvider, (_, __) => notifyListeners());
-    _ref.listen(driverControllerProvider, (_, __) => notifyListeners());
+    // Only notify GoRouter when routing-relevant state changes, not on every
+    // isLoading or ride-data update (those would re-navigate while typing).
+    _ref.listen(
+      authControllerProvider.select((s) => s.status),
+      (_, __) => notifyListeners(),
+    );
+    _ref.listen(
+      driverControllerProvider.select((s) => s.profile.status),
+      (_, __) => notifyListeners(),
+    );
   }
 
   String? redirectHook(BuildContext context, GoRouterState state) {

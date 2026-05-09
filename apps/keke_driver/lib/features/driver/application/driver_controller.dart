@@ -38,7 +38,7 @@ class DriverController extends StateNotifier<DriverState> {
           profile: DriverProfile(status: DriverStatus.unregistered),
         )) {
     _socketService = initialSocket;
-    _initDriver();
+    if (_userId != 'guest' && _userId != 'session_invalid') _initDriver();
     if (_socketService != null) _listenToSocket();
     _startHeartbeat();
     _listenToNotifications();

@@ -44,8 +44,8 @@ export class PaystackService {
                 amount,
                 reference,
                 status: TransactionStatus.PENDING,
-            }) as any;
-            tx.role = role;
+                metadata: { role },
+            });
             await AppDataSource.getRepository(Transaction).save(tx);
 
             return {

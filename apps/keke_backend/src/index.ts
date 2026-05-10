@@ -37,6 +37,25 @@ const ALLOWED_ORIGINS: string[] = _allowedOrigins.split(',').map(o => o.trim());
 const app = express();
 app.use(helmet());
 app.use(cors({ origin: ALLOWED_ORIGINS, credentials: true }));
+
+// Paystack webhook needs the raw body for HMAC signature verification.
+// Mount it before express.json() so the body isn't pre-parsed.
+app.post('/api/v1/finance/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  const { PaystackService } = await import('./services/paystack_service');
+  const signature = req.headers['x-paystack-signature'] as string;
+  const body = (req.body as Buffer).toString('utf8');
+  if (!PaystackService.verifyWebhookSignature(body, signature)) {
+    return res.status(400).send('Invalid signature');
+  }
+  try {
+    await PaystackService.handleWebhook(JSON.parse(body));
+    res.sendStatus(200);
+  } catch (err: any) {
+    console.error('Webhook error:', err?.message);
+    res.status(500).send('Internal server error');
+  }
+});
+
 app.use(express.json({ limit: '1mb' }));
 
 app.use((req, res, next) => {

@@ -27,7 +27,7 @@ async function verifyAndConsumeOtp(key: string, otp: string): Promise<boolean> {
 
 async function handleSignup(req: Request, res: Response, role: UserRole) {
     try {
-        const { email, password, first_name, last_name, phone } = req.body;
+        const { email, password, first_name, last_name, phone } = req.body ?? {};
 
         if (!email || !password || !first_name || !last_name) {
             return res.status(400).json(errBody(ErrorCode.MISSING_FIELDS, "Please fill in all required fields."));
@@ -90,7 +90,7 @@ async function handleSignup(req: Request, res: Response, role: UserRole) {
 
 async function handleLogin(req: Request, res: Response) {
     try {
-        const { email, password } = req.body;
+        const { email, password } = req.body ?? {};
         if (!email || !password) {
             return res.status(400).json(errBody(ErrorCode.MISSING_FIELDS, "Please enter your email and password."));
         }
@@ -156,7 +156,7 @@ router.get("/me", authMiddleware, async (req: AuthRequest, res: Response) => {
 // --- Email Verification ---
 router.post("/email-verification/request", async (req: Request, res: Response) => {
     try {
-        const { email } = req.body;
+        const { email } = req.body ?? {};
         if (!email) return res.status(400).json(errBody(ErrorCode.MISSING_FIELDS, "Email is required."));
 
         const normalizedEmail = AuthService.normalizeEmail(email);
@@ -192,7 +192,7 @@ router.post("/email-verification/request", async (req: Request, res: Response) =
 
 router.post("/email-verification/confirm", async (req: Request, res: Response) => {
     try {
-        const { email, otp } = req.body;
+        const { email, otp } = req.body ?? {};
         if (!email || !otp) return res.status(400).json(errBody(ErrorCode.MISSING_FIELDS, "Email and verification code are required."));
 
         const normalizedEmail = AuthService.normalizeEmail(email);
@@ -231,7 +231,7 @@ router.post("/email-verification/confirm", async (req: Request, res: Response) =
 // --- Password Reset ---
 router.post("/reset-password/request", async (req: Request, res: Response) => {
     try {
-        const { email } = req.body;
+        const { email } = req.body ?? {};
         if (!email) return res.status(400).json(errBody(ErrorCode.MISSING_FIELDS, "Email is required."));
 
         const normalizedEmail = AuthService.normalizeEmail(email);
@@ -265,7 +265,7 @@ router.post("/reset-password/request", async (req: Request, res: Response) => {
 
 router.post("/reset-password/confirm", async (req: Request, res: Response) => {
     try {
-        const { email, otp, newPassword } = req.body;
+        const { email, otp, newPassword } = req.body ?? {};
         if (!email || !otp || !newPassword) {
             return res.status(400).json(errBody(ErrorCode.MISSING_FIELDS, "Email, code, and new password are required."));
         }

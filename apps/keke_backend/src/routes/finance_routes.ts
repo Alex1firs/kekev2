@@ -40,7 +40,7 @@ router.get("/balance/:userId", authMiddleware, async (req: AuthRequest, res: Res
 router.post("/topup/init", authMiddleware, topupLimiter, async (req: AuthRequest, res: Response) => {
     try {
         const userId = req.user!.userId;
-        const { email, amount } = req.body;
+        const { email, amount } = req.body ?? {};
         if (!email || !amount || amount <= 0) {
             return res.status(400).json(errBody(ErrorCode.VALIDATION_ERROR, "A valid email and amount are required."));
         }
@@ -55,7 +55,7 @@ router.post("/topup/init", authMiddleware, topupLimiter, async (req: AuthRequest
 router.post("/topup/driver/init", authMiddleware, topupLimiter, async (req: AuthRequest, res: Response) => {
     try {
         const userId = req.user!.userId;
-        const { email, amount } = req.body;
+        const { email, amount } = req.body ?? {};
         if (!email || !amount || amount <= 0) {
             return res.status(400).json(errBody(ErrorCode.VALIDATION_ERROR, "A valid email and amount are required."));
         }
@@ -70,7 +70,7 @@ router.post("/topup/driver/init", authMiddleware, topupLimiter, async (req: Auth
 router.post("/payout/init", authMiddleware, async (req: AuthRequest, res: Response) => {
     try {
         const userId = req.user!.userId;
-        const { amount, bankCode, accountNumber } = req.body;
+        const { amount, bankCode, accountNumber } = req.body ?? {};
         if (!amount || amount <= 0 || !bankCode || !accountNumber) {
             return res.status(400).json(errBody(ErrorCode.VALIDATION_ERROR, "Amount, bank code, and account number are required."));
         }
@@ -100,7 +100,7 @@ router.post("/debt/repay", authMiddleware, async (req: AuthRequest, res: Respons
 
 router.post("/topup/verify", authMiddleware, topupLimiter, async (req: AuthRequest, res: Response) => {
     try {
-        const { reference } = req.body;
+        const { reference } = req.body ?? {};
         if (!reference) return res.status(400).json(errBody(ErrorCode.MISSING_FIELDS, "Payment reference is required."));
         const verified = await PaystackService.verifyTransaction(reference);
         res.json({ verified });

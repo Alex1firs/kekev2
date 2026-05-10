@@ -58,7 +58,7 @@ router.post("/onboarding", authMiddleware, onboardingLimiter, async (req: AuthRe
  */
 router.post("/upload", authMiddleware, onboardingLimiter, upload.single("document"), async (req: AuthRequest, res: Response) => {
     try {
-        const { userId, docType } = req.body;
+        const { userId, docType } = req.body ?? {};
         if (!userId || !docType || !req.file) {
             return res.status(400).json(errBody(ErrorCode.MISSING_FIELDS, "Document file and type are required."));
         }

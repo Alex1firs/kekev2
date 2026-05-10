@@ -75,14 +75,17 @@ class DriverFinanceController extends StateNotifier<DriverFinanceState> {
   }
 
   /// Initialize a Paystack top-up for the driver wallet.
-  /// Returns the authorization_url on success, null on failure.
-  Future<String?> topupWallet(double amount, String email) async {
+  /// Returns {authorization_url, reference} on success, null on failure.
+  Future<Map<String, String>?> topupWallet(double amount, String email) async {
     try {
       final response = await _apiClient.dio.post('/finance/topup/driver/init', data: {
         'email': email,
         'amount': amount,
       });
-      return response.data['authorization_url'] as String?;
+      final url = response.data['authorization_url'] as String?;
+      final ref = response.data['reference'] as String?;
+      if (url == null || ref == null) return null;
+      return {'url': url, 'reference': ref};
     } on dio.DioException catch (e) {
       if (mounted) {
         state = state.copyWith(errorMessage: e.response?.data?['message']?.toString() ?? 'Top-up failed. Please try again.');
@@ -91,6 +94,19 @@ class DriverFinanceController extends StateNotifier<DriverFinanceState> {
     } catch (_) {
       if (mounted) state = state.copyWith(errorMessage: 'Top-up failed. Please try again.');
       return null;
+    }
+  }
+
+  /// Verify a completed Paystack payment and credit the wallet.
+  Future<bool> verifyTopup(String reference) async {
+    try {
+      final response = await _apiClient.dio.post('/finance/topup/verify', data: {'reference': reference});
+      final verified = response.data['verified'] as bool? ?? false;
+      if (verified) await _loadData();
+      return verified;
+    } catch (_) {
+      await _loadData();
+      return false;
     }
   }
 

@@ -414,8 +414,8 @@ class _EarningsScreenState extends ConsumerState<EarningsScreen> {
     if (authState.token != null) {
       try {
         final decoded = JwtDecoder.decode(authState.token!);
-        final phone = decoded['phone']?.toString();
-        if (phone != null) emailCtrl.text = '$phone@keke.app';
+        final email = decoded['email']?.toString();
+        if (email != null) emailCtrl.text = email;
       } catch (_) {}
     }
 
@@ -450,25 +450,30 @@ class _EarningsScreenState extends ConsumerState<EarningsScreen> {
     final navigator = Navigator.of(context);
     final messenger = ScaffoldMessenger.of(context);
 
-    final url = await ref
+    final topup = await ref
         .read(driverFinanceControllerProvider.notifier)
         .topupWallet(amount, email);
-    if (!mounted || url == null) return;
+    if (!mounted || topup == null) return;
 
-    final success = await navigator.push<bool>(
-      MaterialPageRoute(builder: (_) => PaystackWebView(url: url)),
+    final callbackRef = await navigator.push<String>(
+      MaterialPageRoute(builder: (_) => PaystackWebView(url: topup['url']!)),
     );
 
-    if (success == true && mounted) {
-      await ref.read(driverFinanceControllerProvider.notifier).refresh();
-      messenger.showSnackBar(
-        SnackBar(
-          backgroundColor: AppColors.success,
-          content: Text('Top-up successful!',
-              style: AppTextStyles.body(color: AppColors.white)),
+    if (!mounted) return;
+    final reference = callbackRef ?? topup['reference']!;
+    final verified = await ref
+        .read(driverFinanceControllerProvider.notifier)
+        .verifyTopup(reference);
+
+    messenger.showSnackBar(
+      SnackBar(
+        backgroundColor: verified ? AppColors.success : AppColors.primary,
+        content: Text(
+          verified ? 'Top-up successful! Balance updated.' : 'Payment received — balance updating shortly.',
+          style: AppTextStyles.body(color: verified ? AppColors.white : AppColors.charcoal),
         ),
-      );
-    }
+      ),
+    );
   }
 
   Widget _buildDarkDialog({

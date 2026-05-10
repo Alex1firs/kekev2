@@ -31,12 +31,20 @@ export class EmailAuthMigration1746500000000 implements MigrationInterface {
         // Make phone nullable (it's now a profile field, not auth identifier)
         await queryRunner.query(`ALTER TABLE "user" ALTER COLUMN "phone" DROP NOT NULL`);
 
-        // Drop the old unique constraint on phone if it exists
+        // Drop all unique constraints on phone (name varies by how schema was created)
         await queryRunner.query(`
-            DO $$ BEGIN
-                ALTER TABLE "user" DROP CONSTRAINT "UQ_user_phone";
-            EXCEPTION
-                WHEN undefined_object THEN NULL;
+            DO $$ DECLARE r RECORD; BEGIN
+                FOR r IN
+                    SELECT c.conname
+                    FROM pg_constraint c
+                    JOIN pg_class t ON t.oid = c.conrelid
+                    JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(c.conkey)
+                    WHERE t.relname = 'user'
+                      AND c.contype = 'u'
+                      AND a.attname = 'phone'
+                LOOP
+                    EXECUTE 'ALTER TABLE "user" DROP CONSTRAINT "' || r.conname || '"';
+                END LOOP;
             END $$;
         `);
 

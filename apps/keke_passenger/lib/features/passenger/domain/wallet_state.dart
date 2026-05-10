@@ -16,12 +16,13 @@ class WalletState {
     List<WalletTransaction>? history,
     bool? isLoading,
     String? errorMessage,
+    bool clearErrorMessage = false,
   }) {
     return WalletState(
       balance: balance ?? this.balance,
       history: history ?? this.history,
       isLoading: isLoading ?? this.isLoading,
-      errorMessage: errorMessage ?? this.errorMessage,
+      errorMessage: clearErrorMessage ? null : (errorMessage ?? this.errorMessage),
     );
   }
 }
@@ -44,13 +45,14 @@ class WalletTransaction {
   });
 
   factory WalletTransaction.fromJson(Map<String, dynamic> json) {
+    final amount = double.tryParse(json['amount']?.toString() ?? '') ?? 0.0;
     return WalletTransaction(
-      id: json['id'],
-      amount: double.parse(json['amount'].toString()),
-      type: json['transactionType'],
-      description: json['metadata']?['description'] ?? (json['amount'] > 0 ? 'Top-up' : 'Ride Payment'),
-      date: DateTime.parse(json['createdAt']),
-      balanceAfter: double.parse(json['balanceAfter'].toString()),
+      id: json['id']?.toString() ?? '',
+      amount: amount,
+      type: json['transactionType']?.toString() ?? '',
+      description: json['metadata']?['description']?.toString() ?? (amount > 0 ? 'Top-up' : 'Ride Payment'),
+      date: DateTime.tryParse(json['createdAt']?.toString() ?? '') ?? DateTime.now(),
+      balanceAfter: double.tryParse(json['balanceAfter']?.toString() ?? '') ?? 0.0,
     );
   }
 }

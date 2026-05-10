@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:jwt_decoder/jwt_decoder.dart';
 import '../../auth/application/auth_controller.dart';
@@ -17,19 +18,18 @@ class WalletController extends StateNotifier<WalletState> {
     state = state.copyWith(isLoading: true, errorMessage: null);
     try {
       final response = await _api.dio.get('/finance/balance/$_userId');
-      final data = response.data;
-      
-      final history = (data['history'] as List)
-          .map((json) => WalletTransaction.fromJson(json))
+      final data = response.data as Map<String, dynamic>;
+      final balanceMap = data['balance'] as Map<String, dynamic>? ?? {};
+      final historyRaw = data['history'] as List<dynamic>? ?? [];
+
+      final balance = double.tryParse(balanceMap['passengerBalance']?.toString() ?? '') ?? 0.0;
+      final history = historyRaw
+          .map((json) => WalletTransaction.fromJson(json as Map<String, dynamic>))
           .toList();
 
-      state = state.copyWith(
-        balance: double.parse(data['balance']['passengerBalance'].toString()),
-        history: history,
-        isLoading: false,
-      );
+      state = state.copyWith(balance: balance, history: history, isLoading: false);
     } catch (e) {
-      state = state.copyWith(isLoading: false, errorMessage: 'Failed to load wallet');
+      state = state.copyWith(isLoading: false, errorMessage: 'Couldn\'t load your wallet. Please try again.');
     }
   }
 
@@ -40,9 +40,12 @@ class WalletController extends StateNotifier<WalletState> {
         'amount': amount,
         'email': email,
       });
-      return response.data['authorization_url'];
+      return response.data['authorization_url'] as String?;
+    } on DioException catch (e) {
+      state = state.copyWith(errorMessage: e.response?.data?['message']?.toString() ?? 'Couldn\'t start top-up. Please try again.');
+      return null;
     } catch (e) {
-      state = state.copyWith(errorMessage: 'Top-up initialization failed');
+      state = state.copyWith(errorMessage: 'Couldn\'t start top-up. Please try again.');
       return null;
     }
   }

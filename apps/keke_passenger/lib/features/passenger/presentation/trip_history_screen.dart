@@ -27,13 +27,13 @@ class PassengerRideHistoryEntry {
 
   factory PassengerRideHistoryEntry.fromJson(Map<String, dynamic> json) {
     return PassengerRideHistoryEntry(
-      rideId: json['rideId'] as String,
-      status: json['status'] as String? ?? 'unknown',
-      paymentMode: json['paymentMode'] as String? ?? 'cash',
-      fare: double.parse(json['fare'].toString()),
-      pickupAddress: json['pickupAddress'] as String? ?? '',
-      destinationAddress: json['destinationAddress'] as String? ?? '',
-      createdAt: DateTime.parse(json['createdAt'] as String),
+      rideId: json['rideId']?.toString() ?? '',
+      status: json['status']?.toString() ?? 'unknown',
+      paymentMode: json['paymentMode']?.toString() ?? 'cash',
+      fare: double.tryParse(json['fare']?.toString() ?? '') ?? 0.0,
+      pickupAddress: json['pickupAddress']?.toString() ?? '',
+      destinationAddress: json['destinationAddress']?.toString() ?? '',
+      createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? '') ?? DateTime.now(),
       paymentFailed: json['paymentFailed'] == true,
     );
   }
@@ -77,12 +77,12 @@ class _PassengerTripHistoryScreenState
       });
     } on dio.DioException catch (e) {
       setState(() {
-        _error = e.response?.data?['error']?.toString() ?? 'Failed to load history';
+        _error = e.response?.data?['message']?.toString() ?? 'Couldn\'t load your trip history. Please try again.';
         _isLoading = false;
       });
     } catch (_) {
       setState(() {
-        _error = 'Failed to load history';
+        _error = 'Couldn\'t load your trip history. Please try again.';
         _isLoading = false;
       });
     }

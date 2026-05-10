@@ -25,7 +25,16 @@ class _RideChatPanelState extends ConsumerState<RideChatPanel> {
   void _send() {
     final text = _controller.text.trim();
     if (text.isEmpty) return;
-    ref.read(bookingControllerProvider.notifier).sendChatMessage(text);
+    final sent = ref.read(bookingControllerProvider.notifier).sendChatMessage(text);
+    if (!sent) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Connection lost — message not sent.'),
+        backgroundColor: Color(0xFFEF4444),
+        behavior: SnackBarBehavior.floating,
+        duration: Duration(seconds: 3),
+      ));
+      return;
+    }
     _controller.clear();
     Future.delayed(const Duration(milliseconds: 100), _scrollToBottom);
   }

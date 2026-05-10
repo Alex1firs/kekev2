@@ -16,6 +16,8 @@ class SocketService {
     _initSocket();
   }
 
+  bool get isConnected => _socket?.connected == true;
+
   void updateActiveRide(String? rideId) {
     _activeRideId = rideId;
     if (rideId != null && _socket?.connected == true) {
@@ -46,7 +48,20 @@ class SocketService {
       _controller.add({'event': 'socket:reconnected'});
     });
 
-    _socket!.onDisconnect((_) => print('Socket disconnected'));
+    _socket!.onDisconnect((_) {
+      print('Socket disconnected');
+      _controller.add({'event': 'socket:disconnected'});
+    });
+
+    _socket!.onConnectError((_) {
+      print('Socket connect error');
+      _controller.add({'event': 'socket:connect_error'});
+    });
+
+    _socket!.on('error', (_) {
+      print('Socket error');
+      _controller.add({'event': 'socket:connect_error'});
+    });
 
     // Broad listener for all dispatcher events
     _socket!.onAny((event, data) {

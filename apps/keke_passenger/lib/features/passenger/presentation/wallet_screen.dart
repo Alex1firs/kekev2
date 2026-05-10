@@ -15,6 +15,17 @@ class WalletScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final walletState = ref.watch(walletControllerProvider);
 
+    ref.listen(walletControllerProvider.select((s) => s.errorMessage), (_, msg) {
+      if (msg != null && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(msg),
+          backgroundColor: AppColors.error,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 4),
+        ));
+      }
+    });
+
     return Scaffold(
       backgroundColor: AppColors.snow,
       appBar: AppBar(
@@ -294,7 +305,14 @@ class WalletScreen extends ConsumerWidget {
             ),
             onPressed: () async {
               final amount = double.tryParse(amountController.text);
-              if (amount == null || amount <= 0) return;
+              if (amount == null || amount < 100) {
+                ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(
+                  content: Text('Enter a valid amount (minimum ₦100).'),
+                  backgroundColor: AppColors.error,
+                  behavior: SnackBarBehavior.floating,
+                ));
+                return;
+              }
 
               final email = emailController.text.trim().isNotEmpty
                   ? emailController.text.trim()
@@ -308,14 +326,18 @@ class WalletScreen extends ConsumerWidget {
               if (url != null && context.mounted) {
                 Navigator.push(
                   context,
-                  MaterialPageRoute(
-                    builder: (_) => PaystackWebView(url: url),
-                  ),
+                  MaterialPageRoute(builder: (_) => PaystackWebView(url: url)),
                 ).then((success) {
                   if (success == true) {
                     ref.read(walletControllerProvider.notifier).refresh();
                   }
                 });
+              } else if (url == null && context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                  content: Text('Couldn\'t start top-up. Please try again.'),
+                  backgroundColor: AppColors.error,
+                  behavior: SnackBarBehavior.floating,
+                ));
               }
             },
             child: Text('Proceed', style: AppTextStyles.body(weight: FontWeight.w700)),

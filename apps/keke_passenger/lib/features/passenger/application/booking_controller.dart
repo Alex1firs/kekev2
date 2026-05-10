@@ -23,6 +23,8 @@ class BookingController extends StateNotifier<BookingState> {
 
   Timer? _debounceTimer;
   Timer? _watchdogTimer;
+  Timer? _searchTimeoutTimer;
+  Timer? _errorClearTimer;
   StreamSubscription? _socketSubscription;
   StreamSubscription? _notificationSubscription;
   final NotificationService _notificationService;
@@ -82,9 +84,11 @@ class BookingController extends StateNotifier<BookingState> {
           syncStatus();
           break;
         case 'ride:assigned':
+          _searchTimeoutTimer?.cancel();
           state = state.copyWith(
             step: BookingStep.confirmed,
             assignedDriver: data['driverDetails'],
+            clearErrorMessage: true,
           );
           _stopWatchdog();
           _soundService.playAlert(); // 🔔 Driver found
@@ -99,38 +103,56 @@ class BookingController extends StateNotifier<BookingState> {
            }
            break;
         case 'chat:message':
-          final msg = ChatMessage(
-            senderId:   data['senderId'] as String,
-            senderRole: data['senderRole'] as String,
-            message:    data['message'] as String,
-            timestamp:  DateTime.tryParse(data['timestamp'] as String? ?? '') ?? DateTime.now(),
-          );
-          state = state.copyWith(chatMessages: [...state.chatMessages, msg]);
+          try {
+            final msg = ChatMessage(
+              senderId:   data['senderId']?.toString() ?? '',
+              senderRole: data['senderRole']?.toString() ?? 'driver',
+              message:    data['message']?.toString() ?? '',
+              timestamp:  DateTime.tryParse(data['timestamp']?.toString() ?? '') ?? DateTime.now(),
+            );
+            state = state.copyWith(chatMessages: [...state.chatMessages, msg]);
+          } catch (e) {
+            print('[PASSENGER] Failed to parse chat message: $e');
+          }
           break;
         case 'ride:cancelled':
           print('[PASSENGER_SYNC] Ride cancelled. Resetting state.');
+          _searchTimeoutTimer?.cancel();
           _stopWatchdog();
           _resetBookingState();
           break;
         case 'ride:finished':
           print('[PASSENGER_SYNC] Ride finished. Showing receipt.');
+          _searchTimeoutTimer?.cancel();
           _stopWatchdog();
           _showReceipt();
           break;
         case 'ride:failed':
+          _searchTimeoutTimer?.cancel();
+          _stopWatchdog();
           state = state.copyWith(
             step: BookingStep.previewEstimate,
-            errorMessage: data['message'] ?? 'No drivers found.',
+            errorMessage: data['message']?.toString() ?? 'No drivers available right now — please try again.',
           );
           break;
         case 'driver:location_update':
-          state = state.copyWith(
-            assignedDriverLocation: LatLng(
-              double.parse(data['lat'].toString()),
-              double.parse(data['lng'].toString()),
-            ),
-            lastLocationUpdate: DateTime.now(),
-          );
+          try {
+            state = state.copyWith(
+              assignedDriverLocation: LatLng(
+                (data['lat'] as num?)?.toDouble() ?? 0.0,
+                (data['lng'] as num?)?.toDouble() ?? 0.0,
+              ),
+              lastLocationUpdate: DateTime.now(),
+            );
+          } catch (e) {
+            print('[PASSENGER] Failed to parse driver location: $e');
+          }
+          break;
+        case 'socket:disconnected':
+          if (state.step == BookingStep.searching) {
+            state = state.copyWith(errorMessage: 'Connection lost — your search continues in the background.');
+            _scheduleErrorClear(seconds: 8);
+          }
           break;
       }
     });
@@ -183,16 +205,16 @@ class BookingController extends StateNotifier<BookingState> {
             step: restoredStep,
             rideId: rideId,
             pickupLocation: LatLng(
-                double.parse(data['pickupLat'].toString()), 
-                double.parse(data['pickupLng'].toString())
+                (data['pickupLat'] as num?)?.toDouble() ?? 0.0,
+                (data['pickupLng'] as num?)?.toDouble() ?? 0.0,
             ),
-            pickupAddress: data['pickupAddress'],
+            pickupAddress: data['pickupAddress']?.toString(),
             destinationLocation: LatLng(
-                double.parse(data['destinationLat'].toString()), 
-                double.parse(data['destinationLng'].toString())
+                (data['destinationLat'] as num?)?.toDouble() ?? 0.0,
+                (data['destinationLng'] as num?)?.toDouble() ?? 0.0,
             ),
-            destinationAddress: data['destinationAddress'],
-            estimatedFareAmount: int.tryParse(data['fare'].toString()),
+            destinationAddress: data['destinationAddress']?.toString(),
+            estimatedFareAmount: int.tryParse(data['fare']?.toString() ?? ''),
           );
           
           // Re-calculate route to show polyline on map
@@ -282,8 +304,8 @@ class BookingController extends StateNotifier<BookingState> {
   }
 
   Future<void> _calculateFare() async {
-    state = state.copyWith(errorMessage: null, estimatedFareAmount: null);
-    
+    state = state.copyWith(clearErrorMessage: true, estimatedFareAmount: null);
+
     try {
       final estimate = await _mapRepo.calculateRouteAndFare(state.pickupLocation!, state.destinationLocation!);
       state = state.copyWith(
@@ -293,12 +315,16 @@ class BookingController extends StateNotifier<BookingState> {
         activeRoutePolyline: List<LatLng>.from(estimate['polyline']),
       );
     } catch (e) {
-      state = state.copyWith(errorMessage: 'Failed to calculate fare.');
+      state = state.copyWith(errorMessage: 'Couldn\'t calculate your route — try a different destination.');
     }
   }
 
   void requestRide() {
     if (_socketService == null || state.pickupLocation == null || state.destinationLocation == null) return;
+    if (!_socketService!.isConnected) {
+      state = state.copyWith(errorMessage: 'No connection — please check your internet and try again.');
+      return;
+    }
 
     final rideId = 'RIDE-${DateTime.now().millisecondsSinceEpoch}';
     
@@ -360,6 +386,7 @@ class BookingController extends StateNotifier<BookingState> {
 
   void _startWatchdog() {
     _watchdogTimer?.cancel();
+    _searchTimeoutTimer?.cancel();
     print('[WATCHDOG] Starting sync watchdog...');
     _watchdogTimer = Timer.periodic(const Duration(seconds: 8), (_) {
       if (state.step == BookingStep.searching) {
@@ -367,6 +394,18 @@ class BookingController extends StateNotifier<BookingState> {
         syncStatus();
       } else {
         _stopWatchdog();
+      }
+    });
+    // Auto-rollback if no driver found within 90 seconds
+    _searchTimeoutTimer = Timer(const Duration(seconds: 90), () {
+      if (mounted && state.step == BookingStep.searching) {
+        print('[WATCHDOG] Search timed out — rolling back to estimate.');
+        _stopWatchdog();
+        state = state.copyWith(
+          step: BookingStep.previewEstimate,
+          clearRideId: true,
+          errorMessage: 'No drivers available right now — please try again.',
+        );
       }
     });
   }
@@ -377,6 +416,8 @@ class BookingController extends StateNotifier<BookingState> {
       _watchdogTimer?.cancel();
       _watchdogTimer = null;
     }
+    _searchTimeoutTimer?.cancel();
+    _searchTimeoutTimer = null;
   }
   
   void _showReceipt() {
@@ -397,13 +438,27 @@ class BookingController extends StateNotifier<BookingState> {
     _resetBookingState();
   }
 
-  void sendChatMessage(String message) {
-    if (_socketService == null || state.rideId == null || message.trim().isEmpty) return;
+  bool sendChatMessage(String message) {
+    if (_socketService == null || state.rideId == null || message.trim().isEmpty) return false;
+    if (!_socketService!.isConnected) return false;
     _socketService!.emit('chat:send', {
       'rideId':     state.rideId,
       'senderId':   passengerId,
       'senderRole': 'passenger',
       'message':    message.trim(),
+    });
+    return true;
+  }
+
+  void clearError() {
+    _errorClearTimer?.cancel();
+    if (mounted) state = state.copyWith(clearErrorMessage: true);
+  }
+
+  void _scheduleErrorClear({int seconds = 5}) {
+    _errorClearTimer?.cancel();
+    _errorClearTimer = Timer(Duration(seconds: seconds), () {
+      if (mounted) state = state.copyWith(clearErrorMessage: true);
     });
   }
 
@@ -424,6 +479,8 @@ class BookingController extends StateNotifier<BookingState> {
   void dispose() {
     _debounceTimer?.cancel();
     _watchdogTimer?.cancel();
+    _searchTimeoutTimer?.cancel();
+    _errorClearTimer?.cancel();
     _socketSubscription?.cancel();
     _notificationSubscription?.cancel();
     super.dispose();

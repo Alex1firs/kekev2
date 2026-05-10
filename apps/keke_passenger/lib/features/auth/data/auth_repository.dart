@@ -25,7 +25,7 @@ class AuthRepository {
           devOtp: data['otp'] as String?,
         );
       }
-      throw Exception(e.response?.data?['error']?.toString() ?? e.message ?? 'Login failed');
+      throw Exception(e.response?.data?['message']?.toString() ?? 'Incorrect email or password. Please try again.');
     }
   }
 
@@ -42,9 +42,9 @@ class AuthRepository {
       return Map<String, dynamic>.from(response.data);
     } on DioException catch (e) {
       if (e.response?.statusCode == 409) {
-        throw Exception('Email address already registered');
+        throw Exception('An account with this email already exists. Please log in.');
       }
-      throw Exception(e.response?.data?['error']?.toString() ?? e.message ?? 'Signup failed');
+      throw Exception(e.response?.data?['message']?.toString() ?? 'Couldn\'t create your account. Please try again.');
     }
   }
 
@@ -54,9 +54,9 @@ class AuthRepository {
       return Map<String, dynamic>.from(response.data);
     } on DioException catch (e) {
       if (e.response?.statusCode == 429) {
-        throw Exception(e.response?.data?['error']?.toString() ?? 'Please wait before requesting another code.');
+        throw Exception(e.response?.data?['message']?.toString() ?? 'Please wait before requesting another code.');
       }
-      throw Exception(e.response?.data?['error']?.toString() ?? 'Request failed');
+      throw Exception(e.response?.data?['message']?.toString() ?? 'Couldn\'t send verification code. Please try again.');
     }
   }
 
@@ -69,9 +69,9 @@ class AuthRepository {
       return response.data['token'] as String;
     } on DioException catch (e) {
       if (e.response?.statusCode == 429) {
-        throw Exception('Too many failed attempts. Request a new code.');
+        throw Exception('Too many failed attempts. Please request a new code.');
       }
-      throw Exception(e.response?.data?['error']?.toString() ?? 'Verification failed');
+      throw Exception(e.response?.data?['message']?.toString() ?? 'That code is incorrect or has expired. Please try again.');
     }
   }
 
@@ -81,9 +81,9 @@ class AuthRepository {
       return Map<String, dynamic>.from(response.data);
     } on DioException catch (e) {
       if (e.response?.statusCode == 429) {
-        throw Exception(e.response?.data?['error']?.toString() ?? 'Please wait before requesting another code.');
+        throw Exception(e.response?.data?['message']?.toString() ?? 'Please wait before requesting another code.');
       }
-      throw Exception(e.response?.data?['error']?.toString() ?? 'Request failed');
+      throw Exception(e.response?.data?['message']?.toString() ?? 'Couldn\'t send reset code. Please try again.');
     }
   }
 
@@ -96,7 +96,7 @@ class AuthRepository {
       });
       return response.data['token'] as String;
     } on DioException catch (e) {
-      throw Exception(e.response?.data?['error']?.toString() ?? 'Reset failed');
+      throw Exception(e.response?.data?['message']?.toString() ?? 'Password reset failed. Please try again.');
     }
   }
 }

@@ -13,7 +13,12 @@ const transporter = nodemailer.createTransport({
     },
 });
 
-const FROM_ADDRESS = process.env.SMTP_FROM || "noreply@kekeride.ng";
+// Gmail SMTP requires the FROM to be the authenticated account address.
+// If a custom SMTP_FROM is set but we're using Gmail, use SMTP_USER instead.
+const isGmail = (process.env.SMTP_HOST || '').includes('gmail.com');
+const FROM_ADDRESS = isGmail
+    ? (process.env.SMTP_USER || "noreply@kekeride.ng")
+    : (process.env.SMTP_FROM || process.env.SMTP_USER || "noreply@kekeride.ng");
 
 export class EmailService {
     static async sendVerificationOtp(email: string, otp: string): Promise<void> {

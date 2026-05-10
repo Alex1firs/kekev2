@@ -74,7 +74,11 @@ async function handleSignup(req: Request, res: Response, role: UserRole) {
 
         const otp = generateOtp();
         await storeOtp(`email_verify:${normalizedEmail}`, otp);
-        await EmailService.sendVerificationOtp(normalizedEmail, otp);
+        try {
+            await EmailService.sendVerificationOtp(normalizedEmail, otp);
+        } catch (emailErr: any) {
+            console.error('[AUTH] Email send failed (account still created):', emailErr?.message);
+        }
 
         const response: any = { message: "Account created. Check your email for a verification code." };
         if (process.env.NODE_ENV !== 'production') {
@@ -154,7 +158,7 @@ router.get("/me", authMiddleware, async (req: AuthRequest, res: Response) => {
 });
 
 // --- Email Verification ---
-router.post("/email-verification/request", async (req: Request, res: Response) => {
+async function handleEmailVerificationRequest(req: Request, res: Response) {
     try {
         const { email } = req.body ?? {};
         if (!email) return res.status(400).json(errBody(ErrorCode.MISSING_FIELDS, "Email is required."));
@@ -162,12 +166,10 @@ router.post("/email-verification/request", async (req: Request, res: Response) =
         const normalizedEmail = AuthService.normalizeEmail(email);
         const user = await AppDataSource.getRepository(User).findOneBy({ email: normalizedEmail });
 
-        // Don't leak whether the email exists
         if (!user || user.emailVerified) {
             return res.json({ message: "If that address is registered and unverified, a code has been sent." });
         }
 
-        // Resend cooldown: 60 seconds
         const cooldownKey = `email_verify_cooldown:${normalizedEmail}`;
         const onCooldown = await redis.get(cooldownKey);
         if (onCooldown) {
@@ -177,20 +179,22 @@ router.post("/email-verification/request", async (req: Request, res: Response) =
         const otp = generateOtp();
         await storeOtp(`email_verify:${normalizedEmail}`, otp);
         await redis.set(cooldownKey, '1', 'EX', 60);
-        await EmailService.sendVerificationOtp(normalizedEmail, otp);
+        try {
+            await EmailService.sendVerificationOtp(normalizedEmail, otp);
+        } catch (emailErr: any) {
+            console.error('[AUTH] Email send failed on resend:', emailErr?.message);
+        }
 
         const response: any = { message: "Verification code sent." };
-        if (process.env.NODE_ENV !== 'production') {
-            response.otp = otp;
-        }
+        if (process.env.NODE_ENV !== 'production') response.otp = otp;
         return res.json(response);
     } catch (err: any) {
         console.error('[AUTH] Email verification request error:', err?.message);
         return res.status(500).json(errBody(ErrorCode.INTERNAL_ERROR, "We couldn't send the verification code right now. Please try again."));
     }
-});
+}
 
-router.post("/email-verification/confirm", async (req: Request, res: Response) => {
+async function handleEmailVerificationConfirm(req: Request, res: Response) {
     try {
         const { email, otp } = req.body ?? {};
         if (!email || !otp) return res.status(400).json(errBody(ErrorCode.MISSING_FIELDS, "Email and verification code are required."));
@@ -226,10 +230,10 @@ router.post("/email-verification/confirm", async (req: Request, res: Response) =
         console.error('[AUTH] Email verification confirm error:', err?.message);
         return res.status(500).json(errBody(ErrorCode.INTERNAL_ERROR, "Something went wrong. Please try again."));
     }
-});
+}
 
 // --- Password Reset ---
-router.post("/reset-password/request", async (req: Request, res: Response) => {
+async function handlePasswordResetRequest(req: Request, res: Response) {
     try {
         const { email } = req.body ?? {};
         if (!email) return res.status(400).json(errBody(ErrorCode.MISSING_FIELDS, "Email is required."));
@@ -250,20 +254,22 @@ router.post("/reset-password/request", async (req: Request, res: Response) => {
         const otp = generateOtp();
         await storeOtp(`pwd_reset:${normalizedEmail}`, otp);
         await redis.set(cooldownKey, '1', 'EX', 60);
-        await EmailService.sendPasswordResetOtp(normalizedEmail, otp);
+        try {
+            await EmailService.sendPasswordResetOtp(normalizedEmail, otp);
+        } catch (emailErr: any) {
+            console.error('[AUTH] Password reset email failed:', emailErr?.message);
+        }
 
         const response: any = { message: "Reset code sent. Valid for 10 minutes." };
-        if (process.env.NODE_ENV !== 'production') {
-            response.otp = otp;
-        }
+        if (process.env.NODE_ENV !== 'production') response.otp = otp;
         return res.json(response);
     } catch (err: any) {
         console.error('[AUTH] Password reset request error:', err?.message);
         return res.status(500).json(errBody(ErrorCode.INTERNAL_ERROR, "We couldn't send the reset code right now. Please try again."));
     }
-});
+}
 
-router.post("/reset-password/confirm", async (req: Request, res: Response) => {
+async function handlePasswordResetConfirm(req: Request, res: Response) {
     try {
         const { email, otp, newPassword } = req.body ?? {};
         if (!email || !otp || !newPassword) {
@@ -303,7 +309,12 @@ router.post("/reset-password/confirm", async (req: Request, res: Response) => {
         console.error('[AUTH] Password reset confirm error:', err?.message);
         return res.status(500).json(errBody(ErrorCode.INTERNAL_ERROR, "Something went wrong. Please try again."));
     }
-});
+}
+
+router.post("/email-verification/request", handleEmailVerificationRequest);
+router.post("/email-verification/confirm", handleEmailVerificationConfirm);
+router.post("/reset-password/request", handlePasswordResetRequest);
+router.post("/reset-password/confirm", handlePasswordResetConfirm);
 
 export default router;
 
@@ -311,3 +322,7 @@ export default router;
 export const driverAuthRouter = Router();
 driverAuthRouter.post("/signup", (req, res) => handleSignup(req, res, UserRole.DRIVER));
 driverAuthRouter.post("/login", handleLogin);
+driverAuthRouter.post("/email-verification/request", handleEmailVerificationRequest);
+driverAuthRouter.post("/email-verification/confirm", handleEmailVerificationConfirm);
+driverAuthRouter.post("/reset-password/request", handlePasswordResetRequest);
+driverAuthRouter.post("/reset-password/confirm", handlePasswordResetConfirm);

@@ -138,11 +138,11 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
   void _submit() {
     FocusScope.of(context).unfocus();
     ref.read(authControllerProvider.notifier).signup(
-      firstName: _firstNameCtrl.text.trim(),
-      lastName: _lastNameCtrl.text.trim(),
-      email: _emailCtrl.text.trim().toLowerCase(),
-      phone: _phoneCtrl.text.trim(),
-      password: _passwordCtrl.text,
+      _emailCtrl.text.trim().toLowerCase(),
+      _passwordCtrl.text,
+      _firstNameCtrl.text.trim(),
+      _lastNameCtrl.text.trim(),
+      _phoneCtrl.text.trim(),
     );
   }
 

@@ -6,6 +6,7 @@ import '../application/auth_controller.dart';
 import '../domain/auth_state.dart';
 import '../../../core/theme/app_theme.dart';
 import 'verify_email_screen.dart';
+import 'auth_widgets.dart';
 
 class SignupScreen extends ConsumerStatefulWidget {
   const SignupScreen({super.key});
@@ -15,71 +16,133 @@ class SignupScreen extends ConsumerStatefulWidget {
 }
 
 class _SignupScreenState extends ConsumerState<SignupScreen> {
-  final _formKey = GlobalKey<FormState>();
-  final _firstNameController = TextEditingController();
-  final _lastNameController = TextEditingController();
-  final _emailController = TextEditingController();
-  final _phoneController = TextEditingController();
-  final _passwordController = TextEditingController();
-  final _confirmPasswordController = TextEditingController();
+  final _pageController = PageController();
+  int _step = 0;
+
+  final _firstNameCtrl = TextEditingController();
+  final _lastNameCtrl = TextEditingController();
+  final _emailCtrl = TextEditingController();
+  final _phoneCtrl = TextEditingController();
+  final _passwordCtrl = TextEditingController();
+  final _confirmCtrl = TextEditingController();
+
+  final _firstNameFocus = FocusNode();
+  final _lastNameFocus = FocusNode();
+  final _emailFocus = FocusNode();
+  final _phoneFocus = FocusNode();
+  final _passwordFocus = FocusNode();
+  final _confirmFocus = FocusNode();
+
   bool _obscurePassword = true;
   bool _obscureConfirm = true;
 
+  final List<String?> _errors = List.filled(6, null);
+
+  static const _totalSteps = 6;
+
+  static const _questions = [
+    'Hi there! \nWhat\'s your\nfirst name?',
+    'Nice to meet\nyou! And your\nlast name?',
+    'What\'s your\nemail address?',
+    'Your Nigerian\nphone number?',
+    'Create a\nstrong password.',
+    'Confirm your\npassword.',
+  ];
+
+  List<FocusNode> get _focusNodes => [
+    _firstNameFocus, _lastNameFocus, _emailFocus,
+    _phoneFocus, _passwordFocus, _confirmFocus,
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _firstNameFocus.requestFocus());
+  }
+
   @override
   void dispose() {
-    _firstNameController.dispose();
-    _lastNameController.dispose();
-    _emailController.dispose();
-    _phoneController.dispose();
-    _passwordController.dispose();
-    _confirmPasswordController.dispose();
+    _pageController.dispose();
+    for (final c in [_firstNameCtrl, _lastNameCtrl, _emailCtrl, _phoneCtrl, _passwordCtrl, _confirmCtrl]) {
+      c.dispose();
+    }
+    for (final f in _focusNodes) f.dispose();
     super.dispose();
   }
 
-  String? _validateName(String? v, String label) {
-    if (v == null || v.trim().isEmpty) return '$label is required';
-    if (v.trim().length < 2) return '$label must be at least 2 characters';
-    return null;
-  }
-
-  String? _validateEmail(String? v) {
-    if (v == null || v.trim().isEmpty) return 'Email is required';
-    if (!RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(v.trim())) {
-      return 'Enter a valid email address';
+  bool _validateStep() {
+    String? err;
+    switch (_step) {
+      case 0:
+        final v = _firstNameCtrl.text.trim();
+        if (v.isEmpty) err = 'First name is required';
+        else if (v.length < 2) err = 'At least 2 characters';
+      case 1:
+        final v = _lastNameCtrl.text.trim();
+        if (v.isEmpty) err = 'Last name is required';
+        else if (v.length < 2) err = 'At least 2 characters';
+      case 2:
+        final v = _emailCtrl.text.trim();
+        if (v.isEmpty) err = 'Email is required';
+        else if (!RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(v)) err = 'Enter a valid email';
+      case 3:
+        final v = _phoneCtrl.text.trim().replaceAll(RegExp(r'[\s\-()]'), '');
+        if (v.isEmpty) err = 'Phone number is required';
+        else if (!RegExp(r'^(\+?234|0)[789]\d{9}$').hasMatch(v)) err = 'Enter a valid Nigerian number';
+      case 4:
+        final v = _passwordCtrl.text;
+        if (v.isEmpty) err = 'Password is required';
+        else if (v.length < 8) err = 'At least 8 characters';
+      case 5:
+        final v = _confirmCtrl.text;
+        if (v.isEmpty) err = 'Please confirm your password';
+        else if (v != _passwordCtrl.text) err = 'Passwords do not match';
     }
-    return null;
+    setState(() => _errors[_step] = err);
+    return err == null;
   }
 
-  String? _validatePhone(String? v) {
-    if (v == null || v.trim().isEmpty) return 'Phone number is required';
-    final c = v.trim().replaceAll(RegExp(r'[\s\-()]'), '');
-    if (!RegExp(r'^(\+?234|0)[789]\d{9}$').hasMatch(c)) {
-      return 'Enter a valid Nigerian phone number (e.g. 08012345678)';
+  void _next() {
+    if (!_validateStep()) return;
+    if (_step < _totalSteps - 1) {
+      final nextStep = _step + 1;
+      setState(() => _step = nextStep);
+      _pageController.nextPage(
+        duration: const Duration(milliseconds: 420),
+        curve: Curves.easeInOutCubic,
+      );
+      Future.delayed(const Duration(milliseconds: 450), () {
+        if (mounted) _focusNodes[nextStep].requestFocus();
+      });
+    } else {
+      _submit();
     }
-    return null;
   }
 
-  String? _validatePassword(String? v) {
-    if (v == null || v.isEmpty) return 'Password is required';
-    if (v.length < 8) return 'Password must be at least 8 characters';
-    return null;
-  }
-
-  String? _validateConfirmPassword(String? v) {
-    if (v == null || v.isEmpty) return 'Please confirm your password';
-    if (v != _passwordController.text) return 'Passwords do not match';
-    return null;
+  void _back() {
+    if (_step > 0) {
+      final prevStep = _step - 1;
+      setState(() => _step = prevStep);
+      _pageController.previousPage(
+        duration: const Duration(milliseconds: 420),
+        curve: Curves.easeInOutCubic,
+      );
+      Future.delayed(const Duration(milliseconds: 450), () {
+        if (mounted) _focusNodes[prevStep].requestFocus();
+      });
+    } else {
+      Navigator.of(context).pop();
+    }
   }
 
   void _submit() {
-    if (!_formKey.currentState!.validate()) return;
     FocusScope.of(context).unfocus();
     ref.read(authControllerProvider.notifier).signup(
-      _emailController.text.trim().toLowerCase(),
-      _passwordController.text,
-      _firstNameController.text.trim(),
-      _lastNameController.text.trim(),
-      _phoneController.text.trim(),
+      firstName: _firstNameCtrl.text.trim(),
+      lastName: _lastNameCtrl.text.trim(),
+      email: _emailCtrl.text.trim().toLowerCase(),
+      phone: _phoneCtrl.text.trim(),
+      password: _passwordCtrl.text,
     );
   }
 
@@ -91,247 +154,176 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
 
     ref.listen(authControllerProvider, (_, next) {
       if (next.status == AuthStatus.needsEmailVerification && next.pendingEmail != null) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (_) => VerifyEmailScreen(
-              email: next.pendingEmail!,
-              devOtp: next.devOtp,
-            ),
-          ),
-        );
+        Navigator.pushReplacement(context, MaterialPageRoute(
+          builder: (_) => VerifyEmailScreen(email: next.pendingEmail!, devOtp: next.devOtp),
+        ));
       }
     });
 
     return Scaffold(
-      backgroundColor: AppColors.white,
+      backgroundColor: AppColors.charcoal,
       body: SafeArea(
-        child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Container(
-                color: AppColors.charcoal,
-                padding: const EdgeInsets.fromLTRB(28, 40, 28, 32),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    GestureDetector(
-                      onTap: () => context.pop(),
-                      child: const Icon(Icons.arrow_back, color: AppColors.white),
+        child: Column(
+          children: [
+            AuthTopBar(step: _step, totalSteps: _totalSteps, onBack: _back),
+            Expanded(
+              child: PageView(
+                controller: _pageController,
+                physics: const NeverScrollableScrollPhysics(),
+                children: [
+                  AuthStepPage(
+                    question: _questions[0],
+                    child: _buildTextField(
+                      ctrl: _firstNameCtrl, focus: _firstNameFocus,
+                      hint: 'e.g. Chidi', error: _errors[0],
+                      capitalization: TextCapitalization.words,
                     ),
-                    const SizedBox(height: 20),
-                    Text('Create Account',
-                        style: GoogleFonts.plusJakartaSans(
-                            fontSize: 28,
-                            fontWeight: FontWeight.w800,
-                            color: AppColors.white,
-                            height: 1.2)),
-                    const SizedBox(height: 6),
-                    Text('Join Keke and ride smarter',
-                        style: GoogleFonts.plusJakartaSans(
-                            fontSize: 14, color: AppColors.midGray)),
-                  ],
-                ),
+                  ),
+                  AuthStepPage(
+                    question: _questions[1],
+                    child: _buildTextField(
+                      ctrl: _lastNameCtrl, focus: _lastNameFocus,
+                      hint: 'e.g. Okafor', error: _errors[1],
+                      capitalization: TextCapitalization.words,
+                    ),
+                  ),
+                  AuthStepPage(
+                    question: _questions[2],
+                    child: _buildTextField(
+                      ctrl: _emailCtrl, focus: _emailFocus,
+                      hint: 'you@example.com', error: _errors[2],
+                      keyboardType: TextInputType.emailAddress,
+                    ),
+                  ),
+                  AuthStepPage(
+                    question: _questions[3],
+                    child: _buildTextField(
+                      ctrl: _phoneCtrl, focus: _phoneFocus,
+                      hint: '08012345678', error: _errors[3],
+                      keyboardType: TextInputType.phone,
+                    ),
+                  ),
+                  AuthStepPage(
+                    question: _questions[4],
+                    child: _buildTextField(
+                      ctrl: _passwordCtrl, focus: _passwordFocus,
+                      hint: '••••••••', error: _errors[4],
+                      obscure: _obscurePassword,
+                      suffix: IconButton(
+                        icon: Icon(
+                          _obscurePassword ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+                          color: AppColors.midGray,
+                        ),
+                        onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+                      ),
+                    ),
+                  ),
+                  AuthStepPage(
+                    question: _questions[5],
+                    child: _buildTextField(
+                      ctrl: _confirmCtrl, focus: _confirmFocus,
+                      hint: '••••••••', error: _errors[5],
+                      obscure: _obscureConfirm,
+                      suffix: IconButton(
+                        icon: Icon(
+                          _obscureConfirm ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+                          color: AppColors.midGray,
+                        ),
+                        onPressed: () => setState(() => _obscureConfirm = !_obscureConfirm),
+                      ),
+                    ),
+                  ),
+                ],
               ),
+            ),
+            if (authState.status == AuthStatus.error && authState.errorMessage != null)
               Padding(
-                padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
-                child: Form(
-                  key: _formKey,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 6),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: AppColors.error.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: AppColors.error.withOpacity(0.3)),
+                  ),
+                  child: Row(
                     children: [
-                      if (authState.status == AuthStatus.error) ...[
-                        _ErrorBanner(
-                            message: authState.errorMessage ?? 'Signup failed'),
-                        const SizedBox(height: 20),
-                      ],
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                _FieldLabel(text: 'First Name'),
-                                const SizedBox(height: 6),
-                                TextFormField(
-                                  controller: _firstNameController,
-                                  decoration:
-                                      const InputDecoration(hintText: 'e.g. Emeka'),
-                                  enabled: !isBusy,
-                                  textCapitalization: TextCapitalization.words,
-                                  validator: (v) => _validateName(v, 'First name'),
-                                  textInputAction: TextInputAction.next,
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                _FieldLabel(text: 'Last Name'),
-                                const SizedBox(height: 6),
-                                TextFormField(
-                                  controller: _lastNameController,
-                                  decoration:
-                                      const InputDecoration(hintText: 'e.g. Okonkwo'),
-                                  enabled: !isBusy,
-                                  textCapitalization: TextCapitalization.words,
-                                  validator: (v) => _validateName(v, 'Last name'),
-                                  textInputAction: TextInputAction.next,
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 20),
-                      _FieldLabel(text: 'Email Address'),
-                      const SizedBox(height: 6),
-                      TextFormField(
-                        controller: _emailController,
-                        decoration: const InputDecoration(
-                          hintText: 'you@example.com',
-                          prefixIcon: Icon(Icons.email_outlined),
-                        ),
-                        keyboardType: TextInputType.emailAddress,
-                        autocorrect: false,
-                        enabled: !isBusy,
-                        validator: _validateEmail,
-                        textInputAction: TextInputAction.next,
-                      ),
-                      const SizedBox(height: 20),
-                      _FieldLabel(text: 'Phone Number'),
-                      const SizedBox(height: 6),
-                      TextFormField(
-                        controller: _phoneController,
-                        decoration: const InputDecoration(
-                          hintText: '08012345678',
-                          prefixIcon: Icon(Icons.phone_outlined),
-                        ),
-                        keyboardType: TextInputType.phone,
-                        enabled: !isBusy,
-                        validator: _validatePhone,
-                        textInputAction: TextInputAction.next,
-                      ),
-                      const SizedBox(height: 20),
-                      _FieldLabel(text: 'Password'),
-                      const SizedBox(height: 6),
-                      TextFormField(
-                        controller: _passwordController,
-                        decoration: InputDecoration(
-                          hintText: 'Min. 8 characters',
-                          prefixIcon: const Icon(Icons.lock_outline),
-                          suffixIcon: IconButton(
-                            icon: Icon(_obscurePassword
-                                ? Icons.visibility_off_outlined
-                                : Icons.visibility_outlined),
-                            onPressed: () =>
-                                setState(() => _obscurePassword = !_obscurePassword),
-                          ),
-                        ),
-                        obscureText: _obscurePassword,
-                        enabled: !isBusy,
-                        validator: _validatePassword,
-                        textInputAction: TextInputAction.next,
-                      ),
-                      const SizedBox(height: 20),
-                      _FieldLabel(text: 'Confirm Password'),
-                      const SizedBox(height: 6),
-                      TextFormField(
-                        controller: _confirmPasswordController,
-                        decoration: InputDecoration(
-                          hintText: 'Re-enter your password',
-                          prefixIcon: const Icon(Icons.lock_outline),
-                          suffixIcon: IconButton(
-                            icon: Icon(_obscureConfirm
-                                ? Icons.visibility_off_outlined
-                                : Icons.visibility_outlined),
-                            onPressed: () =>
-                                setState(() => _obscureConfirm = !_obscureConfirm),
-                          ),
-                        ),
-                        obscureText: _obscureConfirm,
-                        enabled: !isBusy,
-                        validator: _validateConfirmPassword,
-                        textInputAction: TextInputAction.done,
-                        onFieldSubmitted: (_) => _submit(),
-                      ),
-                      const SizedBox(height: 28),
-                      ElevatedButton(
-                        onPressed: isBusy ? null : _submit,
-                        child: isBusy
-                            ? const SizedBox(
-                                height: 20,
-                                width: 20,
-                                child: CircularProgressIndicator(
-                                    strokeWidth: 2.5,
-                                    color: AppColors.charcoal))
-                            : const Text('Create Account'),
-                      ),
-                      const SizedBox(height: 20),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text('Already have an account? ',
-                              style: AppTextStyles.bodySmall()),
-                          GestureDetector(
-                            onTap: isBusy ? null : () => context.pop(),
-                            child: Text('Sign in',
-                                style: AppTextStyles.bodySmall(
-                                    color: AppColors.primaryDark,
-                                    weight: FontWeight.w700)),
-                          ),
-                        ],
-                      ),
+                      const Icon(Icons.error_outline, color: AppColors.error, size: 16),
+                      const SizedBox(width: 8),
+                      Expanded(child: Text(authState.errorMessage!,
+                          style: AppTextStyles.bodySmall(color: AppColors.error))),
                     ],
                   ),
                 ),
               ),
-            ],
-          ),
+            AuthBottomBar(
+              label: _step == _totalSteps - 1 ? 'Create Account' : 'Continue',
+              isBusy: isBusy,
+              onTap: _next,
+              footerText: 'Already have an account?',
+              footerLinkText: 'Sign in',
+              onFooterTap: () => context.pop(),
+            ),
+          ],
         ),
       ),
     );
   }
-}
 
-class _FieldLabel extends StatelessWidget {
-  final String text;
-  const _FieldLabel({required this.text});
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(text,
-        style:
-            AppTextStyles.label(color: AppColors.darkGray, weight: FontWeight.w600));
-  }
-}
-
-class _ErrorBanner extends StatelessWidget {
-  final String message;
-  const _ErrorBanner({required this.message});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: AppColors.errorLight,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: AppColors.error.withOpacity(0.3)),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.error_outline, color: AppColors.error, size: 18),
-          const SizedBox(width: 10),
-          Expanded(
-              child: Text(message,
-                  style: AppTextStyles.bodySmall(color: AppColors.error))),
+  Widget _buildTextField({
+    required TextEditingController ctrl,
+    required FocusNode focus,
+    required String hint,
+    String? error,
+    TextInputType keyboardType = TextInputType.text,
+    TextCapitalization capitalization = TextCapitalization.none,
+    bool obscure = false,
+    Widget? suffix,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextField(
+          controller: ctrl,
+          focusNode: focus,
+          keyboardType: keyboardType,
+          textCapitalization: capitalization,
+          obscureText: obscure,
+          autocorrect: false,
+          textInputAction: TextInputAction.next,
+          style: GoogleFonts.plusJakartaSans(
+            fontSize: 22,
+            fontWeight: FontWeight.w600,
+            color: AppColors.white,
+          ),
+          onSubmitted: (_) => _next(),
+          decoration: InputDecoration(
+            hintText: hint,
+            hintStyle: GoogleFonts.plusJakartaSans(
+              fontSize: 22,
+              fontWeight: FontWeight.w600,
+              color: AppColors.white.withOpacity(0.18),
+            ),
+            suffixIcon: suffix,
+            enabledBorder: const UnderlineInputBorder(
+              borderSide: BorderSide(color: Color(0xFF3A3A5C), width: 1.5),
+            ),
+            focusedBorder: const UnderlineInputBorder(
+              borderSide: BorderSide(color: AppColors.primary, width: 2),
+            ),
+            errorBorder: const UnderlineInputBorder(
+              borderSide: BorderSide(color: AppColors.error, width: 1.5),
+            ),
+            focusedErrorBorder: const UnderlineInputBorder(
+              borderSide: BorderSide(color: AppColors.error, width: 2),
+            ),
+          ),
+        ),
+        if (error != null) ...[
+          const SizedBox(height: 6),
+          Text(error, style: AppTextStyles.bodySmall(color: AppColors.error)),
         ],
-      ),
+      ],
     );
   }
 }

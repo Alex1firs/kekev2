@@ -1,30 +1,16 @@
-import * as nodemailer from "nodemailer";
-import dotenv from "dotenv";
+import { Resend } from "resend";
 
-dotenv.config();
+const resend = process.env.RESEND_API_KEY
+    ? new Resend(process.env.RESEND_API_KEY)
+    : null;
 
-const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST || "smtp.gmail.com",
-    port: parseInt(process.env.SMTP_PORT || "587"),
-    secure: process.env.SMTP_SECURE === "true",
-    auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
-    },
-});
-
-// Gmail SMTP requires the FROM to be the authenticated account address.
-// If a custom SMTP_FROM is set but we're using Gmail, use SMTP_USER instead.
-const isGmail = (process.env.SMTP_HOST || '').includes('gmail.com');
-const FROM_ADDRESS = isGmail
-    ? (process.env.SMTP_USER || "noreply@kekeride.ng")
-    : (process.env.SMTP_FROM || process.env.SMTP_USER || "noreply@kekeride.ng");
+const FROM_ADDRESS = process.env.SMTP_FROM || "noreply@kekeride.ng";
 
 export class EmailService {
     static async sendVerificationOtp(email: string, otp: string): Promise<void> {
-        if (!process.env.SMTP_USER) return; // Skip in dev if SMTP not configured
-        await transporter.sendMail({
-            from: `"Keke Ride" <${FROM_ADDRESS}>`,
+        if (!resend) return;
+        await resend.emails.send({
+            from: `Keke Ride <${FROM_ADDRESS}>`,
             to: email,
             subject: "Verify your Keke account",
             text: `Your Keke verification code is: ${otp}\n\nThis code expires in 10 minutes.`,
@@ -43,9 +29,9 @@ export class EmailService {
     }
 
     static async sendPasswordResetOtp(email: string, otp: string): Promise<void> {
-        if (!process.env.SMTP_USER) return;
-        await transporter.sendMail({
-            from: `"Keke Ride" <${FROM_ADDRESS}>`,
+        if (!resend) return;
+        await resend.emails.send({
+            from: `Keke Ride <${FROM_ADDRESS}>`,
             to: email,
             subject: "Reset your Keke password",
             text: `Your Keke password reset code is: ${otp}\n\nThis code expires in 10 minutes.`,

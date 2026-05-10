@@ -41,6 +41,8 @@ services:
       RATE_LIMIT_WINDOW: 900000
       ADMIN_RATE_LIMIT_MAX: 100
       ONBOARDING_RATE_LIMIT_MAX: 5
+      RESEND_API_KEY: ${RESEND_API_KEY}
+      SMTP_FROM: ${SMTP_FROM}
     depends_on:
       postgres_shared:
         condition: service_healthy

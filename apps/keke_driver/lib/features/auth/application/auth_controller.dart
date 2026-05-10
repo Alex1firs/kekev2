@@ -66,9 +66,7 @@ class AuthController extends StateNotifier<AuthState> {
       final devOtp = result['otp'] as String?;
       state = AuthState.needsEmailVerification(email, devOtp: devOtp);
     } catch (e) {
-      state = AuthState.error(e.toString());
-      await Future.delayed(const Duration(milliseconds: 100));
-      state = AuthState.unauthenticated();
+      state = AuthState.error(e.toString().replaceFirst('Exception: ', ''));
     }
   }
 

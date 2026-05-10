@@ -44,7 +44,7 @@ class AuthRepository {
       if (e.response?.statusCode == 409) {
         throw Exception('Email address already registered');
       }
-      throw Exception(e.response?.data?['error']?.toString() ?? e.message ?? 'Signup failed');
+      throw Exception(e.response?.data?['message']?.toString() ?? 'Signup failed');
     }
   }
 

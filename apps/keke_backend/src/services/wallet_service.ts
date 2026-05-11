@@ -122,9 +122,12 @@ export class WalletService {
             }
             if (amount <= 0) throw new Error('Amount must be positive');
 
+            const pendingBefore = Number(wallet.driverPendingBalance);
             wallet.driverAvailableBalance = available - amount;
+            wallet.driverPendingBalance   = pendingBefore + amount;
             await manager.save(wallet);
 
+            // Debit available
             await manager.save(manager.create(LedgerEntry, {
                 walletId: driverId,
                 balanceType: BalanceType.DRIVER_AVAILABLE,
@@ -132,6 +135,17 @@ export class WalletService {
                 amount: -amount,
                 balanceBefore: available,
                 balanceAfter: wallet.driverAvailableBalance,
+                metadata: { source: 'payout_request', bankCode, accountNumber },
+            }));
+
+            // Credit pending (held until admin confirms transfer)
+            await manager.save(manager.create(LedgerEntry, {
+                walletId: driverId,
+                balanceType: BalanceType.DRIVER_PENDING,
+                transactionType: TransactionType.PAYOUT,
+                amount,
+                balanceBefore: pendingBefore,
+                balanceAfter: wallet.driverPendingBalance,
                 metadata: { source: 'payout_request', bankCode, accountNumber },
             }));
 

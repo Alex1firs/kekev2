@@ -2,7 +2,7 @@ import { AppDataSource } from "../config/data_source";
 import { DriverProfile, DriverStatus } from "../models/DriverProfile";
 import { Ride, RideStatus } from "../models/Ride";
 import { Wallet } from "../models/Wallet";
-import { LedgerEntry, BalanceType } from "../models/LedgerEntry";
+import { LedgerEntry, BalanceType, TransactionType } from "../models/LedgerEntry";
 import { PayoutRecord, PayoutStatus } from "../models/PayoutRecord";
 import { AuditLog } from "../models/AuditLog";
 import { redis } from "../config/redis";
@@ -206,31 +206,82 @@ export class AdminService {
      * Update payout status (admin action: processing / success / failed)
      */
     static async updatePayoutStatus(payoutId: string, status: PayoutStatus, adminId: string): Promise<PayoutRecord> {
-        const repo = AppDataSource.getRepository(PayoutRecord);
-        const payout = await repo.findOne({ where: { id: payoutId } });
-        if (!payout) throw new Error('Payout record not found');
+        return await AppDataSource.transaction(async (manager) => {
+            const payout = await manager.findOne(PayoutRecord, { where: { id: payoutId } });
+            if (!payout) throw new Error('Payout record not found');
 
-        const allowedTransitions: Record<string, PayoutStatus[]> = {
-            [PayoutStatus.PENDING]:    [PayoutStatus.PROCESSING, PayoutStatus.FAILED],
-            [PayoutStatus.PROCESSING]: [PayoutStatus.SUCCESS, PayoutStatus.FAILED],
-        };
-        if (!allowedTransitions[payout.status]?.includes(status)) {
-            throw new Error(`Cannot transition payout from ${payout.status} to ${status}`);
-        }
+            const allowedTransitions: Record<string, PayoutStatus[]> = {
+                [PayoutStatus.PENDING]:    [PayoutStatus.PROCESSING, PayoutStatus.FAILED],
+                [PayoutStatus.PROCESSING]: [PayoutStatus.SUCCESS, PayoutStatus.FAILED],
+            };
+            if (!allowedTransitions[payout.status]?.includes(status)) {
+                throw new Error(`Cannot transition payout from ${payout.status} to ${status}`);
+            }
 
-        payout.status = status;
-        await repo.save(payout);
+            payout.status = status;
+            await manager.save(payout);
 
-        await AppDataSource.getRepository(AuditLog).save(
-            AppDataSource.getRepository(AuditLog).create({
+            // Settle the pending balance on terminal transitions
+            if (status === PayoutStatus.SUCCESS || status === PayoutStatus.FAILED) {
+                const wallet = await manager.findOne(Wallet, {
+                    where: { userId: payout.driverId },
+                    lock: { mode: 'pessimistic_write' },
+                });
+                if (wallet) {
+                    const amount = Number(payout.amount);
+                    const pendingBefore = Number(wallet.driverPendingBalance);
+                    const deducted = Math.min(pendingBefore, amount);
+
+                    if (status === PayoutStatus.SUCCESS) {
+                        // Money sent — clear pending
+                        wallet.driverPendingBalance = pendingBefore - deducted;
+                        await manager.save(wallet);
+                        await manager.save(manager.create(LedgerEntry, {
+                            walletId: payout.driverId,
+                            balanceType: BalanceType.DRIVER_PENDING,
+                            transactionType: TransactionType.PAYOUT,
+                            amount: -deducted,
+                            balanceBefore: pendingBefore,
+                            balanceAfter: wallet.driverPendingBalance,
+                            metadata: { source: 'payout_success', payoutId },
+                        }));
+                    } else {
+                        // Transfer failed — refund pending back to available
+                        const availBefore = Number(wallet.driverAvailableBalance);
+                        wallet.driverPendingBalance   = pendingBefore - deducted;
+                        wallet.driverAvailableBalance = availBefore + deducted;
+                        await manager.save(wallet);
+                        await manager.save(manager.create(LedgerEntry, {
+                            walletId: payout.driverId,
+                            balanceType: BalanceType.DRIVER_PENDING,
+                            transactionType: TransactionType.PAYOUT,
+                            amount: -deducted,
+                            balanceBefore: pendingBefore,
+                            balanceAfter: wallet.driverPendingBalance,
+                            metadata: { source: 'payout_failed', payoutId },
+                        }));
+                        await manager.save(manager.create(LedgerEntry, {
+                            walletId: payout.driverId,
+                            balanceType: BalanceType.DRIVER_AVAILABLE,
+                            transactionType: TransactionType.PAYOUT,
+                            amount: deducted,
+                            balanceBefore: availBefore,
+                            balanceAfter: wallet.driverAvailableBalance,
+                            metadata: { source: 'payout_refund', payoutId },
+                        }));
+                    }
+                }
+            }
+
+            await manager.save(manager.create(AuditLog, {
                 adminId,
                 action: `PAYOUT_${status.toUpperCase()}`,
                 entityType: 'PAYOUT',
                 entityId: payoutId,
                 details: { amount: payout.amount, driverId: payout.driverId, status },
-            })
-        );
+            }));
 
-        return payout;
+            return payout;
+        });
     }
 }

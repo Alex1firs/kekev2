@@ -12,7 +12,9 @@ class SocketService {
   final _controller = StreamController<Map<String, dynamic>>.broadcast();
   Stream<Map<String, dynamic>> get events => _controller.stream;
 
-  SocketService(this._role, this._userId) {
+  final String _token;
+
+  SocketService(this._role, this._userId, this._token) {
     _initSocket();
   }
 
@@ -32,6 +34,7 @@ class SocketService {
       .setTransports(['websocket'])
       .enableAutoConnect()
       .setReconnectionDelay(5000)
+      .setAuth({'token': _token})
       .build());
 
     _socket!.onConnect((_) {

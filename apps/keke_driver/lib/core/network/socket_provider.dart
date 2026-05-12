@@ -22,7 +22,7 @@ final socketServiceProvider = Provider<SocketService?>((ref) {
   
   if (userId == null) return null;
   
-  final service = SocketService('driver', userId);
+  final service = SocketService('driver', userId, authState.token!);
   ref.onDispose(() => service.dispose());
   return service;
 });

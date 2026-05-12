@@ -17,7 +17,7 @@ final socketServiceProvider = Provider<SocketService?>((ref) {
   
   if (userId == null) return null;
   
-  final service = SocketService('passenger', userId);
+  final service = SocketService('passenger', userId, authState.token!);
   ref.onDispose(() => service.dispose());
   return service;
 });

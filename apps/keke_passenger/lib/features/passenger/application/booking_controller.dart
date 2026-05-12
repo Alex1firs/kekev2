@@ -320,7 +320,11 @@ class BookingController extends StateNotifier<BookingState> {
   }
 
   void requestRide() {
-    if (_socketService == null || state.pickupLocation == null || state.destinationLocation == null) return;
+    if (_socketService == null) {
+      state = state.copyWith(errorMessage: 'Not connected to server — please restart the app and try again.');
+      return;
+    }
+    if (state.pickupLocation == null || state.destinationLocation == null) return;
     if (!_socketService!.isConnected) {
       state = state.copyWith(errorMessage: 'No connection — please check your internet and try again.');
       return;

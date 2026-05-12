@@ -266,6 +266,25 @@ class BookingSheet extends ConsumerWidget {
         ),
         const SizedBox(height: 16),
 
+        if (state.errorMessage != null) ...[
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: AppColors.errorLight,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: AppColors.error.withOpacity(0.3)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.info_outline, color: AppColors.error, size: 16),
+                const SizedBox(width: 8),
+                Expanded(child: Text(state.errorMessage!, style: AppTextStyles.bodySmall(color: AppColors.error))),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+        ],
+
         ElevatedButton(
           onPressed: () => ref.read(bookingControllerProvider.notifier).requestRide(),
           child: const Text('Request Keke'),

@@ -3,7 +3,7 @@ import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 import { DispatchService } from '../services/dispatch_service';
 import { NotificationService } from '../services/notification_service';
-import { UserRole } from '../models/User';
+import { User, UserRole } from '../models/User';
 import { AppDataSource } from '../config/data_source';
 import { Ride } from '../models/Ride';
 import { DriverProfile } from '../models/DriverProfile';
@@ -331,10 +331,13 @@ export class SocketHandler {
 
                     this.driverRideMap.set(data.driverId, data.rideId);
 
+                    const driverUser = await AppDataSource.getRepository(User).findOne({ where: { id: data.driverId } });
+
                     const driverDetails = {
                         name: `${profile.firstName} ${profile.lastName}`,
-                        vehiclePlate: profile.vehiclePlate,
-                        vehicleModel: profile.vehicleModel,
+                        plate: profile.vehiclePlate,
+                        model: profile.vehicleModel,
+                        phone: driverUser?.phone ?? null,
                     };
 
                     this.broadcastToRide(data.rideId, 'ride:assigned', { driverId: data.driverId, driverDetails });

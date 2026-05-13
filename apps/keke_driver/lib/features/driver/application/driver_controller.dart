@@ -91,6 +91,8 @@ class DriverController extends StateNotifier<DriverState> {
           // Server-authoritative: DB transaction committed, ride is ours.
           // Moved here from acceptRequest() to prevent optimistic ghost state.
           if (state.activeRequest?.id.toString() == data['rideId']?.toString()) {
+            // Join the ride room so chat and broadcast events are received.
+            _socketService!.updateActiveRide(data['rideId']?.toString());
             state = state.copyWith(
               tripStep: TripStep.accepted,
               countdown: null,
@@ -161,18 +163,32 @@ class DriverController extends StateNotifier<DriverState> {
 
       double lat, lng;
       try {
-        final position = await Geolocator.getCurrentPosition();
+        final position = await Geolocator.getCurrentPosition(
+            timeLimit: const Duration(seconds: 5));
         lat = position.latitude;
         lng = position.longitude;
-      } catch (_) {
-        if (mounted) {
-          state = state.copyWith(errorMessage: 'Location unavailable — move to an open area.');
-          _scheduleErrorClear();
+      } catch (e) {
+        print('[HEARTBEAT] getCurrentPosition failed: $e. Trying last known...');
+        try {
+          final lastPos = await Geolocator.getLastKnownPosition();
+          if (lastPos != null) {
+            lat = lastPos.latitude;
+            lng = lastPos.longitude;
+          } else {
+            throw Exception('No last known position');
+          }
+        } catch (e2) {
+          print('[HEARTBEAT] Both location methods failed: $e2');
+          if (mounted) {
+            state = state.copyWith(errorMessage: 'Location unavailable — move to an open area.');
+            _scheduleErrorClear();
+          }
+          return;
         }
-        return;
       }
       if (!mounted) return;
 
+      print('[HEARTBEAT] Sending lat: $lat, lng: $lng');
       _socketService!.emit('driver:heartbeat', {
         'driverId': _userId,
         'lat': lat,
@@ -520,6 +536,7 @@ class DriverController extends StateNotifier<DriverState> {
   void _resetToAvailable() {
     print('[DRIVER_LIFECYCLE] Resetting to available state.');
     _countdownTimer?.cancel();
+    _socketService?.updateActiveRide(null);
     state = state.copyWith(
       operationStatus: OperationStatus.available,
       tripStep: TripStep.none,
@@ -618,6 +635,7 @@ class DriverController extends StateNotifier<DriverState> {
   }
 
   void finishAndGoAvailable() {
+    _socketService?.updateActiveRide(null);
     state = state.copyWith(
       tripStep: TripStep.none,
       operationStatus: OperationStatus.available,

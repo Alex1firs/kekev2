@@ -2,6 +2,7 @@ import { Router, Response } from "express";
 import { AppDataSource } from "../config/data_source";
 import { Ride } from "../models/Ride";
 import { DriverProfile } from "../models/DriverProfile";
+import { User } from "../models/User";
 import { LedgerEntry } from "../models/LedgerEntry";
 import { authMiddleware, AuthRequest } from "../middleware/auth_middleware";
 import { errBody, ErrorCode } from "../utils/errors";
@@ -24,14 +25,16 @@ router.get("/active/passenger", authMiddleware, async (req: AuthRequest, res: Re
 
         let driverDetails = null;
         if (ride.driverId) {
-            const driver = await AppDataSource.getRepository(DriverProfile).findOne({
-                where: { userId: ride.driverId }
-            });
+            const [driver, driverUser] = await Promise.all([
+                AppDataSource.getRepository(DriverProfile).findOne({ where: { userId: ride.driverId } }),
+                AppDataSource.getRepository(User).findOne({ where: { id: ride.driverId } }),
+            ]);
             if (driver) {
                 driverDetails = {
                     name: `${driver.firstName} ${driver.lastName}`,
                     plate: driver.vehiclePlate,
-                    model: driver.vehicleModel
+                    model: driver.vehicleModel,
+                    phone: driverUser?.phone ?? null,
                 };
             }
         }

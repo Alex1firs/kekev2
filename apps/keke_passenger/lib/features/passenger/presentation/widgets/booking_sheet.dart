@@ -441,10 +441,14 @@ class BookingSheet extends ConsumerWidget {
                     color: AppColors.success,
                     onTap: () async {
                       final phone = driver['phone']?.toString();
-                      if (phone != null && phone.isNotEmpty) {
-                        final uri = Uri(scheme: 'tel', path: phone);
-                        if (await canLaunchUrl(uri)) await launchUrl(uri);
+                      if (phone == null || phone.isEmpty) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text("Driver's phone number is unavailable")),
+                        );
+                        return;
                       }
+                      final uri = Uri(scheme: 'tel', path: phone);
+                      if (await canLaunchUrl(uri)) await launchUrl(uri);
                     },
                   ),
                 ],

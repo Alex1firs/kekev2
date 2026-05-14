@@ -17,6 +17,14 @@ class EarningsScreen extends ConsumerStatefulWidget {
 
 class _EarningsScreenState extends ConsumerState<EarningsScreen> {
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(driverFinanceControllerProvider.notifier).refresh();
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     final financeState = ref.watch(driverFinanceControllerProvider);
 

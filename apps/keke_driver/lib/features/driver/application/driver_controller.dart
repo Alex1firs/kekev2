@@ -34,9 +34,9 @@ class DriverController extends StateNotifier<DriverState> {
   StreamSubscription? _notificationSubscription;
   final NotificationService _notificationService;
   final SoundService _soundService;
-  VoidCallback? _onWalletRefreshNeeded;
+  void Function()? _onWalletRefreshNeeded;
 
-  void setWalletRefreshCallback(VoidCallback cb) => _onWalletRefreshNeeded = cb;
+  void setWalletRefreshCallback(void Function() cb) => _onWalletRefreshNeeded = cb;
 
   DriverController(SocketService? initialSocket, this._apiClient, this._notificationService, this._soundService, this._userId)
       : super(const DriverState(

@@ -174,8 +174,7 @@ class DriverController extends StateNotifier<DriverState> {
     if (state.operationStatus == OperationStatus.available && _socketService != null) {
       if (state.profile.status != DriverStatus.approved) return;
       if (!_socketService!.isConnected) {
-        print('[HEARTBEAT] Skipped — socket not connected');
-        return;
+        print('[HEARTBEAT] Socket not yet connected — will retry on next tick');
       }
 
       double lat, lng;

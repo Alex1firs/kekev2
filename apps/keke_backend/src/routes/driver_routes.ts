@@ -7,6 +7,7 @@ import { upload } from "../middleware/upload_middleware";
 import { driverOnboardingSchema } from "../services/validation_service";
 import { authMiddleware, AuthRequest } from "../middleware/auth_middleware";
 import { errBody, ErrorCode } from "../utils/errors";
+import { redis } from "../config/redis";
 import path from "path";
 import fs from "fs";
 import sharp from "sharp";
@@ -142,6 +143,20 @@ router.get("/status/:userId", authMiddleware, async (req: AuthRequest, res: Resp
     } catch (err: any) {
         console.error('[DRIVER] Status fetch error:', err?.message);
         res.status(500).json(errBody(ErrorCode.INTERNAL_ERROR, "We couldn't load your driver status right now. Please try again."));
+    }
+});
+
+// Diagnostic: lets the driver app verify heartbeats are reaching the backend.
+router.get("/availability/check", authMiddleware, async (req: AuthRequest, res: Response) => {
+    try {
+        const driverId = req.user!.userId;
+        const available = await redis.get(`driver:available:${driverId}`);
+        const ttl = available ? await redis.pttl(`driver:available:${driverId}`) : 0;
+        const geoPos = await redis.geopos('drivers:locations', driverId) as any[];
+        const location = geoPos?.[0] ? { lng: geoPos[0][0], lat: geoPos[0][1] } : null;
+        return res.json({ driverId, isAvailable: !!available, ttlMs: ttl, location });
+    } catch (err: any) {
+        return res.status(500).json({ error: err?.message });
     }
 });
 

@@ -3,8 +3,10 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:geolocator/geolocator.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/services/battery_optimization_service.dart';
+import '../../../../core/network/socket_provider.dart';
 import '../../auth/application/auth_controller.dart';
 import '../application/driver_controller.dart';
 import '../domain/driver_profile.dart';
@@ -26,7 +28,39 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
   // Called only when the driver flips the switch to online.
   // Goes online immediately (non-blocking), then checks battery optimization
   // so we never hold up the driver waiting for a permissions dialog.
-  void _handleGoOnline() {
+  void _handleGoOnline() async {
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
+        if (mounted) {
+           ScaffoldMessenger.of(context).showSnackBar(
+             const SnackBar(content: Text('Location permissions are required to go online.'), backgroundColor: AppColors.error)
+           );
+        }
+        return;
+      }
+    }
+    
+    if (permission == LocationPermission.deniedForever) {
+      if (mounted) {
+           ScaffoldMessenger.of(context).showSnackBar(
+             const SnackBar(content: Text('Location permissions are permanently denied. Please enable them in settings.'), backgroundColor: AppColors.error)
+           );
+      }
+      return;
+    }
+
+    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      if (mounted) {
+         ScaffoldMessenger.of(context).showSnackBar(
+           const SnackBar(content: Text('Location services are disabled. Please turn on GPS.'), backgroundColor: AppColors.error)
+         );
+      }
+      return;
+    }
+
     ref.read(driverControllerProvider.notifier).toggleOnline();
     if (Platform.isAndroid) _checkBatteryOptimization();
   }
@@ -180,10 +214,16 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
                           ),
                         ),
                         if (isOnline)
-                          Text(
-                            'Looking for rides...',
-                            style: AppTextStyles.caption(color: AppColors.lightGray),
-                          ),
+                          Builder(builder: (context) {
+                            final socketService = ref.watch(socketServiceProvider);
+                            final connected = socketService?.isConnected ?? false;
+                            return Text(
+                              connected ? 'Looking for rides...' : 'Connecting...',
+                              style: AppTextStyles.caption(
+                                color: connected ? AppColors.lightGray : AppColors.warning,
+                              ),
+                            );
+                          }),
                       ],
                     ),
                   ),

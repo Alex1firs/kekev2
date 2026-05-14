@@ -29,7 +29,9 @@ class SocketService {
     final serverUrl = EnvConfig.current.apiBaseUrl.replaceAll('/api/v1', ''); // Strip API path for socket root
     
     _socket = IO.io(serverUrl, IO.OptionBuilder()
-      .setTransports(['websocket'])
+      // Allow polling as fallback — on Android, raw WebSocket can fail
+      // silently; polling ensures the connection still works.
+      .setTransports(['websocket', 'polling'])
       .enableAutoConnect()
       .setReconnectionDelay(5000)
       .setAuth({'token': _token})
@@ -49,6 +51,11 @@ class SocketService {
       _controller.add({'event': 'socket:reconnected'});
     });
 
+    _socket!.onConnectError((err) {
+      print('Socket connect error: $err');
+      _controller.add({'event': 'socket:connect_error', 'message': err?.toString() ?? 'Connection failed'});
+    });
+
     _socket!.onDisconnect((_) => print('Socket disconnected'));
 
     // Broad listener for all dispatcher events
@@ -61,6 +68,8 @@ class SocketService {
       }
     });
   }
+
+  bool get isConnected => _socket?.connected ?? false;
 
   void emit(String event, dynamic data) {
     _socket?.emit(event, data);

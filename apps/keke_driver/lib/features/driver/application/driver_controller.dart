@@ -122,6 +122,13 @@ class DriverController extends StateNotifier<DriverState> {
             _sendHeartbeat();
           }
           break;
+        case 'socket:connect_error':
+          print('[SOCKET_ERROR] Connection failed: ${data['message']}');
+          if (mounted && state.operationStatus == OperationStatus.available) {
+            state = state.copyWith(errorMessage: 'Server connection lost — retrying…');
+            _scheduleErrorClear(seconds: 8);
+          }
+          break;
         case 'error:debt_blocked':
           print('[DEBT_BLOCK] Backend rejected cash ride acceptance — debt too high');
           state = state.copyWith(errorMessage: 'Cash ride unavailable — visit Finance to clear your debt.');
@@ -166,6 +173,10 @@ class DriverController extends StateNotifier<DriverState> {
     if (!mounted) return;
     if (state.operationStatus == OperationStatus.available && _socketService != null) {
       if (state.profile.status != DriverStatus.approved) return;
+      if (!_socketService!.isConnected) {
+        print('[HEARTBEAT] Skipped — socket not connected');
+        return;
+      }
 
       double lat, lng;
       try {

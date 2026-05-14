@@ -14,6 +14,7 @@ import '../../../core/network/socket_provider.dart';
 import '../../../core/network/api_client.dart';
 import '../../auth/application/auth_controller.dart';
 import '../../auth/domain/auth_state.dart';
+import 'driver_finance_controller.dart';
 import 'package:jwt_decoder/jwt_decoder.dart';
 import '../../../core/network/notification_service.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
@@ -33,6 +34,9 @@ class DriverController extends StateNotifier<DriverState> {
   StreamSubscription? _notificationSubscription;
   final NotificationService _notificationService;
   final SoundService _soundService;
+  VoidCallback? _onWalletRefreshNeeded;
+
+  void setWalletRefreshCallback(VoidCallback cb) => _onWalletRefreshNeeded = cb;
 
   DriverController(SocketService? initialSocket, this._apiClient, this._notificationService, this._soundService, this._userId)
       : super(const DriverState(
@@ -144,6 +148,7 @@ class DriverController extends StateNotifier<DriverState> {
           if (state.activeRequest?.id == data['rideId']) {
             _stopWatchdog();
             finishAndGoAvailable();
+            _onWalletRefreshNeeded?.call();
           }
           break;
         case 'chat:message':
@@ -777,6 +782,10 @@ final driverControllerProvider = StateNotifierProvider<DriverController, DriverS
   }
 
   final controller = DriverController(socketService, apiClient, notificationService, soundService, userId);
+
+  controller.setWalletRefreshCallback(
+    () => ref.read(driverFinanceControllerProvider.notifier).refresh(),
+  );
 
   // Listen for socket updates without re-creating the controller
   ref.listen(socketServiceProvider, (previous, next) {

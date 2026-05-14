@@ -13,9 +13,9 @@ export class DispatchService {
     // 1. Update GEO location
     pipeline.geoadd(this.DRIVER_GEO_KEY, lng, lat, driverId);
 
-    // 2. Set/Reset Availability Heartbeat (TTL 30s)
+    // 2. Set/Reset Availability Heartbeat (TTL 45s — allows 3 missed 12s heartbeats)
     const availabilityKey = `${this.DRIVER_AVAILABILITY_PREFIX}${driverId}`;
-    pipeline.set(availabilityKey, 'true', 'EX', 30);
+    pipeline.set(availabilityKey, 'true', 'EX', 45);
 
     await pipeline.exec();
   }

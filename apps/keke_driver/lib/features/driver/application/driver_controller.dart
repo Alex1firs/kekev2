@@ -115,6 +115,12 @@ class DriverController extends StateNotifier<DriverState> {
         case 'socket:reconnected':
           print('[DRIVER_SYNC] Socket reconnected. Triggering redundant healing...');
           syncStatus();
+          // Re-register presence in Redis immediately — the TTL may have
+          // expired while the socket was down, making the driver invisible
+          // to dispatch until the next scheduled heartbeat (up to 12s away).
+          if (state.operationStatus == OperationStatus.available) {
+            _sendHeartbeat();
+          }
           break;
         case 'error:debt_blocked':
           print('[DEBT_BLOCK] Backend rejected cash ride acceptance — debt too high');
@@ -163,8 +169,11 @@ class DriverController extends StateNotifier<DriverState> {
 
       double lat, lng;
       try {
+        // Use low accuracy first — it uses cell/WiFi and resolves in <1s on Android.
+        // This prevents GPS cold-start timeouts from silently dropping heartbeats.
         final position = await Geolocator.getCurrentPosition(
-            timeLimit: const Duration(seconds: 5));
+            desiredAccuracy: LocationAccuracy.low,
+            timeLimit: const Duration(seconds: 8));
         lat = position.latitude;
         lng = position.longitude;
       } catch (e) {

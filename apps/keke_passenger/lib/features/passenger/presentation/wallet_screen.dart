@@ -8,11 +8,24 @@ import '../../auth/application/auth_controller.dart';
 import '../domain/wallet_state.dart';
 import 'paystack_webview.dart';
 
-class WalletScreen extends ConsumerWidget {
+class WalletScreen extends ConsumerStatefulWidget {
   const WalletScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<WalletScreen> createState() => _WalletScreenState();
+}
+
+class _WalletScreenState extends ConsumerState<WalletScreen> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(walletControllerProvider.notifier).refresh();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final walletState = ref.watch(walletControllerProvider);
 
     ref.listen(walletControllerProvider.select((s) => s.errorMessage), (_, msg) {

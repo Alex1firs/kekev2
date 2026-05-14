@@ -35,8 +35,11 @@ export class WalletService {
         metadata: any = {}
     ): Promise<Wallet> {
         return await AppDataSource.transaction(async (manager) => {
-            const wallet = await manager.findOne(Wallet, { where: { userId }, lock: { mode: "pessimistic_write" } });
-            if (!wallet) throw new Error("Wallet not found");
+            let wallet = await manager.findOne(Wallet, { where: { userId }, lock: { mode: "pessimistic_write" } });
+            if (!wallet) {
+                wallet = manager.create(Wallet, { userId });
+                await manager.save(wallet);
+            }
 
             const field = BALANCE_FIELD[balanceType];
             if (!field) throw new Error(`Unknown balance type: ${balanceType}`);

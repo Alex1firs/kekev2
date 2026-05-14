@@ -4,6 +4,7 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../auth/application/auth_controller.dart';
 import '../application/booking_controller.dart';
+import '../application/wallet_controller.dart';
 import '../domain/booking_state.dart';
 import 'widgets/booking_sheet.dart';
 import 'wallet_screen.dart';
@@ -23,6 +24,12 @@ class _HomeMapScreenState extends ConsumerState<HomeMapScreen> {
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(bookingControllerProvider);
+
+    ref.listen(bookingControllerProvider.select((s) => s.step), (previous, next) {
+      if (next == BookingStep.completed) {
+        ref.read(walletControllerProvider.notifier).refresh();
+      }
+    });
 
     ref.listen(bookingControllerProvider, (previous, next) {
       if (next.step == BookingStep.previewEstimate && _mapController != null) {

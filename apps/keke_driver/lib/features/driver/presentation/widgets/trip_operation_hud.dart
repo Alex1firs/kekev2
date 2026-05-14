@@ -277,10 +277,14 @@ class TripOperationHUD extends ConsumerWidget {
             color: AppColors.success,
             onTap: () async {
               final phone = state.activeRequest?.passengerPhone;
-              if (phone != null && phone.isNotEmpty) {
-                final uri = Uri(scheme: 'tel', path: phone);
-                if (await canLaunchUrl(uri)) await launchUrl(uri);
+              if (phone == null || phone.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text("Passenger's phone number is unavailable")),
+                );
+                return;
               }
+              final uri = Uri(scheme: 'tel', path: phone);
+              if (await canLaunchUrl(uri)) await launchUrl(uri);
             },
           ),
         ],

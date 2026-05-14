@@ -510,9 +510,12 @@ export class SocketHandler {
 
             if (targetDrivers.length > 0) {
                 const notifiedSet = this.activeDispatches.get(rideId) || new Set();
+                // Fetch passenger phone once for this dispatch batch
+                const passengerUser = await AppDataSource.getRepository(User).findOne({ where: { id: payload.passengerId } });
+                const enrichedPayload = { ...payload, passengerPhone: passengerUser?.phone ?? null };
                 for (const driverId of targetDrivers) {
                     notifiedSet.add(driverId);
-                    this.io.to(`driver:${driverId}`).emit('ride:request', payload);
+                    this.io.to(`driver:${driverId}`).emit('ride:request', enrichedPayload);
                     NotificationService.sendToUser(driverId, UserRole.DRIVER, 'New Ride Request', 'You have a new request nearby!', {
                         type: 'NEW_REQUEST', rideId: payload.rideId, intent: 'booking',
                     });

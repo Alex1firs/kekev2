@@ -255,6 +255,7 @@ class DriverController extends StateNotifier<DriverState> {
         fare: fare,
         distance: 0,
         countdownSeconds: 30,
+        pickupCode: data['pickupCode']?.toString(),
       );
 
       state = state.copyWith(
@@ -330,6 +331,7 @@ class DriverController extends StateNotifier<DriverState> {
               ),
               fare: double.parse(rideData['fare'].toString()),
               distance: 0,
+              pickupCode: rideData['pickupCode']?.toString(),
             );
 
             state = state.copyWith(

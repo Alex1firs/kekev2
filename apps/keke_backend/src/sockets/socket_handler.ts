@@ -182,6 +182,9 @@ export class SocketHandler {
 
                 const { rideId, pickupLat, pickupLng, destinationLat, destinationLng, passengerId, fare, isCash, pickupAddress, destinationAddress } = request;
 
+                // 4-character alphanumeric pickup code for passenger/driver verification at boarding
+                const pickupCode = Math.random().toString(36).substring(2, 6).toUpperCase();
+
                 try {
                     const rideRepo = AppDataSource.getRepository(Ride);
                     const ride = rideRepo.create({
@@ -190,6 +193,7 @@ export class SocketHandler {
                         status: 'searching' as any,
                         pickupAddress, destinationAddress, pickupLat, pickupLng,
                         destinationLat, destinationLng,
+                        pickupCode,
                     });
                     await rideRepo.save(ride);
                 } catch (err) {
@@ -340,7 +344,11 @@ export class SocketHandler {
                         phone: driverUser?.phone ?? null,
                     };
 
-                    this.broadcastToRide(data.rideId, 'ride:assigned', { driverId: data.driverId, driverDetails });
+                    this.broadcastToRide(data.rideId, 'ride:assigned', {
+                        driverId: data.driverId,
+                        driverDetails,
+                        pickupCode: ride?.pickupCode ?? null,
+                    });
 
                     NotificationService.sendToUser(currentRide.passengerId || currentRide.passengerId, UserRole.PASSENGER, 'Driver Assigned!', 'A driver is on the way to you.', {
                         type: 'RIDE_ASSIGNED', rideId: data.rideId, intent: 'active',
@@ -512,7 +520,8 @@ export class SocketHandler {
                 const notifiedSet = this.activeDispatches.get(rideId) || new Set();
                 // Fetch passenger phone once for this dispatch batch
                 const passengerUser = await AppDataSource.getRepository(User).findOne({ where: { id: payload.passengerId } });
-                const enrichedPayload = { ...payload, passengerPhone: passengerUser?.phone ?? null };
+                const rideRecord = await AppDataSource.getRepository(Ride).findOne({ where: { rideId } });
+                const enrichedPayload = { ...payload, passengerPhone: passengerUser?.phone ?? null, pickupCode: rideRecord?.pickupCode ?? null };
                 for (const driverId of targetDrivers) {
                     notifiedSet.add(driverId);
                     this.io.to(`driver:${driverId}`).emit('ride:request', enrichedPayload);

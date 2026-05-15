@@ -1,3 +1,4 @@
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
@@ -20,6 +21,69 @@ class HomeMapScreen extends ConsumerStatefulWidget {
 
 class _HomeMapScreenState extends ConsumerState<HomeMapScreen> {
   GoogleMapController? _mapController;
+  BitmapDescriptor? _kekeMarkerIcon;
+  bool _hasFitToDriver = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadKekeMarker();
+  }
+
+  Future<void> _loadKekeMarker() async {
+    const double size = 56;
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+
+    // Drop shadow
+    canvas.drawCircle(
+      const Offset(size / 2 + 1, size / 2 + 2),
+      size / 2 - 3,
+      Paint()
+        ..color = const Color(0x50000000)
+        ..maskFilter = const MaskFilter.blur(ui.BlurStyle.normal, 4),
+    );
+
+    // Amber fill
+    canvas.drawCircle(
+      const Offset(size / 2, size / 2),
+      size / 2 - 3,
+      Paint()..color = const Color(0xFFF59E0B),
+    );
+
+    // White border
+    canvas.drawCircle(
+      const Offset(size / 2, size / 2),
+      size / 2 - 3,
+      Paint()
+        ..color = Colors.white
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.5,
+    );
+
+    // White "K" for Keke
+    final tp = TextPainter(
+      text: const TextSpan(
+        text: 'K',
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: 26,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    tp.paint(canvas, Offset((size - tp.width) / 2, (size - tp.height) / 2));
+
+    final picture = recorder.endRecording();
+    final img = await picture.toImage(size.toInt(), size.toInt());
+    final bytes = await img.toByteData(format: ui.ImageByteFormat.png);
+    if (mounted && bytes != null) {
+      setState(() {
+        _kekeMarkerIcon = BitmapDescriptor.fromBytes(bytes.buffer.asUint8List());
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -29,6 +93,30 @@ class _HomeMapScreenState extends ConsumerState<HomeMapScreen> {
       if (next == BookingStep.completed) {
         ref.read(walletControllerProvider.notifier).refresh();
       }
+    });
+
+    // Auto-fit camera when driver first appears during confirmed state
+    ref.listen(bookingControllerProvider.select((s) => s.assignedDriverLocation), (prev, next) {
+      if (next == null || _mapController == null) return;
+      final step = ref.read(bookingControllerProvider).step;
+      if (step != BookingStep.confirmed) return;
+      if (_hasFitToDriver) return;
+      final pickup = ref.read(bookingControllerProvider).pickupLocation;
+      if (pickup == null) return;
+      _hasFitToDriver = true;
+      final sw = LatLng(
+        next.latitude < pickup.latitude ? next.latitude : pickup.latitude,
+        next.longitude < pickup.longitude ? next.longitude : pickup.longitude,
+      );
+      final ne = LatLng(
+        next.latitude > pickup.latitude ? next.latitude : pickup.latitude,
+        next.longitude > pickup.longitude ? next.longitude : pickup.longitude,
+      );
+      _mapController!.animateCamera(CameraUpdate.newLatLngBounds(LatLngBounds(southwest: sw, northeast: ne), 100));
+    });
+
+    ref.listen(bookingControllerProvider.select((s) => s.step), (prev, next) {
+      if (next != BookingStep.confirmed) _hasFitToDriver = false;
     });
 
     ref.listen(bookingControllerProvider, (previous, next) {
@@ -185,8 +273,9 @@ class _HomeMapScreenState extends ConsumerState<HomeMapScreen> {
         markers.add(Marker(
           markerId: const MarkerId('driver'),
           position: state.assignedDriverLocation!,
-          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
+          icon: _kekeMarkerIcon ?? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange),
           infoWindow: const InfoWindow(title: 'Your Keke'),
+          zIndex: 2,
         ));
       }
     }
@@ -203,21 +292,41 @@ class _HomeMapScreenState extends ConsumerState<HomeMapScreen> {
       BookingStep.started
     };
 
-    if (!showPolylineSteps.contains(state.step) || state.activeRoutePolyline.isEmpty) {
-      return {};
-    }
+    if (!showPolylineSteps.contains(state.step)) return {};
 
-    return {
-      Polyline(
+    final polylines = <Polyline>{};
+
+    if (state.activeRoutePolyline.isNotEmpty) {
+      // Main route: slightly dimmed during confirmed (driver approach) so approach line stands out
+      final isDimmed = state.step == BookingStep.confirmed;
+      polylines.add(Polyline(
         polylineId: const PolylineId('route'),
-        color: AppColors.primary,
-        width: 5,
+        color: isDimmed ? AppColors.primary.withOpacity(0.35) : AppColors.primary,
+        width: isDimmed ? 3 : 5,
         points: state.activeRoutePolyline,
         jointType: JointType.round,
         endCap: Cap.roundCap,
         startCap: Cap.roundCap,
-      )
-    };
+      ));
+    }
+
+    // Driver-to-pickup approach line — shown while driver is heading to passenger
+    if (state.step == BookingStep.confirmed &&
+        state.assignedDriverLocation != null &&
+        state.pickupLocation != null) {
+      polylines.add(Polyline(
+        polylineId: const PolylineId('driver_approach'),
+        color: const Color(0xFFF59E0B), // amber
+        width: 4,
+        points: [state.assignedDriverLocation!, state.pickupLocation!],
+        jointType: JointType.round,
+        endCap: Cap.roundCap,
+        startCap: Cap.roundCap,
+        patterns: [PatternItem.dash(16), PatternItem.gap(8)],
+      ));
+    }
+
+    return polylines;
   }
 }
 

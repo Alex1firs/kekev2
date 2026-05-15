@@ -13,6 +13,7 @@ class TripRequest {
   final double fare;
   final double distance;
   final int countdownSeconds;
+  final String? pickupCode;
 
   const TripRequest({
     required this.id,
@@ -27,6 +28,7 @@ class TripRequest {
     required this.fare,
     required this.distance,
     this.countdownSeconds = 30,
+    this.pickupCode,
   });
 
   factory TripRequest.fromJson(Map<String, dynamic> json, {required LatLng pickupLocation, required LatLng destinationLocation}) {
@@ -43,6 +45,7 @@ class TripRequest {
       fare: double.tryParse(json['fare']?.toString() ?? '0') ?? 0,
       distance: double.tryParse(json['distance']?.toString() ?? '0') ?? 0,
       countdownSeconds: json['countdownSeconds'] as int? ?? 30,
+      pickupCode: json['pickupCode']?.toString(),
     );
   }
 }

@@ -41,6 +41,12 @@ class BookingState {
   final DateTime? lastLocationUpdate;
   final List<ChatMessage> chatMessages;
 
+  // Live tracking fields — populated during confirmed/arrived states
+  final String? pickupCode;
+  final double? etaMinutes;
+  final double? distanceToPickupMeters;
+  final bool isDriverNearby;
+
   // Receipt data — populated when ride:finished arrives
   final String? receiptPickupAddress;
   final String? receiptDestinationAddress;
@@ -69,6 +75,10 @@ class BookingState {
     this.assignedDriverLocation,
     this.lastLocationUpdate,
     this.chatMessages = const [],
+    this.pickupCode,
+    this.etaMinutes,
+    this.distanceToPickupMeters,
+    this.isDriverNearby = false,
     this.receiptPickupAddress,
     this.receiptDestinationAddress,
     this.receiptFare,
@@ -100,6 +110,12 @@ class BookingState {
     LatLng? assignedDriverLocation,
     DateTime? lastLocationUpdate,
     List<ChatMessage>? chatMessages,
+    String? pickupCode,
+    bool clearPickupCode = false,
+    double? etaMinutes,
+    bool clearEta = false,
+    double? distanceToPickupMeters,
+    bool? isDriverNearby,
     String? receiptPickupAddress,
     String? receiptDestinationAddress,
     int? receiptFare,
@@ -127,6 +143,10 @@ class BookingState {
       assignedDriverLocation: assignedDriverLocation ?? this.assignedDriverLocation,
       lastLocationUpdate: lastLocationUpdate ?? this.lastLocationUpdate,
       chatMessages: chatMessages ?? this.chatMessages,
+      pickupCode: clearPickupCode ? null : (pickupCode ?? this.pickupCode),
+      etaMinutes: clearEta ? null : (etaMinutes ?? this.etaMinutes),
+      distanceToPickupMeters: clearEta ? null : (distanceToPickupMeters ?? this.distanceToPickupMeters),
+      isDriverNearby: isDriverNearby ?? this.isDriverNearby,
       receiptPickupAddress: receiptPickupAddress ?? this.receiptPickupAddress,
       receiptDestinationAddress: receiptDestinationAddress ?? this.receiptDestinationAddress,
       receiptFare: receiptFare ?? this.receiptFare,

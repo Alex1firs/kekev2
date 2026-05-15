@@ -349,113 +349,28 @@ class BookingSheet extends ConsumerWidget {
     final driver = state.assignedDriver;
     if (driver == null) return const SizedBox(height: 80, child: Center(child: CircularProgressIndicator()));
 
-    Color statusColor;
-    String statusText;
-    IconData statusIcon;
-
-    switch (state.step) {
-      case BookingStep.arrived:
-        statusColor = AppColors.warning;
-        statusText = 'Driver has arrived!';
-        statusIcon = Icons.location_on;
-        break;
-      case BookingStep.started:
-        statusColor = AppColors.success;
-        statusText = 'On the way to destination';
-        statusIcon = Icons.electric_rickshaw;
-        break;
-      default:
-        statusColor = AppColors.success;
-        statusText = 'Driver is on the way';
-        statusIcon = Icons.directions;
-    }
-
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          decoration: BoxDecoration(
-            color: statusColor.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: Row(
-            children: [
-              Icon(statusIcon, color: statusColor, size: 18),
-              const SizedBox(width: 10),
-              Text(statusText, style: AppTextStyles.bodySmall(color: statusColor, weight: FontWeight.w700)),
-            ],
-          ),
-        ),
+        // ── Status banner ──
+        if (state.step == BookingStep.arrived)
+          _buildArrivalBanner(driver, state.pickupCode)
+        else if (state.step == BookingStep.confirmed)
+          _buildApproachBanner(state)
+        else
+          _buildOnTripBanner(),
+
         const SizedBox(height: 14),
 
-        // Driver card
-        Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: AppColors.surfaceVariant,
-            borderRadius: BorderRadius.circular(14),
-          ),
-          child: Row(
-            children: [
-              CircleAvatar(
-                radius: 22,
-                backgroundColor: AppColors.primaryLight,
-                child: Text(
-                  (driver['name'] as String? ?? 'D').substring(0, 1).toUpperCase(),
-                  style: AppTextStyles.title(color: AppColors.primaryDark),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(driver['name'] ?? 'Driver', style: AppTextStyles.body(weight: FontWeight.w700)),
-                    Text('${driver['model'] ?? '—'} · ${driver['plate'] ?? '—'}',
-                        style: AppTextStyles.bodySmall()),
-                  ],
-                ),
-              ),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _CircleActionButton(
-                    icon: Icons.chat_bubble_outline_rounded,
-                    color: AppColors.primary,
-                    label: state.chatMessages.isNotEmpty ? '${state.chatMessages.length}' : null,
-                    onTap: () => showModalBottomSheet(
-                      context: context,
-                      isScrollControlled: true,
-                      backgroundColor: Colors.transparent,
-                      builder: (_) => SizedBox(
-                        height: MediaQuery.of(context).size.height * 0.6,
-                        child: const RideChatPanel(),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  _CircleActionButton(
-                    icon: Icons.call_rounded,
-                    color: AppColors.success,
-                    onTap: () async {
-                      final phone = driver['phone']?.toString();
-                      if (phone == null || phone.isEmpty) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text("Driver's phone number is unavailable")),
-                        );
-                        return;
-                      }
-                      final uri = Uri(scheme: 'tel', path: phone);
-                      if (await canLaunchUrl(uri)) await launchUrl(uri);
-                    },
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
+        // ── Driver card ──
+        _buildDriverCard(context, driver, state),
+
+        // ── Pickup code (confirmed + arrived) ──
+        if (state.step != BookingStep.started && state.pickupCode != null) ...[
+          const SizedBox(height: 12),
+          _buildPickupCodeBlock(state.pickupCode!, state.step == BookingStep.arrived),
+        ],
 
         if (state.step != BookingStep.started) ...[
           const SizedBox(height: 12),
@@ -469,6 +384,232 @@ class BookingSheet extends ConsumerWidget {
           ),
         ],
       ],
+    );
+  }
+
+  Widget _buildApproachBanner(BookingState state) {
+    final isNearby = state.isDriverNearby;
+    final eta = state.etaMinutes;
+    final dist = state.distanceToPickupMeters;
+
+    String statusText = isNearby ? 'Your Keke is nearby' : 'Your Keke is on the way';
+    String? etaText;
+    if (isNearby) {
+      etaText = 'Less than a minute away';
+    } else if (eta != null && eta > 0) {
+      final mins = eta.ceil();
+      if (dist != null && dist < 1000) {
+        etaText = '≈ $mins min · ${dist.round()} m away';
+      } else if (dist != null) {
+        etaText = '≈ $mins min · ${(dist / 1000).toStringAsFixed(1)} km away';
+      } else {
+        etaText = '≈ $mins min away';
+      }
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppColors.success.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            isNearby ? Icons.location_on : Icons.electric_rickshaw,
+            color: AppColors.success,
+            size: 18,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(statusText, style: AppTextStyles.bodySmall(color: AppColors.success, weight: FontWeight.w700)),
+                if (etaText != null)
+                  Text(etaText, style: AppTextStyles.caption(color: AppColors.success)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildArrivalBanner(Map<String, dynamic> driver, String? pickupCode) {
+    final plate = driver['plate']?.toString() ?? '—';
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFFBEB),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.primary, width: 1.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.location_on, color: AppColors.primary, size: 20),
+              const SizedBox(width: 8),
+              Text(
+                'Your Keke has arrived!',
+                style: AppTextStyles.body(color: AppColors.primary, weight: FontWeight.w800),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: AppColors.primary.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text('Plate Number', style: AppTextStyles.caption(color: AppColors.charcoal)),
+                Text(
+                  plate,
+                  style: AppTextStyles.body(color: AppColors.charcoal, weight: FontWeight.w800),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Match this plate before boarding',
+            style: AppTextStyles.caption(color: AppColors.midGray),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOnTripBanner() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppColors.success.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.electric_rickshaw, color: AppColors.success, size: 18),
+          const SizedBox(width: 10),
+          Text('On the way to destination',
+              style: AppTextStyles.bodySmall(color: AppColors.success, weight: FontWeight.w700)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDriverCard(BuildContext context, Map<String, dynamic> driver, BookingState state) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceVariant,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        children: [
+          CircleAvatar(
+            radius: 22,
+            backgroundColor: AppColors.primaryLight,
+            child: Text(
+              (driver['name'] as String? ?? 'D').substring(0, 1).toUpperCase(),
+              style: AppTextStyles.title(color: AppColors.primaryDark),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(driver['name'] ?? 'Driver', style: AppTextStyles.body(weight: FontWeight.w700)),
+                Text('${driver['model'] ?? '—'} · ${driver['plate'] ?? '—'}',
+                    style: AppTextStyles.bodySmall()),
+              ],
+            ),
+          ),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _CircleActionButton(
+                icon: Icons.chat_bubble_outline_rounded,
+                color: AppColors.primary,
+                label: state.chatMessages.isNotEmpty ? '${state.chatMessages.length}' : null,
+                onTap: () => showModalBottomSheet(
+                  context: context,
+                  isScrollControlled: true,
+                  backgroundColor: Colors.transparent,
+                  builder: (_) => SizedBox(
+                    height: MediaQuery.of(context).size.height * 0.6,
+                    child: const RideChatPanel(),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              _CircleActionButton(
+                icon: Icons.call_rounded,
+                color: AppColors.success,
+                onTap: () async {
+                  final phone = driver['phone']?.toString();
+                  if (phone == null || phone.isEmpty) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text("Driver's phone number is unavailable")),
+                    );
+                    return;
+                  }
+                  final uri = Uri(scheme: 'tel', path: phone);
+                  if (await canLaunchUrl(uri)) await launchUrl(uri);
+                },
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPickupCodeBlock(String code, bool isArrived) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: isArrived ? const Color(0xFFFFF7ED) : AppColors.paleGray,
+        borderRadius: BorderRadius.circular(12),
+        border: isArrived ? Border.all(color: AppColors.primary.withOpacity(0.4)) : null,
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.key_rounded, size: 18, color: isArrived ? AppColors.primary : AppColors.midGray),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  isArrived ? 'Confirm your ride code' : 'Your ride code',
+                  style: AppTextStyles.caption(color: AppColors.midGray),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  code,
+                  style: AppTextStyles.title(
+                    color: isArrived ? AppColors.primary : AppColors.charcoal,
+                    weight: FontWeight.w900,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (isArrived)
+            Text(
+              'Tell your driver',
+              style: AppTextStyles.caption(color: AppColors.primary, weight: FontWeight.w600),
+            ),
+        ],
+      ),
     );
   }
 }

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import '../domain/booking_state.dart';
@@ -92,10 +93,11 @@ class BookingController extends StateNotifier<BookingState> {
           state = state.copyWith(
             step: BookingStep.confirmed,
             assignedDriver: data['driverDetails'],
+            pickupCode: data['pickupCode']?.toString(),
             clearErrorMessage: true,
           );
           _stopWatchdog();
-          _soundService.playAlert(); // 🔔 Driver found
+          _soundService.playAlert();
           break;
         case 'ride:status_update':
            print('[PASSENGER_SYNC] Status update: ${data['status']}');
@@ -142,12 +144,24 @@ class BookingController extends StateNotifier<BookingState> {
           break;
         case 'driver:location_update':
           try {
+            final driverLoc = LatLng(
+              (data['lat'] as num?)?.toDouble() ?? 0.0,
+              (data['lng'] as num?)?.toDouble() ?? 0.0,
+            );
+            double? eta, dist;
+            bool nearby = false;
+            if (state.pickupLocation != null && state.step == BookingStep.confirmed) {
+              dist = _haversineDistance(driverLoc, state.pickupLocation!);
+              // ~300 m/min ≈ 18 km/h average keke speed in city; add 30% road factor
+              eta = (dist / 230).clamp(0, 999);
+              nearby = dist < 150;
+            }
             state = state.copyWith(
-              assignedDriverLocation: LatLng(
-                (data['lat'] as num?)?.toDouble() ?? 0.0,
-                (data['lng'] as num?)?.toDouble() ?? 0.0,
-              ),
+              assignedDriverLocation: driverLoc,
               lastLocationUpdate: DateTime.now(),
+              etaMinutes: eta,
+              distanceToPickupMeters: dist,
+              isDriverNearby: nearby,
             );
           } catch (e) {
             print('[PASSENGER] Failed to parse driver location: $e');
@@ -176,8 +190,25 @@ class BookingController extends StateNotifier<BookingState> {
       clearRideId: true,
       assignedDriverLocation: null,
       chatMessages: [],
+      clearPickupCode: true,
+      clearEta: true,
+      isDriverNearby: false,
     );
     _stopWatchdog();
+  }
+
+  /// Haversine great-circle distance between two coordinates, in metres.
+  double _haversineDistance(LatLng a, LatLng b) {
+    const r = 6371000.0;
+    final dLat = (b.latitude - a.latitude) * math.pi / 180;
+    final dLon = (b.longitude - a.longitude) * math.pi / 180;
+    final sinDLat = math.sin(dLat / 2);
+    final sinDLon = math.sin(dLon / 2);
+    final aVal = sinDLat * sinDLat +
+        math.cos(a.latitude * math.pi / 180) *
+            math.cos(b.latitude * math.pi / 180) *
+            sinDLon * sinDLon;
+    return r * 2 * math.atan2(math.sqrt(aVal), math.sqrt(1 - aVal));
   }
 
   Future<void> _initializeMap() async {

@@ -60,6 +60,11 @@ class TripOperationHUD extends ConsumerWidget {
                     _buildMainAction(context, ref),
                   if (state.tripStep == TripStep.completed)
                     _buildCompletionPanel(ref),
+                  if ((state.tripStep == TripStep.accepted || state.tripStep == TripStep.arrived) &&
+                      state.activeRequest?.pickupCode != null) ...[
+                    const SizedBox(height: 14),
+                    _buildPickupCodeCard(state.activeRequest!.pickupCode!),
+                  ],
                   const SizedBox(height: 16),
                   _buildPassengerRow(context),
                 ],
@@ -201,6 +206,43 @@ class TripOperationHUD extends ConsumerWidget {
           child: Text('Back to Available', style: AppTextStyles.body(weight: FontWeight.w700)),
         ),
       ],
+    );
+  }
+
+  Widget _buildPickupCodeCard(String code) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppColors.darkGray,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.primary.withOpacity(0.4)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.key_rounded, size: 18, color: AppColors.primary),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Passenger ride code',
+                  style: AppTextStyles.caption(color: AppColors.midGray),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  code,
+                  style: AppTextStyles.title(color: AppColors.primary, weight: FontWeight.w900),
+                ),
+              ],
+            ),
+          ),
+          Text(
+            'Ask your passenger',
+            style: AppTextStyles.caption(color: AppColors.lightGray),
+          ),
+        ],
+      ),
     );
   }
 

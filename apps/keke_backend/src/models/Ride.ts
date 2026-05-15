@@ -66,4 +66,7 @@ export class Ride {
 
     @Column({ nullable: true })
     completedAt!: Date;
+
+    @Column({ nullable: true, length: 4 })
+    pickupCode!: string;
 }

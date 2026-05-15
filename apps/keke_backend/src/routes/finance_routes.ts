@@ -28,14 +28,21 @@ router.get("/balance/:userId", authMiddleware, async (req: AuthRequest, res: Res
         const wallet = await WalletService.getOrCreateWallet(userId);
         // Exclude internal bookkeeping entries (debt ledger, platform revenue) — they are
         // not meaningful to the end user and would show as confusing duplicate lines.
-        const history = await AppDataSource.getRepository(LedgerEntry).find({
+        // We filter in memory rather than in the DB query to avoid Postgres enum cast
+        // errors if the production database is missing newer enum values.
+        let history = await AppDataSource.getRepository(LedgerEntry).find({
             where: {
                 walletId: userId,
-                balanceType: Not(In([BalanceType.DRIVER_COMMISSION_DEBT, BalanceType.PLATFORM_REVENUE])),
             },
             order: { createdAt: "DESC" },
-            take: 20
+            take: 40 // Fetch a bit more to ensure we have 20 after filtering
         });
+
+        history = history.filter(h => 
+            h.balanceType !== BalanceType.DRIVER_COMMISSION_DEBT && 
+            h.balanceType !== BalanceType.PLATFORM_REVENUE
+        ).slice(0, 20);
+
         res.json({ balance: wallet, history });
     } catch (err: any) {
         console.error('[FINANCE] Balance fetch error:', err?.message);

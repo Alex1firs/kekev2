@@ -119,6 +119,13 @@ class BookingSheet extends ConsumerWidget {
               : () => ref.read(bookingControllerProvider.notifier).confirmPickup(),
           child: const Text('Confirm Pickup'),
         ),
+        
+        // Show ETA even before setting destination
+        if (!isMoving && state.nearbyDrivers.isNotEmpty && state.pickupLocation != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 16),
+            child: _buildNearbyEstimateBanner(state.pickupLocation!, state.nearbyDrivers),
+          ),
       ],
     );
   }

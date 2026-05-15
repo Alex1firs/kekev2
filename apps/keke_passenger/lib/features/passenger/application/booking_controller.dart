@@ -270,6 +270,9 @@ class BookingController extends StateNotifier<BookingState> {
     }
 
     _triggerReverseGeocode(center, isPickup: true);
+    
+    // Fetch drivers now that we have a location
+    _fetchNearbyDrivers();
   }
 
   void onCameraMove(CameraPosition position) {
@@ -291,6 +294,7 @@ class BookingController extends StateNotifier<BookingState> {
       _debounceTimer?.cancel();
       _debounceTimer = Timer(const Duration(milliseconds: 400), () {
         _triggerReverseGeocode(target, isPickup: true);
+        _fetchNearbyDrivers();
       });
     }
   }
@@ -428,6 +432,10 @@ class BookingController extends StateNotifier<BookingState> {
 
   void _startNearbyPolling() {
     _nearbyPollingTimer?.cancel();
+    
+    // Fetch immediately on start
+    _fetchNearbyDrivers();
+    
     _nearbyPollingTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       if (state.step == BookingStep.selectingPickup || 
           state.step == BookingStep.selectingDestination || 

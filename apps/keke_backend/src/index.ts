@@ -113,6 +113,17 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 AppDataSource.initialize()
   .then(async () => {
     console.log(JSON.stringify({ level: 'info', message: 'PostgreSQL initialized' }));
+    
+    // Auto-run migrations on startup to ensure production DB is up-to-date
+    try {
+      const migrations = await AppDataSource.runMigrations();
+      if (migrations.length > 0) {
+        console.log(JSON.stringify({ level: 'info', message: `Executed ${migrations.length} migrations` }));
+      }
+    } catch (e: any) {
+      console.error(JSON.stringify({ level: 'error', message: 'Failed to run migrations on startup', error: e.message }));
+    }
+
     NotificationService.initialize();
 
     // Sweep rides stuck in 'searching' from before last restart

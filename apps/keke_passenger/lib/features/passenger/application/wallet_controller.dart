@@ -33,20 +33,35 @@ class WalletController extends StateNotifier<WalletState> {
     }
   }
 
-  Future<String?> initializeTopup(double amount, String email) async {
+  Future<Map<String, String>?> initializeTopup(double amount, String email) async {
     try {
       final response = await _api.dio.post('/finance/topup/init', data: {
         'userId': _userId,
         'amount': amount,
         'email': email,
       });
-      return response.data['authorization_url'] as String?;
+      final url = response.data['authorization_url'] as String?;
+      final ref = response.data['reference'] as String?;
+      if (url == null || ref == null) return null;
+      return {'url': url, 'reference': ref};
     } on DioException catch (e) {
       state = state.copyWith(errorMessage: e.response?.data?['message']?.toString() ?? 'Couldn\'t start top-up. Please try again.');
       return null;
     } catch (e) {
       state = state.copyWith(errorMessage: 'Couldn\'t start top-up. Please try again.');
       return null;
+    }
+  }
+
+  Future<bool> verifyTopup(String reference) async {
+    try {
+      final response = await _api.dio.post('/finance/topup/verify', data: {'reference': reference});
+      final verified = response.data['verified'] as bool? ?? false;
+      if (verified) await refresh();
+      return verified;
+    } catch (_) {
+      await refresh();
+      return false;
     }
   }
 }

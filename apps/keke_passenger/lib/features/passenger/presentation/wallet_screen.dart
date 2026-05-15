@@ -332,20 +332,31 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                   : 'user@keke.app';
 
               Navigator.pop(ctx);
-              final url = await ref
+              final topup = await ref
                   .read(walletControllerProvider.notifier)
                   .initializeTopup(amount, email);
 
-              if (url != null && context.mounted) {
-                Navigator.push(
+              if (topup != null && context.mounted) {
+                final callbackRef = await Navigator.push<String>(
                   context,
-                  MaterialPageRoute(builder: (_) => PaystackWebView(url: url)),
-                ).then((success) {
-                  if (success == true) {
-                    ref.read(walletControllerProvider.notifier).refresh();
-                  }
-                });
-              } else if (url == null && context.mounted) {
+                  MaterialPageRoute(builder: (_) => PaystackWebView(url: topup['url']!)),
+                );
+
+                if (context.mounted) {
+                  final reference = callbackRef ?? topup['reference']!;
+                  final verified = await ref
+                      .read(walletControllerProvider.notifier)
+                      .verifyTopup(reference);
+
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                    backgroundColor: verified ? AppColors.success : AppColors.primary,
+                    content: Text(
+                      verified ? 'Top-up successful! Balance updated.' : 'Payment received — balance updating shortly.',
+                      style: AppTextStyles.body(color: verified ? AppColors.white : AppColors.charcoal),
+                    ),
+                  ));
+                }
+              } else if (topup == null && context.mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
                   content: Text('Couldn\'t start top-up. Please try again.'),
                   backgroundColor: AppColors.error,

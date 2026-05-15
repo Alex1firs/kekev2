@@ -5,13 +5,13 @@ export class AddMissingEnumValues1746600000000 implements MigrationInterface {
 
     public async up(queryRunner: QueryRunner): Promise<void> {
         // Add missing BalanceType enum values
-        await queryRunner.query(`ALTER TYPE "ledger_entry_balance_type_enum" ADD VALUE IF NOT EXISTS 'platform_revenue'`);
+        await queryRunner.query(`ALTER TYPE "ledger_entry_balancetype_enum" ADD VALUE IF NOT EXISTS 'platform_revenue'`);
 
         // Add missing TransactionType enum values
-        await queryRunner.query(`ALTER TYPE "ledger_entry_transaction_type_enum" ADD VALUE IF NOT EXISTS 'commission_credit'`);
-        await queryRunner.query(`ALTER TYPE "ledger_entry_transaction_type_enum" ADD VALUE IF NOT EXISTS 'cash_received'`);
-        await queryRunner.query(`ALTER TYPE "ledger_entry_transaction_type_enum" ADD VALUE IF NOT EXISTS 'cash_externalized'`);
-        await queryRunner.query(`ALTER TYPE "ledger_entry_transaction_type_enum" ADD VALUE IF NOT EXISTS 'debt_recovery'`);
+        await queryRunner.query(`ALTER TYPE "ledger_entry_transactiontype_enum" ADD VALUE IF NOT EXISTS 'commission_credit'`);
+        await queryRunner.query(`ALTER TYPE "ledger_entry_transactiontype_enum" ADD VALUE IF NOT EXISTS 'cash_received'`);
+        await queryRunner.query(`ALTER TYPE "ledger_entry_transactiontype_enum" ADD VALUE IF NOT EXISTS 'cash_externalized'`);
+        await queryRunner.query(`ALTER TYPE "ledger_entry_transactiontype_enum" ADD VALUE IF NOT EXISTS 'debt_recovery'`);
     }
 
     public async down(queryRunner: QueryRunner): Promise<void> {

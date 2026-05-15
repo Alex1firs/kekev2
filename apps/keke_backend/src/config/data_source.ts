@@ -18,6 +18,7 @@ export const AppDataSource = new DataSource({
     logging: ["error", "warn", "migration"],
     entities: [Wallet, LedgerEntry, Transaction, PayoutRecord, DriverProfile, Ride, AuditLog, User, DeviceToken],
     migrations: ["dist/migrations/*.js"],
+    migrationsTransactionMode: "each",
     subscribers: [],
     ssl: USE_SSL ? { rejectUnauthorized: false } : false,
     extra: {

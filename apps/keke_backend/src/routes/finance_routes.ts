@@ -1,9 +1,10 @@
 import { Router, Request, Response } from "express";
 import rateLimit from "express-rate-limit";
+import { Not, In } from "typeorm";
 import { WalletService } from "../services/wallet_service";
 import { PaystackService } from "../services/paystack_service";
 import { AppDataSource } from "../config/data_source";
-import { LedgerEntry } from "../models/LedgerEntry";
+import { LedgerEntry, BalanceType } from "../models/LedgerEntry";
 import { authMiddleware, AuthRequest } from "../middleware/auth_middleware";
 import { errBody, ErrorCode } from "../utils/errors";
 
@@ -25,8 +26,13 @@ router.get("/balance/:userId", authMiddleware, async (req: AuthRequest, res: Res
             return res.status(403).json(errBody(ErrorCode.FORBIDDEN, "Access denied."));
         }
         const wallet = await WalletService.getOrCreateWallet(userId);
+        // Exclude internal bookkeeping entries (debt ledger, platform revenue) — they are
+        // not meaningful to the end user and would show as confusing duplicate lines.
         const history = await AppDataSource.getRepository(LedgerEntry).find({
-            where: { walletId: userId },
+            where: {
+                walletId: userId,
+                balanceType: Not(In([BalanceType.DRIVER_COMMISSION_DEBT, BalanceType.PLATFORM_REVENUE])),
+            },
             order: { createdAt: "DESC" },
             take: 20
         });

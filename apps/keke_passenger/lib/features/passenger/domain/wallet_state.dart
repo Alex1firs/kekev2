@@ -46,13 +46,25 @@ class WalletTransaction {
 
   factory WalletTransaction.fromJson(Map<String, dynamic> json) {
     final amount = double.tryParse(json['amount']?.toString() ?? '') ?? 0.0;
+    final type   = json['transactionType']?.toString() ?? '';
+    final description = json['metadata']?['description']?.toString() ??
+        _descriptionForType(type, amount);
     return WalletTransaction(
       id: json['id']?.toString() ?? '',
       amount: amount,
-      type: json['transactionType']?.toString() ?? '',
-      description: json['metadata']?['description']?.toString() ?? (amount > 0 ? 'Top-up' : 'Ride Payment'),
+      type: type,
+      description: description,
       date: DateTime.tryParse(json['createdAt']?.toString() ?? '') ?? DateTime.now(),
       balanceAfter: double.tryParse(json['balanceAfter']?.toString() ?? '') ?? 0.0,
     );
+  }
+
+  static String _descriptionForType(String type, double amount) {
+    switch (type) {
+      case 'topup':        return 'Wallet Top-up';
+      case 'trip_payment': return amount < 0 ? 'Ride Payment' : 'Refund';
+      case 'refund':       return 'Refund';
+      default:             return amount > 0 ? 'Credit' : 'Debit';
+    }
   }
 }

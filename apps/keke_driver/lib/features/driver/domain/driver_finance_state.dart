@@ -68,11 +68,11 @@ class DriverHistoryEntry {
   static String _descriptionForType(String type, double amount) {
     switch (type) {
       case 'topup':             return 'Wallet Top-up';
-      case 'trip_payment':      return amount > 0 ? 'Trip Earning' : 'Trip Payment';
-      case 'commission_charge': return 'Commission Charge';
+      case 'trip_payment':      return amount > 0 ? 'Trip Earnings' : 'Trip Payment';
+      case 'commission_charge': return 'Commission Charged';
       case 'commission_credit': return 'Commission Credit';
-      case 'cash_received':     return 'Cash Ride Collection';
-      case 'cash_externalized': return 'Cash Externalized';
+      case 'cash_received':     return 'Cash Payment Received';
+      case 'cash_externalized': return 'Cash Transferred Out';
       case 'debt_recovery':     return 'Debt Recovery';
       case 'payout':            return 'Payout Requested';
       case 'refund':            return 'Refund';

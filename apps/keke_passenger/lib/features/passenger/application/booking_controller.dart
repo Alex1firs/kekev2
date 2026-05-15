@@ -8,6 +8,7 @@ import '../../../core/network/socket_provider.dart';
 import '../../../core/network/api_client.dart';
 import '../../auth/application/auth_controller.dart';
 import '../../auth/domain/auth_state.dart';
+import 'wallet_controller.dart';
 import 'package:jwt_decoder/jwt_decoder.dart';
 import '../../../core/network/notification_service.dart';
 import '../domain/chat_message.dart';
@@ -29,6 +30,9 @@ class BookingController extends StateNotifier<BookingState> {
   StreamSubscription? _notificationSubscription;
   final NotificationService _notificationService;
   final SoundService _soundService;
+  void Function()? _onWalletRefreshNeeded;
+
+  void setWalletRefreshCallback(void Function() cb) => _onWalletRefreshNeeded = cb;
 
   BookingController(this._mapRepo, SocketService? initialSocket, this._apiClient, this._notificationService, this._soundService, this.passengerId, this.firstName, this.lastName) : super(const BookingState()) {
     _socketService = initialSocket;
@@ -126,6 +130,7 @@ class BookingController extends StateNotifier<BookingState> {
           _searchTimeoutTimer?.cancel();
           _stopWatchdog();
           _showReceipt();
+          _onWalletRefreshNeeded?.call();
           break;
         case 'ride:failed':
           _searchTimeoutTimer?.cancel();
@@ -515,6 +520,10 @@ final bookingControllerProvider = StateNotifierProvider<BookingController, Booki
   final soundService = ref.read(soundServiceProvider);
   
   final controller = BookingController(mapRepo, socketService, apiClient, notificationService, soundService, passId, fname, lname);
+
+  controller.setWalletRefreshCallback(
+    () => ref.read(walletControllerProvider.notifier).refresh(),
+  );
 
   // Listen for socket updates without re-creating the controller
   ref.listen(socketServiceProvider, (previous, next) {

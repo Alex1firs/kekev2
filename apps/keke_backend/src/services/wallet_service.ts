@@ -269,37 +269,59 @@ export class WalletService {
             }
 
             const meta = { rideId, fare: totalFare };
-            const driverNetAmount = Math.round((totalFare - commissionAmount) * 100) / 100;
+            const available = Number(wallet.driverAvailableBalance);
 
-            // 1. CASH_RECEIVED — driver collected full fare in cash; credit it to available balance
-            const balanceBefore = Number(wallet.driverAvailableBalance);
-            wallet.driverAvailableBalance = balanceBefore + totalFare;
-            await manager.save(wallet);
+            // 1. CASH_RECEIVED — informational audit entry only. The driver physically
+            //    collected this fare in cash; it is not deposited into the platform wallet,
+            //    so the balance does not change here (balanceBefore == balanceAfter).
             await manager.save(manager.create(LedgerEntry, {
                 walletId: driverId,
                 balanceType: BalanceType.DRIVER_AVAILABLE,
                 transactionType: TransactionType.CASH_RECEIVED,
                 amount: totalFare,
-                balanceBefore: balanceBefore,
-                balanceAfter: wallet.driverAvailableBalance,
-                metadata: meta,
+                balanceBefore: available,
+                balanceAfter: available,
+                metadata: { ...meta, note: 'Physical cash collected by driver — audit record' },
             }));
 
-            // 2. COMMISSION_CHARGE — deduct platform commission (fare was just credited so balance always covers this)
-            const afterCredit = Number(wallet.driverAvailableBalance);
-            wallet.driverAvailableBalance = afterCredit - commissionAmount;
-            await manager.save(wallet);
-            await manager.save(manager.create(LedgerEntry, {
-                walletId: driverId,
-                balanceType: BalanceType.DRIVER_AVAILABLE,
-                transactionType: TransactionType.COMMISSION_CHARGE,
-                amount: -commissionAmount,
-                balanceBefore: afterCredit,
-                balanceAfter: wallet.driverAvailableBalance,
-                metadata: { ...meta, commissionAmount, driverNetAmount },
-            }));
+            // 2. COMMISSION_CHARGE — deduct platform commission from the driver's pre-existing
+            //    wallet balance. If the balance is insufficient, deduct what is available and
+            //    push the shortfall into commission debt.
+            const canPay  = Math.min(available, commissionAmount);
+            const shortfall = Math.round((commissionAmount - canPay) * 100) / 100;
 
-            // Platform revenue
+            if (canPay > 0) {
+                const availAfter = Math.round((available - canPay) * 100) / 100;
+                wallet.driverAvailableBalance = availAfter;
+                await manager.save(wallet);
+                await manager.save(manager.create(LedgerEntry, {
+                    walletId: driverId,
+                    balanceType: BalanceType.DRIVER_AVAILABLE,
+                    transactionType: TransactionType.COMMISSION_CHARGE,
+                    amount: -canPay,
+                    balanceBefore: available,
+                    balanceAfter: availAfter,
+                    metadata: { ...meta, commissionAmount, paid: canPay, shortfall },
+                }));
+            }
+
+            if (shortfall > 0) {
+                const debtBefore = Number(wallet.driverCommissionDebt);
+                const debtAfter  = Math.round((debtBefore + shortfall) * 100) / 100;
+                wallet.driverCommissionDebt = debtAfter;
+                await manager.save(wallet);
+                await manager.save(manager.create(LedgerEntry, {
+                    walletId: driverId,
+                    balanceType: BalanceType.DRIVER_COMMISSION_DEBT,
+                    transactionType: TransactionType.COMMISSION_CHARGE,
+                    amount: shortfall,
+                    balanceBefore: debtBefore,
+                    balanceAfter: debtAfter,
+                    metadata: { ...meta, commissionAmount, paid: canPay, shortfall },
+                }));
+            }
+
+            // 3. Platform revenue
             await manager.save(manager.create(LedgerEntry, {
                 walletId: 'PLATFORM',
                 balanceType: BalanceType.PLATFORM_REVENUE,

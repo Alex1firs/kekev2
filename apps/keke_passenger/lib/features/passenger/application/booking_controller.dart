@@ -26,6 +26,7 @@ class BookingController extends StateNotifier<BookingState> {
   Timer? _debounceTimer;
   Timer? _watchdogTimer;
   Timer? _searchTimeoutTimer;
+  Timer? _nearbyPollingTimer;
   Timer? _errorClearTimer;
   StreamSubscription? _socketSubscription;
   StreamSubscription? _notificationSubscription;
@@ -40,6 +41,7 @@ class BookingController extends StateNotifier<BookingState> {
     _initializeMap();
     if (_socketService != null) _listenToSocket();
     _listenToNotifications();
+    _startNearbyPolling();
   }
 
   void _listenToNotifications() {
@@ -424,6 +426,51 @@ class BookingController extends StateNotifier<BookingState> {
     }
   }
 
+  void _startNearbyPolling() {
+    _nearbyPollingTimer?.cancel();
+    _nearbyPollingTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      if (state.step == BookingStep.selectingPickup || 
+          state.step == BookingStep.selectingDestination || 
+          state.step == BookingStep.previewEstimate || 
+          state.step == BookingStep.idle) {
+        _fetchNearbyDrivers();
+      }
+    });
+  }
+
+  Future<void> _fetchNearbyDrivers() async {
+    if (_apiClient == null || state.pickupLocation == null) return;
+    
+    // Use mapCenter if idle/selecting, or pickupLocation if locked in
+    final targetLocation = (state.step == BookingStep.selectingPickup || state.step == BookingStep.idle) 
+        ? (state.mapCenter ?? state.pickupLocation!) 
+        : state.pickupLocation!;
+
+    try {
+      final response = await _apiClient!.dio.get(
+        '/drivers/nearby',
+        queryParameters: {
+          'lat': targetLocation.latitude,
+          'lng': targetLocation.longitude,
+          'radius': 5,
+        },
+      );
+      
+      final data = response.data;
+      if (data != null && data['drivers'] != null) {
+        final List<LatLng> drivers = (data['drivers'] as List).map((d) {
+          return LatLng((d['lat'] as num).toDouble(), (d['lng'] as num).toDouble());
+        }).toList();
+
+        if (mounted) {
+          state = state.copyWith(nearbyDrivers: drivers);
+        }
+      }
+    } catch (e) {
+      print('Failed to fetch nearby drivers: $e');
+    }
+  }
+
   void _startWatchdog() {
     _watchdogTimer?.cancel();
     _searchTimeoutTimer?.cancel();
@@ -520,6 +567,7 @@ class BookingController extends StateNotifier<BookingState> {
     _debounceTimer?.cancel();
     _watchdogTimer?.cancel();
     _searchTimeoutTimer?.cancel();
+    _nearbyPollingTimer?.cancel();
     _errorClearTimer?.cancel();
     _socketSubscription?.cancel();
     _notificationSubscription?.cancel();

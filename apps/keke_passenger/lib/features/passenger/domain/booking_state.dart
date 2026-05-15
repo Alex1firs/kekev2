@@ -40,6 +40,7 @@ class BookingState {
   final LatLng? assignedDriverLocation;
   final DateTime? lastLocationUpdate;
   final List<ChatMessage> chatMessages;
+  final List<LatLng> nearbyDrivers;
 
   // Live tracking fields — populated during confirmed/arrived states
   final String? pickupCode;
@@ -75,6 +76,7 @@ class BookingState {
     this.assignedDriverLocation,
     this.lastLocationUpdate,
     this.chatMessages = const [],
+    this.nearbyDrivers = const [],
     this.pickupCode,
     this.etaMinutes,
     this.distanceToPickupMeters,
@@ -110,6 +112,7 @@ class BookingState {
     LatLng? assignedDriverLocation,
     DateTime? lastLocationUpdate,
     List<ChatMessage>? chatMessages,
+    List<LatLng>? nearbyDrivers,
     String? pickupCode,
     bool clearPickupCode = false,
     double? etaMinutes,
@@ -143,6 +146,7 @@ class BookingState {
       assignedDriverLocation: assignedDriverLocation ?? this.assignedDriverLocation,
       lastLocationUpdate: lastLocationUpdate ?? this.lastLocationUpdate,
       chatMessages: chatMessages ?? this.chatMessages,
+      nearbyDrivers: nearbyDrivers ?? this.nearbyDrivers,
       pickupCode: clearPickupCode ? null : (pickupCode ?? this.pickupCode),
       etaMinutes: clearEta ? null : (etaMinutes ?? this.etaMinutes),
       distanceToPickupMeters: clearEta ? null : (distanceToPickupMeters ?? this.distanceToPickupMeters),

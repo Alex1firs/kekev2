@@ -11,6 +11,7 @@ import { redis } from "../config/redis";
 import path from "path";
 import fs from "fs";
 import sharp from "sharp";
+import { DispatchService } from "../services/dispatch_service";
 
 const router = Router();
 
@@ -157,6 +158,35 @@ router.get("/availability/check", authMiddleware, async (req: AuthRequest, res: 
         return res.json({ driverId, isAvailable: !!available, ttlMs: ttl, location });
     } catch (err: any) {
         return res.status(500).json({ error: err?.message });
+    }
+});
+
+/**
+ * GET /api/v1/drivers/nearby
+ * Get nearby active drivers with their coordinates.
+ */
+router.get("/nearby", authMiddleware, async (req: AuthRequest, res: Response) => {
+    try {
+        const lat = parseFloat(req.query.lat as string);
+        const lng = parseFloat(req.query.lng as string);
+        const radius = parseFloat(req.query.radius as string) || 5;
+
+        if (isNaN(lat) || isNaN(lng)) {
+            return res.status(400).json(errBody(ErrorCode.VALIDATION_ERROR, "Valid lat and lng query parameters are required."));
+        }
+
+        const drivers = await DispatchService.getNearbyActiveDriversWithLocations(lat, lng, radius);
+        
+        // Return only coordinates to the client for privacy
+        const locations = drivers.map(d => ({
+            lat: d.lat,
+            lng: d.lng
+        }));
+
+        res.json({ drivers: locations });
+    } catch (err: any) {
+        console.error('[DRIVER] Fetch nearby error:', err?.message);
+        res.status(500).json(errBody(ErrorCode.INTERNAL_ERROR, "Failed to fetch nearby drivers."));
     }
 });
 

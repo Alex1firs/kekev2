@@ -11,6 +11,7 @@ import '../destination_search_screen.dart';
 import '../wallet_screen.dart';
 import 'ride_chat_panel.dart';
 import 'ride_receipt_sheet.dart';
+import 'dart:math' as math;
 
 class BookingSheet extends ConsumerWidget {
   const BookingSheet({super.key});
@@ -211,6 +212,10 @@ class BookingSheet extends ConsumerWidget {
           ],
         ),
         const SizedBox(height: 16),
+
+        // Nearby Driver ETA banner
+        if (state.nearbyDrivers.isNotEmpty && state.pickupLocation != null)
+          _buildNearbyEstimateBanner(state.pickupLocation!, state.nearbyDrivers),
 
         // Keke fare card
         Container(
@@ -611,6 +616,58 @@ class BookingSheet extends ConsumerWidget {
         ],
       ),
     );
+  }
+
+  Widget _buildNearbyEstimateBanner(LatLng pickup, List<LatLng> drivers) {
+    if (drivers.isEmpty) return const SizedBox.shrink();
+
+    double nearestDistance = double.infinity;
+    for (final driver in drivers) {
+      final dist = _haversineDistance(driver, pickup);
+      if (dist < nearestDistance) {
+        nearestDistance = dist;
+      }
+    }
+
+    // ~300 m/min average speed, add 1 minute padding
+    final int etaMins = ((nearestDistance / 230).ceil()).clamp(1, 15);
+    final String etaText = etaMins == 1 ? '1 minute' : '$etaMins minutes';
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: AppColors.primaryLight.withOpacity(0.3),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.electric_rickshaw, color: AppColors.primaryDark, size: 18),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Nearest Keke is ≈ $etaText away',
+                style: AppTextStyles.bodySmall(color: AppColors.primaryDark, weight: FontWeight.w700),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  double _haversineDistance(LatLng a, LatLng b) {
+    const r = 6371000.0; // Earth radius in meters
+    final dLat = (b.latitude - a.latitude) * math.pi / 180;
+    final dLon = (b.longitude - a.longitude) * math.pi / 180;
+    final sinDLat = math.sin(dLat / 2);
+    final sinDLon = math.sin(dLon / 2);
+    final aVal = sinDLat * sinDLat +
+        math.cos(a.latitude * math.pi / 180) *
+            math.cos(b.latitude * math.pi / 180) *
+            sinDLon * sinDLon;
+    return r * 2 * math.atan2(math.sqrt(aVal), math.sqrt(1 - aVal));
   }
 }
 

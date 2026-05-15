@@ -64,6 +64,46 @@ export class DispatchService {
   }
 
   /**
+   * Find available drivers within radius, returning their locations
+   */
+  static async getNearbyActiveDriversWithLocations(lat: number, lng: number, radiusKm: number, limit: number = 20): Promise<Array<{driverId: string, lat: number, lng: number}>> {
+    // 1. Get potential candidates from GEO with coordinates
+    const nearby = await redis.georadius(
+      this.DRIVER_GEO_KEY,
+      lng,
+      lat,
+      radiusKm,
+      'km',
+      'WITHCOORD',
+      'ASC',
+      'COUNT',
+      limit * 2
+    ) as Array<[string, [string, string]]>; // [member, [lng, lat]]
+
+    if (!nearby || nearby.length === 0) return [];
+
+    // 2. Filter by heartbeat (Availability TTL)
+    const availableDrivers: Array<{driverId: string, lat: number, lng: number}> = [];
+    const keys = nearby.map(entry => `${this.DRIVER_AVAILABILITY_PREFIX}${entry[0]}`);
+    const availabilityValues = await redis.mget(...keys);
+
+    for (let i = 0; i < nearby.length; i++) {
+        if (availabilityValues[i] === 'true') {
+            const driverId = nearby[i][0];
+            const coords = nearby[i][1];
+            availableDrivers.push({
+                driverId,
+                lng: parseFloat(coords[0]),
+                lat: parseFloat(coords[1]),
+            });
+            if (availableDrivers.length >= limit) break;
+        }
+    }
+
+    return availableDrivers;
+  }
+
+  /**
    * Concurrency Lock for Ride Acceptance
    */
   static async acquireRideLock(rideId: string, driverId: string): Promise<boolean> {

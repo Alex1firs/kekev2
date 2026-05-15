@@ -260,6 +260,23 @@ class _HomeMapScreenState extends ConsumerState<HomeMapScreen> {
       }
     }
 
+    // Display nearby drivers before an active ride
+    if (state.step == BookingStep.selectingPickup || 
+        state.step == BookingStep.selectingDestination || 
+        state.step == BookingStep.previewEstimate || 
+        state.step == BookingStep.idle) {
+      
+      for (int i = 0; i < state.nearbyDrivers.length; i++) {
+        markers.add(Marker(
+          markerId: MarkerId('nearby_driver_$i'),
+          position: state.nearbyDrivers[i],
+          icon: _kekeMarkerIcon ?? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange),
+          zIndex: 1, // Draw under the main active driver if any
+        ));
+      }
+    }
+
+    // Display the assigned active driver
     if (state.assignedDriverLocation != null &&
         (state.step == BookingStep.confirmed ||
             state.step == BookingStep.arrived ||

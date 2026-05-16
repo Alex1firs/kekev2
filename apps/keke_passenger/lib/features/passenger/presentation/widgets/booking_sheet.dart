@@ -73,6 +73,8 @@ class BookingSheet extends ConsumerWidget {
         return _buildPickupPanel(context, ref, state);
       case BookingStep.selectingDestination:
         return _buildDestinationPanel(context, ref, state);
+      case BookingStep.selectingDestinationOnMap:
+        return _buildDestinationMapPanel(context, ref, state);
       case BookingStep.previewEstimate:
         return _buildFarePanel(context, ref, state);
       case BookingStep.searching:
@@ -162,8 +164,12 @@ class BookingSheet extends ConsumerWidget {
               MaterialPageRoute(builder: (_) => const DestinationSearchScreen()),
             );
             if (result != null) {
-              ref.read(bookingControllerProvider.notifier).setDestination(
-                result['address'] as String, result['location'] as LatLng);
+              if (result['manual_selection'] == true) {
+                ref.read(bookingControllerProvider.notifier).startDestinationMapSelection();
+              } else {
+                ref.read(bookingControllerProvider.notifier).setDestination(
+                  result['address'] as String, result['location'] as LatLng);
+              }
             }
           },
           child: Container(
@@ -183,6 +189,43 @@ class BookingSheet extends ConsumerWidget {
           ),
         ),
         const SizedBox(height: 8),
+      ],
+    );
+  }
+
+  // ── Destination map selection ─────────────────────────────────────────────
+  Widget _buildDestinationMapPanel(BuildContext context, WidgetRef ref, BookingState state) {
+    final isMoving = state.isCameraMoving;
+    final address = state.destinationAddress ?? 'Locating...';
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Text('Set Destination', style: AppTextStyles.title()),
+            const Spacer(),
+            IconButton(
+              icon: const Icon(Icons.close, color: AppColors.midGray),
+              onPressed: () => ref.read(bookingControllerProvider.notifier).confirmPickup(),
+              visualDensity: VisualDensity.compact,
+            ),
+          ],
+        ),
+        const SizedBox(height: 14),
+        _AddressRow(
+          icon: Icons.location_on,
+          iconColor: AppColors.primary,
+          text: isMoving ? 'Moving map...' : address,
+        ),
+        const SizedBox(height: 16),
+        ElevatedButton(
+          onPressed: isMoving || state.destinationLocation == null
+              ? null
+              : () => ref.read(bookingControllerProvider.notifier).confirmDestinationOnMap(),
+          child: const Text('Confirm Destination'),
+        ),
       ],
     );
   }

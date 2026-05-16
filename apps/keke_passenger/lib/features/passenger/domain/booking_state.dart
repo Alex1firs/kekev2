@@ -6,6 +6,7 @@ enum BookingStep {
   idle,                 // Map moves freely, no intent yet or viewing area
   selectingPickup,      // Fixed pin active, reverse geocoding active
   selectingDestination, // Pickup locked, searching for destination
+  selectingDestinationOnMap, // Manual map selection for destination
   previewEstimate,      // Both locked, showing polyline and fare
   searching,            // Backend is looking for driver
   confirmed,            // Driver accepted

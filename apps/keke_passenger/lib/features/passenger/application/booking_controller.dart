@@ -276,7 +276,7 @@ class BookingController extends StateNotifier<BookingState> {
   }
 
   void onCameraMove(CameraPosition position) {
-    if (state.step != BookingStep.selectingPickup && state.step != BookingStep.idle) return;
+    if (state.step != BookingStep.selectingPickup && state.step != BookingStep.selectingDestinationOnMap && state.step != BookingStep.idle) return;
 
     state = state.copyWith(
       isCameraMoving: true,
@@ -286,14 +286,14 @@ class BookingController extends StateNotifier<BookingState> {
   }
 
   void onCameraIdle() {
-    if (state.step != BookingStep.selectingPickup) return;
+    if (state.step != BookingStep.selectingPickup && state.step != BookingStep.selectingDestinationOnMap) return;
     
     state = state.copyWith(isCameraMoving: false);
     final target = state.mapCenter;
     if (target != null) {
       _debounceTimer?.cancel();
       _debounceTimer = Timer(const Duration(milliseconds: 400), () {
-        _triggerReverseGeocode(target, isPickup: true);
+        _triggerReverseGeocode(target, isPickup: state.step == BookingStep.selectingPickup);
         _fetchNearbyDrivers();
       });
     }
@@ -302,12 +302,16 @@ class BookingController extends StateNotifier<BookingState> {
   Future<void> _triggerReverseGeocode(LatLng target, {required bool isPickup}) async {
     if (isPickup) {
       state = state.copyWith(pickupLocation: target, pickupAddress: 'Loading address...');
+    } else {
+      state = state.copyWith(destinationLocation: target, destinationAddress: 'Loading address...');
     }
     
     final address = await _mapRepo.reverseGeocode(target);
     
     if (isPickup && state.step == BookingStep.selectingPickup) {
       state = state.copyWith(pickupAddress: address);
+    } else if (!isPickup && state.step == BookingStep.selectingDestinationOnMap) {
+      state = state.copyWith(destinationAddress: address);
     }
   }
 
@@ -339,6 +343,22 @@ class BookingController extends StateNotifier<BookingState> {
       step: BookingStep.previewEstimate,
     );
     if (state.pickupLocation != null) _calculateFare();
+  }
+
+  void startDestinationMapSelection() {
+    state = state.copyWith(
+      step: BookingStep.selectingDestinationOnMap,
+      mapCenter: state.pickupLocation, // Start where they are
+    );
+    if (state.mapCenter != null) {
+      _triggerReverseGeocode(state.mapCenter!, isPickup: false);
+    }
+  }
+
+  void confirmDestinationOnMap() {
+    if (state.destinationLocation == null) return;
+    state = state.copyWith(step: BookingStep.previewEstimate);
+    _calculateFare();
   }
 
   void setPaymentMethod(String method) {

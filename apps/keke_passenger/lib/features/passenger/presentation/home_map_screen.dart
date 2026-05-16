@@ -179,8 +179,12 @@ class _HomeMapScreenState extends ConsumerState<HomeMapScreen> {
           _buildTopBar(state),
 
           // Fixed pickup pin for camera-based pickup selection
-          if (state.step == BookingStep.selectingPickup)
-            const _PickupPin(),
+          // Fixed pickup/destination pin for camera-based selection
+          if (state.step == BookingStep.selectingPickup || state.step == BookingStep.selectingDestinationOnMap)
+            _PickupPin(
+              label: state.step == BookingStep.selectingDestinationOnMap ? 'Destination here' : 'Pickup here',
+              color: state.step == BookingStep.selectingDestinationOnMap ? AppColors.error : AppColors.primary,
+            ),
 
           // Booking bottom sheet
           const BookingSheet(),
@@ -356,7 +360,9 @@ class _HomeMapScreenState extends ConsumerState<HomeMapScreen> {
 }
 
 class _PickupPin extends StatelessWidget {
-  const _PickupPin();
+  final String label;
+  final Color color;
+  const _PickupPin({required this.label, required this.color});
 
   @override
   Widget build(BuildContext context) {
@@ -370,10 +376,10 @@ class _PickupPin extends StatelessWidget {
               color: AppColors.charcoal,
               borderRadius: BorderRadius.circular(8),
             ),
-            child: const Text('Pickup here', style: TextStyle(color: AppColors.white, fontSize: 12, fontWeight: FontWeight.w600)),
+            child: Text(label, style: const TextStyle(color: AppColors.white, fontSize: 12, fontWeight: FontWeight.w600)),
           ),
           const SizedBox(height: 4),
-          const Icon(Icons.location_on, size: 44, color: AppColors.primary),
+          Icon(Icons.location_on, size: 44, color: color),
           const SizedBox(height: 44),
         ],
       ),

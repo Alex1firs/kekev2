@@ -121,13 +121,19 @@ class _DestinationSearchScreenState
           },
         ),
         bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(3),
-          child: _isLoading
-              ? const LinearProgressIndicator(
+          preferredSize: const Size.fromHeight(48 + 3),
+          child: Column(
+            children: [
+              _buildSetOnMapButton(),
+              if (_isLoading)
+                const LinearProgressIndicator(
                   color: AppColors.primary,
                   backgroundColor: AppColors.darkGray,
                 )
-              : const SizedBox(height: 3),
+              else
+                const SizedBox(height: 3),
+            ],
+          ),
         ),
       ),
       body: _predictions.isEmpty
@@ -183,6 +189,32 @@ class _DestinationSearchScreenState
                 );
               },
             ),
+    );
+  }
+
+    );
+  }
+
+  Widget _buildSetOnMapButton() {
+    return InkWell(
+      onTap: () => Navigator.pop(context, {'manual_selection': true}),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: const BoxDecoration(
+          color: AppColors.charcoal,
+          border: Border(top: BorderSide(color: AppColors.darkGray, width: 0.5)),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.map_outlined, color: AppColors.primary, size: 20),
+            const SizedBox(width: 12),
+            Text(
+              'Set location on map',
+              style: AppTextStyles.body(color: AppColors.primary, weight: FontWeight.w600),
+            ),
+          ],
+        ),
+      ),
     );
   }
 

@@ -192,9 +192,6 @@ class _DestinationSearchScreenState
     );
   }
 
-    );
-  }
-
   Widget _buildSetOnMapButton() {
     return InkWell(
       onTap: () => Navigator.pop(context, {'manual_selection': true}),

@@ -33,6 +33,7 @@ export const ErrorCode = {
 
   // Generic
   INTERNAL_ERROR:            'INTERNAL_ERROR',
+  NOT_FOUND:                 'NOT_FOUND',
 } as const;
 
 export type ErrorCodeType = typeof ErrorCode[keyof typeof ErrorCode];

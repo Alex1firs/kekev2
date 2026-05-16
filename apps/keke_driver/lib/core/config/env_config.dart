@@ -23,8 +23,8 @@ class EnvConfig {
 
     const String mapsKey = String.fromEnvironment('GOOGLE_MAPS_API_KEY');
     if (mapsKey.isEmpty) {
-      throw Exception(
-        'FATAL: GOOGLE_MAPS_API_KEY is not set. '
+      print(
+        'WARNING: GOOGLE_MAPS_API_KEY is not set. '
         'Build with --dart-define=GOOGLE_MAPS_API_KEY=<your_key>',
       );
     }

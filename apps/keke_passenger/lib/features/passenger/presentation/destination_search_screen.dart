@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../data/map_repository.dart';
+import '../data/passenger_repository.dart';
+import '../domain/saved_location.dart';
 
 class DestinationSearchScreen extends ConsumerStatefulWidget {
   final String hintText;
@@ -18,13 +20,28 @@ class _DestinationSearchScreenState
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _focusNode = FocusNode();
   List<Map<String, dynamic>> _predictions = [];
+  List<SavedLocation> _savedLocations = [];
   Timer? _debounce;
   bool _isLoading = false;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _focusNode.requestFocus());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _focusNode.requestFocus();
+      _fetchSavedLocations();
+    });
+  }
+
+  Future<void> _fetchSavedLocations() async {
+    try {
+      final results = await ref.read(passengerRepositoryProvider).getSavedLocations();
+      if (mounted) {
+        setState(() => _savedLocations = results);
+      }
+    } catch (e) {
+      print('Failed to fetch saved locations: $e');
+    }
   }
 
   void _onSearchChanged(String query) {
@@ -171,23 +188,76 @@ class _DestinationSearchScreenState
 
   Widget _buildEmptyState() {
     if (_searchController.text.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.search_rounded, size: 56, color: AppColors.border),
-            const SizedBox(height: 16),
-            Text(
-              'Search for your destination',
-              style: AppTextStyles.body(color: AppColors.lightGray),
+      return Column(
+        children: [
+          if (_savedLocations.isNotEmpty) ...[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+              child: Row(
+                children: [
+                  const Icon(Icons.star_outline, size: 18, color: AppColors.midGray),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Saved Locations',
+                    style: AppTextStyles.bodySmall(
+                        color: AppColors.midGray, weight: FontWeight.w700),
+                  ),
+                ],
+              ),
             ),
-            const SizedBox(height: 6),
-            Text(
-              'Try a street, landmark, or area',
-              style: AppTextStyles.bodySmall(color: AppColors.lightGray),
-            ),
+            ..._savedLocations.map((loc) => ListTile(
+                  leading: Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: AppColors.paleGray,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.star,
+                      color: AppColors.primary,
+                      size: 20,
+                    ),
+                  ),
+                  title: Text(
+                    loc.name,
+                    style: AppTextStyles.body(
+                        color: AppColors.charcoal, weight: FontWeight.w600),
+                  ),
+                  subtitle: Text(
+                    loc.address,
+                    style: AppTextStyles.bodySmall(color: AppColors.midGray),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  onTap: () {
+                    Navigator.pop(context, {'location': loc.location, 'address': loc.address});
+                  },
+                )),
+            const Divider(color: AppColors.border, height: 24),
           ],
-        ),
+          Expanded(
+            child: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.search_rounded,
+                      size: 56, color: AppColors.border),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Search for your destination',
+                    style: AppTextStyles.body(color: AppColors.lightGray),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Try a street, landmark, or area',
+                    style: AppTextStyles.bodySmall(color: AppColors.lightGray),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
       );
     }
 

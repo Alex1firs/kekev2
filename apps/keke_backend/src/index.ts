@@ -14,6 +14,7 @@ import driverRoutes from "./routes/driver_routes";
 import authRoutes, { driverAuthRouter } from "./routes/auth_routes";
 import rideRoutes from "./routes/ride_routes";
 import notificationRoutes from "./routes/notification_routes";
+import passengerRoutes from "./routes/passenger_routes";
 import { NotificationService } from './services/notification_service';
 import { redis } from './config/redis';
 
@@ -92,6 +93,7 @@ app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/drivers', driverRoutes);
 app.use('/api/v1/rides', rideRoutes);
 app.use('/api/v1/notifications', notificationRoutes);
+app.use('/api/v1/passenger', passengerRoutes);
 
 const httpServer = createServer(app);
 const io = new Server(httpServer, {

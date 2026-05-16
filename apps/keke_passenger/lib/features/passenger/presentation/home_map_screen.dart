@@ -11,6 +11,7 @@ import 'widgets/booking_sheet.dart';
 import 'wallet_screen.dart';
 import 'trip_history_screen.dart';
 import 'profile_screen.dart';
+import 'saved_locations_manager_screen.dart';
 
 class HomeMapScreen extends ConsumerStatefulWidget {
   const HomeMapScreen({super.key});
@@ -213,6 +214,13 @@ class _HomeMapScreenState extends ConsumerState<HomeMapScreen> {
             tooltip: 'Trip History',
             onTap: () => Navigator.push(
               context, MaterialPageRoute(builder: (_) => const PassengerTripHistoryScreen())),
+          ),
+          const SizedBox(height: 8),
+          _MapIconButton(
+            icon: Icons.star_border_rounded,
+            tooltip: 'Saved Locations',
+            onTap: () => Navigator.push(
+              context, MaterialPageRoute(builder: (_) => const SavedLocationsManagerScreen())),
           ),
           const SizedBox(height: 8),
           _MapIconButton(

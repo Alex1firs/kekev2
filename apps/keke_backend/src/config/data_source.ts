@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { DataSource } from "typeorm";
-import { Wallet, LedgerEntry, Transaction, PayoutRecord, DriverProfile, Ride, AuditLog, User, DeviceToken } from "../models";
+import { Wallet, LedgerEntry, Transaction, PayoutRecord, DriverProfile, Ride, AuditLog, User, DeviceToken, SavedLocation } from "../models";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -16,7 +16,7 @@ export const AppDataSource = new DataSource({
     url: DATABASE_URL,
     synchronize: false,
     logging: ["error", "warn", "migration"],
-    entities: [Wallet, LedgerEntry, Transaction, PayoutRecord, DriverProfile, Ride, AuditLog, User, DeviceToken],
+    entities: [Wallet, LedgerEntry, Transaction, PayoutRecord, DriverProfile, Ride, AuditLog, User, DeviceToken, SavedLocation],
     migrations: ["dist/migrations/*.js"],
     migrationsTransactionMode: "each",
     subscribers: [],

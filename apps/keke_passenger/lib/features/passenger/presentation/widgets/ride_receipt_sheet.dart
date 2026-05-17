@@ -4,11 +4,41 @@ import 'package:intl/intl.dart';
 import '../../../../../core/theme/app_theme.dart';
 import '../../application/booking_controller.dart';
 
-class RideReceiptSheet extends ConsumerWidget {
+class RideReceiptSheet extends ConsumerStatefulWidget {
   const RideReceiptSheet({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<RideReceiptSheet> createState() => _RideReceiptSheetState();
+}
+
+class _RideReceiptSheetState extends ConsumerState<RideReceiptSheet>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _ctrl;
+  late Animation<double> _checkScale;
+  late Animation<double> _fadeIn;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 800));
+    _checkScale = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _ctrl, curve: const Interval(0.0, 0.6, curve: Curves.elasticOut)),
+    );
+    _fadeIn = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _ctrl, curve: const Interval(0.4, 1.0, curve: Curves.easeOut)),
+    );
+    _ctrl.forward();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final state = ref.watch(bookingControllerProvider);
 
     final fare = state.receiptFare ?? 0;
@@ -33,9 +63,9 @@ class RideReceiptSheet extends ConsumerWidget {
               // Handle
               Center(
                 child: Container(
-                  width: 36,
+                  width: 40,
                   height: 4,
-                  margin: const EdgeInsets.only(bottom: 20),
+                  margin: const EdgeInsets.only(bottom: 24),
                   decoration: BoxDecoration(
                     color: AppColors.border,
                     borderRadius: BorderRadius.circular(2),
@@ -43,173 +73,201 @@ class RideReceiptSheet extends ConsumerWidget {
                 ),
               ),
 
-              // Success icon + heading
+              // Success check animation
               Center(
-                child: Container(
-                  width: 64,
-                  height: 64,
-                  decoration: const BoxDecoration(
-                    color: AppColors.primaryLight,
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.check_rounded,
-                    color: AppColors.primaryDark,
-                    size: 36,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 14),
-              Text(
-                'Trip Complete!',
-                textAlign: TextAlign.center,
-                style: AppTextStyles.headline(
-                    color: AppColors.charcoal, weight: FontWeight.w800),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                '$dateStr · $timeStr',
-                textAlign: TextAlign.center,
-                style: AppTextStyles.bodySmall(color: AppColors.midGray),
-              ),
-
-              const SizedBox(height: 24),
-              const _Divider(),
-
-              // Fare highlight
-              Container(
-                padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
-                decoration: BoxDecoration(
-                  color: AppColors.paleGray,
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Total Fare',
-                            style: AppTextStyles.caption(color: AppColors.midGray)),
-                        Text(
-                          '₦${NumberFormat('#,###').format(fare)}',
-                          style: AppTextStyles.display(
-                              color: AppColors.charcoal, weight: FontWeight.w800),
+                child: ScaleTransition(
+                  scale: _checkScale,
+                  child: Container(
+                    width: 72,
+                    height: 72,
+                    decoration: BoxDecoration(
+                      color: AppColors.primary,
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: AppColors.primary.withOpacity(0.35),
+                          blurRadius: 20,
+                          offset: const Offset(0, 6),
                         ),
                       ],
                     ),
+                    child: const Icon(Icons.check_rounded,
+                        color: AppColors.charcoal, size: 40),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              FadeTransition(
+                opacity: _fadeIn,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      'Trip Complete!',
+                      textAlign: TextAlign.center,
+                      style: AppTextStyles.headline(
+                          color: AppColors.charcoal, weight: FontWeight.w800),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '$dateStr · $timeStr',
+                      textAlign: TextAlign.center,
+                      style: AppTextStyles.bodySmall(color: AppColors.midGray),
+                    ),
+                    const SizedBox(height: 24),
+
+                    // Fare card
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                      padding: const EdgeInsets.all(20),
                       decoration: BoxDecoration(
-                        color: isCash
-                            ? const Color(0xFFFEF9C3)
-                            : AppColors.primaryLight,
-                        borderRadius: BorderRadius.circular(10),
+                        color: AppColors.charcoal,
+                        borderRadius: BorderRadius.circular(20),
+                        boxShadow: const [
+                          BoxShadow(
+                              color: Color(0x20000000),
+                              blurRadius: 16,
+                              offset: Offset(0, 4)),
+                        ],
                       ),
                       child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Icon(
-                            isCash
-                                ? Icons.money_rounded
-                                : Icons.account_balance_wallet_outlined,
-                            size: 16,
-                            color: isCash
-                                ? const Color(0xFF92400E)
-                                : AppColors.primaryDark,
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('Total Fare',
+                                  style: AppTextStyles.caption(
+                                      color: AppColors.midGray)),
+                              const SizedBox(height: 4),
+                              Text(
+                                '₦${NumberFormat('#,###').format(fare)}',
+                                style: AppTextStyles.display(
+                                    color: AppColors.primary,
+                                    weight: FontWeight.w800),
+                              ),
+                            ],
                           ),
-                          const SizedBox(width: 6),
-                          Text(
-                            isCash ? 'Cash' : 'Wallet',
-                            style: AppTextStyles.bodySmall(
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 14, vertical: 8),
+                            decoration: BoxDecoration(
                               color: isCash
-                                  ? const Color(0xFF92400E)
-                                  : AppColors.primaryDark,
-                              weight: FontWeight.w700,
+                                  ? const Color(0xFF2A2200)
+                                  : AppColors.primary.withOpacity(0.2),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: isCash
+                                    ? AppColors.primary.withOpacity(0.3)
+                                    : AppColors.primary.withOpacity(0.5),
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  isCash
+                                      ? Icons.payments_outlined
+                                      : Icons.account_balance_wallet_outlined,
+                                  size: 16,
+                                  color: AppColors.primary,
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  isCash ? 'Cash' : 'Wallet',
+                                  style: AppTextStyles.bodySmall(
+                                    color: AppColors.primary,
+                                    weight: FontWeight.w700,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                         ],
                       ),
                     ),
-                  ],
-                ),
-              ),
 
-              const SizedBox(height: 16),
-              const _Divider(),
-              const SizedBox(height: 4),
+                    const SizedBox(height: 20),
+                    const _Divider(),
 
-              // Route
-              _RouteSection(
-                pickup: state.receiptPickupAddress ?? '—',
-                destination: state.receiptDestinationAddress ?? '—',
-                distance: state.receiptDistance,
-              ),
-
-              const SizedBox(height: 4),
-              const _Divider(),
-
-              // Driver card
-              if (driver != null) ...[
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Container(
-                      width: 44,
-                      height: 44,
-                      decoration: const BoxDecoration(
-                        color: AppColors.paleGray,
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(Icons.electric_rickshaw,
-                          color: AppColors.midGray, size: 22),
+                    // Route
+                    _RouteSection(
+                      pickup: state.receiptPickupAddress ?? '—',
+                      destination: state.receiptDestinationAddress ?? '—',
+                      distance: state.receiptDistance,
                     ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+
+                    const _Divider(),
+
+                    // Driver summary
+                    if (driver != null) ...[
+                      const SizedBox(height: 14),
+                      Row(
                         children: [
-                          Text(
-                            driver['name'] ?? 'Driver',
-                            style: AppTextStyles.body(
-                                color: AppColors.charcoal,
-                                weight: FontWeight.w600),
+                          Container(
+                            width: 46,
+                            height: 46,
+                            decoration: const BoxDecoration(
+                              color: AppColors.primary,
+                              shape: BoxShape.circle,
+                            ),
+                            child: Center(
+                              child: Text(
+                                (driver['name'] as String? ?? 'D')
+                                    .substring(0, 1)
+                                    .toUpperCase(),
+                                style: AppTextStyles.title(
+                                    color: AppColors.charcoal,
+                                    weight: FontWeight.w800),
+                              ),
+                            ),
                           ),
-                          Text(
-                            [
-                              driver['vehicleModel'],
-                              driver['vehiclePlate'],
-                            ]
-                                .where((v) => v != null && v.toString().isNotEmpty)
-                                .join(' · '),
-                            style: AppTextStyles.bodySmall(color: AppColors.midGray),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  driver['name'] ?? 'Driver',
+                                  style: AppTextStyles.body(
+                                      color: AppColors.charcoal,
+                                      weight: FontWeight.w600),
+                                ),
+                                Text(
+                                  [driver['vehicleModel'], driver['vehiclePlate']]
+                                      .where((v) =>
+                                          v != null && v.toString().isNotEmpty)
+                                      .join(' · '),
+                                  style:
+                                      AppTextStyles.bodySmall(color: AppColors.midGray),
+                                ),
+                              ],
+                            ),
                           ),
                         ],
                       ),
+                      const SizedBox(height: 14),
+                      const _Divider(),
+                    ],
+
+                    const SizedBox(height: 24),
+
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primary,
+                        foregroundColor: AppColors.charcoal,
+                        padding: const EdgeInsets.symmetric(vertical: 18),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        elevation: 0,
+                      ),
+                      onPressed: () => ref
+                          .read(bookingControllerProvider.notifier)
+                          .dismissReceipt(),
+                      child: Text('Done',
+                          style: AppTextStyles.button(color: AppColors.charcoal)),
                     ),
                   ],
-                ),
-                const SizedBox(height: 12),
-                const _Divider(),
-              ],
-
-              const SizedBox(height: 20),
-
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primary,
-                  foregroundColor: AppColors.charcoal,
-                  padding: const EdgeInsets.symmetric(vertical: 18),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  elevation: 0,
-                ),
-                onPressed: () =>
-                    ref.read(bookingControllerProvider.notifier).dismissReceipt(),
-                child: Text(
-                  'Done',
-                  style: AppTextStyles.body(
-                      color: AppColors.charcoal, weight: FontWeight.w700),
                 ),
               ),
             ],
@@ -243,7 +301,7 @@ class _RouteSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 12),
+      padding: const EdgeInsets.symmetric(vertical: 14),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -253,18 +311,14 @@ class _RouteSection extends StatelessWidget {
                 width: 10,
                 height: 10,
                 decoration: const BoxDecoration(
-                  color: AppColors.primary,
-                  shape: BoxShape.circle,
-                ),
+                    color: AppColors.primary, shape: BoxShape.circle),
               ),
-              Container(width: 2, height: 36, color: AppColors.border),
+              Container(width: 2, height: 38, color: AppColors.border),
               Container(
                 width: 10,
                 height: 10,
                 decoration: const BoxDecoration(
-                  color: AppColors.error,
-                  shape: BoxShape.circle,
-                ),
+                    color: AppColors.error, shape: BoxShape.circle),
               ),
             ],
           ),
@@ -273,21 +327,17 @@ class _RouteSection extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  pickup,
-                  style: AppTextStyles.body(
-                      color: AppColors.charcoal, weight: FontWeight.w500),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 18),
-                Text(
-                  destination,
-                  style: AppTextStyles.body(
-                      color: AppColors.darkGray, weight: FontWeight.w500),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
+                Text(pickup,
+                    style: AppTextStyles.body(
+                        color: AppColors.charcoal, weight: FontWeight.w500),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis),
+                const SizedBox(height: 20),
+                Text(destination,
+                    style: AppTextStyles.body(
+                        color: AppColors.darkGray, weight: FontWeight.w500),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis),
                 if (distance != null) ...[
                   const SizedBox(height: 8),
                   Row(

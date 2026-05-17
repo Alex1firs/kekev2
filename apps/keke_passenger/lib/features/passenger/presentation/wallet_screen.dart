@@ -70,20 +70,12 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
 
   Widget _buildBalanceCard(BuildContext context, WidgetRef ref, WalletState state) {
     return Container(
-      margin: const EdgeInsets.all(20),
+      margin: const EdgeInsets.fromLTRB(20, 20, 20, 8),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [AppColors.charcoal, Color(0xFF1F2937)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
+        color: AppColors.charcoal,
         borderRadius: BorderRadius.circular(24),
         boxShadow: const [
-          BoxShadow(
-            color: Color(0x30000000),
-            blurRadius: 16,
-            offset: Offset(0, 6),
-          ),
+          BoxShadow(color: Color(0x30000000), blurRadius: 20, offset: Offset(0, 6)),
         ],
       ),
       child: Padding(
@@ -97,31 +89,34 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                   width: 40,
                   height: 40,
                   decoration: BoxDecoration(
-                    color: AppColors.primary.withOpacity(0.2),
+                    color: AppColors.primary,
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  child: const Icon(
-                    Icons.account_balance_wallet_outlined,
-                    color: AppColors.primary,
-                    size: 20,
-                  ),
+                  child: const Icon(Icons.account_balance_wallet_outlined,
+                      color: AppColors.charcoal, size: 20),
                 ),
                 const SizedBox(width: 12),
-                Text(
-                  'Keke Wallet',
-                  style: AppTextStyles.body(color: AppColors.lightGray),
-                ),
+                Text('Keke Wallet',
+                    style: AppTextStyles.body(color: AppColors.lightGray)),
+                const Spacer(),
+                // Refresh indicator dot
+                if (state.isLoading)
+                  const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: AppColors.primary),
+                  ),
               ],
             ),
             const SizedBox(height: 20),
-            Text(
-              'Available Balance',
-              style: AppTextStyles.bodySmall(color: AppColors.midGray),
-            ),
+            Text('Available Balance',
+                style: AppTextStyles.bodySmall(color: AppColors.midGray)),
             const SizedBox(height: 6),
             Text(
               '₦${NumberFormat('#,###.00').format(state.balance)}',
-              style: AppTextStyles.display(color: AppColors.white, weight: FontWeight.w800),
+              style: AppTextStyles.display(
+                  color: AppColors.primary, weight: FontWeight.w800),
             ),
             const SizedBox(height: 24),
             SizedBox(
@@ -132,19 +127,14 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                   foregroundColor: AppColors.charcoal,
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
-                  ),
+                      borderRadius: BorderRadius.circular(14)),
                   elevation: 0,
                 ),
                 onPressed: () => _showTopupDialog(context, ref),
                 icon: const Icon(Icons.add_rounded, size: 20),
-                label: Text(
-                  'Fund Wallet',
-                  style: AppTextStyles.body(
-                    color: AppColors.charcoal,
-                    weight: FontWeight.w700,
-                  ),
-                ),
+                label: Text('Fund Wallet',
+                    style: AppTextStyles.body(
+                        color: AppColors.charcoal, weight: FontWeight.w700)),
               ),
             ),
           ],
@@ -155,8 +145,15 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
 
   Widget _buildSectionHeader(String title) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
-      child: Text(title, style: AppTextStyles.title(color: AppColors.charcoal)),
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 10),
+      child: Row(
+        children: [
+          Text(title, style: AppTextStyles.title(color: AppColors.charcoal)),
+          const Spacer(),
+          Text('Pull to refresh',
+              style: AppTextStyles.caption(color: AppColors.lightGray)),
+        ],
+      ),
     );
   }
 

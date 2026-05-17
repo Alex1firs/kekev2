@@ -23,67 +23,91 @@ class HomeMapScreen extends ConsumerStatefulWidget {
 class _HomeMapScreenState extends ConsumerState<HomeMapScreen> {
   GoogleMapController? _mapController;
   BitmapDescriptor? _kekeMarkerIcon;
+  BitmapDescriptor? _driverMarkerIcon;
   bool _hasFitToDriver = false;
 
   @override
   void initState() {
     super.initState();
-    _loadKekeMarker();
+    _loadKekeMarkers();
   }
 
-  Future<void> _loadKekeMarker() async {
-    const double size = 56;
+  Future<void> _loadKekeMarkers() async {
+    final results = await Future.wait([
+      // Nearby idle drivers — yellow, smaller
+      _drawKekeMarker(
+        size: 58,
+        bg: const Color(0xFFF59E0B),
+        iconColor: const Color(0xFF111827),
+        ringColor: Colors.white,
+        ringWidth: 2.5,
+      ),
+      // Assigned driver — inverted (charcoal bg, yellow icon + ring) so yours stands out
+      _drawKekeMarker(
+        size: 72,
+        bg: const Color(0xFF111827),
+        iconColor: const Color(0xFFF59E0B),
+        ringColor: const Color(0xFFF59E0B),
+        ringWidth: 3.0,
+      ),
+    ]);
+    if (mounted) {
+      setState(() {
+        _kekeMarkerIcon = results[0];
+        _driverMarkerIcon = results[1];
+      });
+    }
+  }
+
+  Future<BitmapDescriptor> _drawKekeMarker({
+    required double size,
+    required Color bg,
+    required Color iconColor,
+    required Color ringColor,
+    required double ringWidth,
+  }) async {
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
+    final r = size / 2 - 4.0;
+    final center = Offset(size / 2, size / 2);
 
     // Drop shadow
     canvas.drawCircle(
-      const Offset(size / 2 + 1, size / 2 + 2),
-      size / 2 - 3,
+      center + const Offset(1, 2.5),
+      r,
       Paint()
-        ..color = const Color(0x50000000)
-        ..maskFilter = const MaskFilter.blur(ui.BlurStyle.normal, 4),
+        ..color = const Color(0x55000000)
+        ..maskFilter = const MaskFilter.blur(ui.BlurStyle.normal, 5),
     );
-
-    // Amber fill
+    // Background fill
+    canvas.drawCircle(center, r, Paint()..color = bg);
+    // Ring border
     canvas.drawCircle(
-      const Offset(size / 2, size / 2),
-      size / 2 - 3,
-      Paint()..color = const Color(0xFFF59E0B),
-    );
-
-    // White border
-    canvas.drawCircle(
-      const Offset(size / 2, size / 2),
-      size / 2 - 3,
+      center,
+      r,
       Paint()
-        ..color = Colors.white
+        ..color = ringColor
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 2.5,
+        ..strokeWidth = ringWidth,
     );
-
-    // White "K" for Keke
+    // Rickshaw icon via Material icon font glyph
     final tp = TextPainter(
-      text: const TextSpan(
-        text: 'K',
+      textDirection: TextDirection.ltr,
+      text: TextSpan(
+        text: String.fromCharCode(Icons.electric_rickshaw.codePoint),
         style: TextStyle(
-          color: Colors.white,
-          fontSize: 26,
-          fontWeight: FontWeight.w900,
+          fontFamily: Icons.electric_rickshaw.fontFamily,
+          fontSize: size * 0.44,
+          color: iconColor,
         ),
       ),
-      textDirection: TextDirection.ltr,
     )..layout();
-    tp.paint(canvas, Offset((size - tp.width) / 2, (size - tp.height) / 2));
+    tp.paint(canvas, center - Offset(tp.width / 2, tp.height / 2));
 
     final picture = recorder.endRecording();
     final img = await picture.toImage(size.toInt(), size.toInt());
     final bytes = await img.toByteData(format: ui.ImageByteFormat.png);
-    if (mounted && bytes != null) {
-      setState(() {
-        _kekeMarkerIcon = BitmapDescriptor.fromBytes(bytes.buffer.asUint8List());
-      });
-    }
+    return BitmapDescriptor.fromBytes(bytes!.buffer.asUint8List());
   }
 
   @override
@@ -96,7 +120,6 @@ class _HomeMapScreenState extends ConsumerState<HomeMapScreen> {
       }
     });
 
-    // Auto-fit camera when driver first appears during confirmed state
     ref.listen(bookingControllerProvider.select((s) => s.assignedDriverLocation), (prev, next) {
       if (next == null || _mapController == null) return;
       final step = ref.read(bookingControllerProvider).step;
@@ -113,7 +136,8 @@ class _HomeMapScreenState extends ConsumerState<HomeMapScreen> {
         next.latitude > pickup.latitude ? next.latitude : pickup.latitude,
         next.longitude > pickup.longitude ? next.longitude : pickup.longitude,
       );
-      _mapController!.animateCamera(CameraUpdate.newLatLngBounds(LatLngBounds(southwest: sw, northeast: ne), 100));
+      _mapController!.animateCamera(
+          CameraUpdate.newLatLngBounds(LatLngBounds(southwest: sw, northeast: ne), 100));
     });
 
     ref.listen(bookingControllerProvider.select((s) => s.step), (prev, next) {
@@ -150,12 +174,9 @@ class _HomeMapScreenState extends ConsumerState<HomeMapScreen> {
       extendBodyBehindAppBar: true,
       body: Stack(
         children: [
-          // Map
+          // ── Map / loading state
           if (state.step == BookingStep.loading)
-            Container(
-              color: AppColors.paleGray,
-              child: const Center(child: CircularProgressIndicator()),
-            )
+            _buildMapLoading()
           else
             GoogleMap(
               initialCameraPosition: CameraPosition(
@@ -166,81 +187,84 @@ class _HomeMapScreenState extends ConsumerState<HomeMapScreen> {
               myLocationButtonEnabled: false,
               zoomControlsEnabled: false,
               compassEnabled: false,
-              onMapCreated: (controller) => _mapController = controller,
-              onCameraMove: (position) =>
-                  ref.read(bookingControllerProvider.notifier).onCameraMove(position),
+              onMapCreated: (c) => _mapController = c,
+              onCameraMove: (p) =>
+                  ref.read(bookingControllerProvider.notifier).onCameraMove(p),
               onCameraIdle: () =>
                   ref.read(bookingControllerProvider.notifier).onCameraIdle(),
               markers: _buildMarkers(state),
               polylines: _buildPolylines(state),
             ),
 
-          // Top action bar — overlays the map
-          _buildTopBar(state),
+          // ── Quick-action menu (top-right)
+          _buildActionArea(state),
 
-          // Fixed pickup pin for camera-based pickup selection
-          // Fixed pickup/destination pin for camera-based selection
-          if (state.step == BookingStep.selectingPickup || state.step == BookingStep.selectingDestinationOnMap)
+          // ── Branded pickup / destination pin
+          if (state.step == BookingStep.selectingPickup ||
+              state.step == BookingStep.selectingDestinationOnMap)
             _PickupPin(
-              label: state.step == BookingStep.selectingDestinationOnMap ? 'Destination here' : 'Pickup here',
-              color: state.step == BookingStep.selectingDestinationOnMap ? AppColors.error : AppColors.primary,
+              label: state.step == BookingStep.selectingDestinationOnMap
+                  ? 'Drop here'
+                  : 'Pickup here',
+              color: state.step == BookingStep.selectingDestinationOnMap
+                  ? AppColors.error
+                  : AppColors.primary,
+              isMoving: state.isCameraMoving,
             ),
 
-          // Booking bottom sheet
+          // ── Booking sheet
           const BookingSheet(),
         ],
       ),
     );
   }
 
-  Widget _buildTopBar(BookingState state) {
-    // Hide top bar when actively in a ride (HUD is the only interface)
-    final hideBar = state.step == BookingStep.started ||
+  Widget _buildMapLoading() {
+    return Container(
+      color: AppColors.charcoal,
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                color: AppColors.primary,
+                borderRadius: BorderRadius.circular(22),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.primary.withOpacity(0.4),
+                    blurRadius: 24,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
+              ),
+              child: const Icon(Icons.electric_rickshaw,
+                  color: AppColors.charcoal, size: 40),
+            ),
+            const SizedBox(height: 24),
+            const SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primary),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildActionArea(BookingState state) {
+    final hide = state.step == BookingStep.started ||
         state.step == BookingStep.arrived ||
         state.step == BookingStep.confirmed;
-
-    if (hideBar) return const SizedBox.shrink();
+    if (hide) return const SizedBox.shrink();
 
     return Positioned(
       top: MediaQuery.of(context).padding.top + 12,
       right: 12,
-      child: Column(
-        children: [
-          _MapIconButton(
-            icon: Icons.person_outline,
-            tooltip: 'Profile',
-            onTap: () => Navigator.push(
-              context, MaterialPageRoute(builder: (_) => const PassengerProfileScreen())),
-          ),
-          const SizedBox(height: 8),
-          _MapIconButton(
-            icon: Icons.history_rounded,
-            tooltip: 'Trip History',
-            onTap: () => Navigator.push(
-              context, MaterialPageRoute(builder: (_) => const PassengerTripHistoryScreen())),
-          ),
-          const SizedBox(height: 8),
-          _MapIconButton(
-            icon: Icons.star_border_rounded,
-            tooltip: 'Saved Locations',
-            onTap: () => Navigator.push(
-              context, MaterialPageRoute(builder: (_) => const SavedLocationsManagerScreen())),
-          ),
-          const SizedBox(height: 8),
-          _MapIconButton(
-            icon: Icons.account_balance_wallet_outlined,
-            tooltip: 'Wallet',
-            onTap: () => Navigator.push(
-              context, MaterialPageRoute(builder: (_) => const WalletScreen())),
-          ),
-          const SizedBox(height: 8),
-          _MapIconButton(
-            icon: Icons.logout_rounded,
-            tooltip: 'Logout',
-            onTap: () => ref.read(authControllerProvider.notifier).logout(),
-          ),
-        ],
-      ),
+      child: _QuickActionMenu(parentContext: context, ref: ref),
     );
   }
 
@@ -252,7 +276,7 @@ class _HomeMapScreenState extends ConsumerState<HomeMapScreen> {
       BookingStep.searching,
       BookingStep.confirmed,
       BookingStep.arrived,
-      BookingStep.started
+      BookingStep.started,
     };
 
     if (showMarkersSteps.contains(state.step)) {
@@ -272,37 +296,38 @@ class _HomeMapScreenState extends ConsumerState<HomeMapScreen> {
       }
     }
 
-    // Display nearby drivers before an active ride
-    if (state.step == BookingStep.selectingPickup || 
-        state.step == BookingStep.selectingDestination || 
-        state.step == BookingStep.previewEstimate || 
+    if (state.step == BookingStep.selectingPickup ||
+        state.step == BookingStep.selectingDestination ||
+        state.step == BookingStep.previewEstimate ||
         state.step == BookingStep.idle) {
-      
       for (int i = 0; i < state.nearbyDrivers.length; i++) {
         markers.add(Marker(
           markerId: MarkerId('nearby_driver_$i'),
           position: state.nearbyDrivers[i],
-          icon: _kekeMarkerIcon ?? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange),
-          zIndex: 1, // Draw under the main active driver if any
+          icon: _kekeMarkerIcon ??
+              BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange),
+          zIndex: 1,
         ));
       }
     }
 
-    // Display the assigned active driver
     if (state.assignedDriverLocation != null &&
         (state.step == BookingStep.confirmed ||
             state.step == BookingStep.arrived ||
             state.step == BookingStep.started)) {
       bool isStale = false;
       if (state.lastLocationUpdate != null) {
-        final diff = DateTime.now().difference(state.lastLocationUpdate!);
-        if (diff.inSeconds > 30) isStale = true;
+        if (DateTime.now().difference(state.lastLocationUpdate!).inSeconds > 30) {
+          isStale = true;
+        }
       }
       if (!isStale) {
         markers.add(Marker(
           markerId: const MarkerId('driver'),
           position: state.assignedDriverLocation!,
-          icon: _kekeMarkerIcon ?? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange),
+          icon: _driverMarkerIcon ??
+              _kekeMarkerIcon ??
+              BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange),
           infoWindow: const InfoWindow(title: 'Your Keke'),
           zIndex: 2,
         ));
@@ -318,7 +343,7 @@ class _HomeMapScreenState extends ConsumerState<HomeMapScreen> {
       BookingStep.searching,
       BookingStep.confirmed,
       BookingStep.arrived,
-      BookingStep.started
+      BookingStep.started,
     };
 
     if (!showPolylineSteps.contains(state.step)) return {};
@@ -326,12 +351,14 @@ class _HomeMapScreenState extends ConsumerState<HomeMapScreen> {
     final polylines = <Polyline>{};
 
     if (state.activeRoutePolyline.isNotEmpty) {
-      // Main route: slightly dimmed during confirmed (driver approach) so approach line stands out
       final isDimmed = state.step == BookingStep.confirmed;
       polylines.add(Polyline(
         polylineId: const PolylineId('route'),
-        color: isDimmed ? AppColors.primary.withOpacity(0.35) : AppColors.primary,
-        width: isDimmed ? 3 : 5,
+        // Deeper amber (primaryDark) gives better contrast on light map tiles
+        color: isDimmed
+            ? AppColors.primary.withOpacity(0.25)
+            : AppColors.primaryDark,
+        width: isDimmed ? 3 : 6,
         points: state.activeRoutePolyline,
         jointType: JointType.round,
         endCap: Cap.roundCap,
@@ -339,19 +366,18 @@ class _HomeMapScreenState extends ConsumerState<HomeMapScreen> {
       ));
     }
 
-    // Driver-to-pickup approach line — shown while driver is heading to passenger
     if (state.step == BookingStep.confirmed &&
         state.assignedDriverLocation != null &&
         state.pickupLocation != null) {
       polylines.add(Polyline(
         polylineId: const PolylineId('driver_approach'),
-        color: const Color(0xFFF59E0B), // amber
-        width: 4,
+        color: AppColors.primary,
+        width: 3,
         points: [state.assignedDriverLocation!, state.pickupLocation!],
         jointType: JointType.round,
         endCap: Cap.roundCap,
         startCap: Cap.roundCap,
-        patterns: [PatternItem.dash(16), PatternItem.gap(8)],
+        patterns: [PatternItem.dash(20), PatternItem.gap(10)],
       ));
     }
 
@@ -359,58 +385,334 @@ class _HomeMapScreenState extends ConsumerState<HomeMapScreen> {
   }
 }
 
-class _PickupPin extends StatelessWidget {
+// ── Quick-action expandable menu ───────────────────────────────────────────
+
+class _ActionItem {
+  final IconData icon;
   final String label;
-  final Color color;
-  const _PickupPin({required this.label, required this.color});
+  const _ActionItem(this.icon, this.label);
+}
+
+class _QuickActionMenu extends StatefulWidget {
+  final BuildContext parentContext;
+  final WidgetRef ref;
+  const _QuickActionMenu({required this.parentContext, required this.ref});
+
+  @override
+  State<_QuickActionMenu> createState() => _QuickActionMenuState();
+}
+
+class _QuickActionMenuState extends State<_QuickActionMenu>
+    with SingleTickerProviderStateMixin {
+  bool _isOpen = false;
+  late AnimationController _ctrl;
+
+  static const _items = [
+    _ActionItem(Icons.person_outline, 'Profile'),
+    _ActionItem(Icons.history_rounded, 'My Trips'),
+    _ActionItem(Icons.star_border_rounded, 'Saved'),
+    _ActionItem(Icons.account_balance_wallet_outlined, 'Wallet'),
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 260));
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  void _toggle() {
+    setState(() => _isOpen = !_isOpen);
+    _isOpen ? _ctrl.forward() : _ctrl.reverse();
+  }
+
+  void _navigate(int index) {
+    _toggle();
+    Widget screen;
+    switch (index) {
+      case 0:
+        screen = const PassengerProfileScreen();
+        break;
+      case 1:
+        screen = const PassengerTripHistoryScreen();
+        break;
+      case 2:
+        screen = const SavedLocationsManagerScreen();
+        break;
+      case 3:
+        screen = const WalletScreen();
+        break;
+      default:
+        return;
+    }
+    Navigator.push(
+        widget.parentContext, MaterialPageRoute(builder: (_) => screen));
+  }
 
   @override
   Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        // Toggle FAB
+        GestureDetector(
+          onTap: _toggle,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 220),
+            width: 46,
+            height: 46,
+            decoration: BoxDecoration(
+              color: _isOpen ? AppColors.charcoal : AppColors.primary,
+              borderRadius: BorderRadius.circular(14),
+              boxShadow: [
+                BoxShadow(
+                  color: (_isOpen ? AppColors.charcoal : AppColors.primary)
+                      .withOpacity(0.35),
+                  blurRadius: 14,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: AnimatedRotation(
+              turns: _isOpen ? 0.125 : 0.0,
+              duration: const Duration(milliseconds: 260),
+              child: Icon(
+                _isOpen ? Icons.close_rounded : Icons.menu_rounded,
+                size: 22,
+                color: _isOpen ? AppColors.white : AppColors.charcoal,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+
+        // Action items
+        for (int i = 0; i < _items.length; i++) ...[
+          _AnimatedMenuItem(
+            ctrl: _ctrl,
+            delay: i * 0.07,
+            icon: _items[i].icon,
+            label: _items[i].label,
+            onTap: () => _navigate(i),
+          ),
+          const SizedBox(height: 6),
+        ],
+
+        // Logout (danger tone)
+        _AnimatedMenuItem(
+          ctrl: _ctrl,
+          delay: _items.length * 0.07,
+          icon: Icons.logout_rounded,
+          label: 'Logout',
+          iconColor: AppColors.error,
+          onTap: () {
+            _toggle();
+            widget.ref.read(authControllerProvider.notifier).logout();
+          },
+        ),
+      ],
+    );
+  }
+}
+
+class _AnimatedMenuItem extends StatelessWidget {
+  final AnimationController ctrl;
+  final double delay;
+  final IconData icon;
+  final String label;
+  final Color? iconColor;
+  final VoidCallback onTap;
+
+  const _AnimatedMenuItem({
+    required this.ctrl,
+    required this.delay,
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.iconColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final anim = CurvedAnimation(
+      parent: ctrl,
+      curve: Interval(delay.clamp(0.0, 0.85), 1.0, curve: Curves.easeOutCubic),
+    );
+    return FadeTransition(
+      opacity: anim,
+      child: SlideTransition(
+        position: Tween<Offset>(
+          begin: const Offset(0.5, 0),
+          end: Offset.zero,
+        ).animate(anim),
+        child: GestureDetector(
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+            decoration: BoxDecoration(
+              color: AppColors.white,
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: const [
+                BoxShadow(
+                    color: Color(0x20000000), blurRadius: 8, offset: Offset(0, 2)),
+              ],
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: 17, color: iconColor ?? AppColors.charcoal),
+                const SizedBox(width: 7),
+                Text(
+                  label,
+                  style: AppTextStyles.label(
+                    color: iconColor ?? AppColors.charcoal,
+                    weight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Branded pickup pin ─────────────────────────────────────────────────────
+
+class _PickupPin extends StatefulWidget {
+  final String label;
+  final Color color;
+  final bool isMoving;
+  const _PickupPin(
+      {required this.label, required this.color, required this.isMoving});
+
+  @override
+  State<_PickupPin> createState() => _PickupPinState();
+}
+
+class _PickupPinState extends State<_PickupPin>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _ctrl;
+  late Animation<double> _scale;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 700));
+    _scale = Tween<double>(begin: 0.7, end: 1.0).animate(
+      CurvedAnimation(parent: _ctrl, curve: Curves.elasticOut),
+    );
+    _ctrl.forward();
+  }
+
+  @override
+  void didUpdateWidget(_PickupPin old) {
+    super.didUpdateWidget(old);
+    if (!widget.isMoving && old.isMoving) {
+      _ctrl.forward(from: 0.0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final labelColor =
+        widget.isMoving ? widget.color.withOpacity(0.75) : widget.color;
+
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: BoxDecoration(
-              color: AppColors.charcoal,
-              borderRadius: BorderRadius.circular(8),
+          ScaleTransition(
+            scale: _scale,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Label bubble
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: labelColor,
+                    borderRadius: BorderRadius.circular(10),
+                    boxShadow: [
+                      BoxShadow(
+                        color: widget.color.withOpacity(0.3),
+                        blurRadius: 12,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Text(
+                    widget.isMoving ? 'Moving…' : widget.label,
+                    style: AppTextStyles.label(
+                      color: AppColors.charcoal,
+                      weight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                // Triangle caret
+                CustomPaint(
+                  size: const Size(16, 8),
+                  painter: _TrianglePainter(color: labelColor),
+                ),
+                // Stem
+                Container(width: 2.5, height: 20, color: widget.color),
+                // Dot
+                Container(
+                  width: 10,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    color: widget.color,
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: widget.color.withOpacity(0.5),
+                        blurRadius: 8,
+                        spreadRadius: 2,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
-            child: Text(label, style: const TextStyle(color: AppColors.white, fontSize: 12, fontWeight: FontWeight.w600)),
           ),
-          const SizedBox(height: 4),
-          Icon(Icons.location_on, size: 44, color: color),
-          const SizedBox(height: 44),
+          const SizedBox(height: 56),
         ],
       ),
     );
   }
 }
 
-class _MapIconButton extends StatelessWidget {
-  final IconData icon;
-  final String tooltip;
-  final VoidCallback onTap;
-
-  const _MapIconButton({required this.icon, required this.tooltip, required this.onTap});
+class _TrianglePainter extends CustomPainter {
+  final Color color;
+  const _TrianglePainter({required this.color});
 
   @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
-      child: GestureDetector(
-        onTap: onTap,
-        child: Container(
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(
-            color: AppColors.white,
-            borderRadius: BorderRadius.circular(12),
-            boxShadow: const [BoxShadow(color: Color(0x18000000), blurRadius: 8, offset: Offset(0, 2))],
-          ),
-          child: Icon(icon, size: 20, color: AppColors.charcoal),
-        ),
-      ),
+  void paint(Canvas canvas, Size size) {
+    canvas.drawPath(
+      Path()
+        ..moveTo(0, 0)
+        ..lineTo(size.width, 0)
+        ..lineTo(size.width / 2, size.height)
+        ..close(),
+      Paint()..color = color,
     );
   }
+
+  @override
+  bool shouldRepaint(_TrianglePainter old) => old.color != color;
 }

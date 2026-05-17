@@ -105,57 +105,60 @@ class _PassengerProfileScreenState
     final displayName = '$firstName $lastName'.trim();
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(20, 24, 20, 32),
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 32),
       children: [
-        // Avatar
-        Center(
+        // Header banner
+        Container(
+          margin: const EdgeInsets.fromLTRB(0, 0, 0, 24),
+          padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 20),
+          decoration: const BoxDecoration(
+            color: AppColors.charcoal,
+            borderRadius: BorderRadius.only(
+              bottomLeft: Radius.circular(28),
+              bottomRight: Radius.circular(28),
+            ),
+          ),
           child: Column(
             children: [
               Container(
-                width: 88,
-                height: 88,
-                decoration: BoxDecoration(
-                  color: AppColors.primaryLight,
+                width: 80,
+                height: 80,
+                decoration: const BoxDecoration(
+                  color: AppColors.primary,
                   shape: BoxShape.circle,
-                  border: Border.all(
-                    color: AppColors.primary.withOpacity(0.3),
-                    width: 2,
-                  ),
                 ),
                 child: Center(
                   child: Text(
                     initials.isNotEmpty ? initials : '?',
-                    style: AppTextStyles.display(
-                      color: AppColors.primaryDark,
-                      weight: FontWeight.w700,
-                    ),
+                    style: AppTextStyles.headline(
+                        color: AppColors.charcoal, weight: FontWeight.w800),
                   ),
                 ),
               ),
               const SizedBox(height: 14),
               Text(
                 displayName.isNotEmpty ? displayName : 'Passenger',
-                style: AppTextStyles.headline(color: AppColors.charcoal),
+                style: AppTextStyles.headline(color: AppColors.white),
               ),
-              const SizedBox(height: 6),
+              const SizedBox(height: 8),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
                 decoration: BoxDecoration(
-                  color: AppColors.primaryLight,
+                  color: AppColors.primary.withOpacity(0.2),
                   borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                      color: AppColors.primary.withOpacity(0.4)),
                 ),
                 child: Text(
                   role[0].toUpperCase() + role.substring(1),
                   style: AppTextStyles.caption(
-                    color: AppColors.primaryDark,
-                    weight: FontWeight.w700,
-                  ),
+                      color: AppColors.primary, weight: FontWeight.w700),
                 ),
               ),
             ],
           ),
         ),
-        const SizedBox(height: 32),
 
         // Info tiles
         if (phone.isNotEmpty)
@@ -199,40 +202,38 @@ class _InfoTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       decoration: BoxDecoration(
         color: AppColors.white,
         borderRadius: BorderRadius.circular(14),
-        boxShadow: const [
-          BoxShadow(color: Color(0x08000000), blurRadius: 6, offset: Offset(0, 2)),
-        ],
+        border: Border.all(color: AppColors.border),
       ),
       child: Row(
         children: [
           Container(
-            width: 36,
-            height: 36,
+            width: 38,
+            height: 38,
             decoration: BoxDecoration(
-              color: AppColors.paleGray,
+              color: AppColors.primary.withOpacity(0.1),
               borderRadius: BorderRadius.circular(10),
             ),
-            child: Icon(icon, color: AppColors.midGray, size: 18),
+            child: Icon(icon, color: AppColors.primaryDark, size: 18),
           ),
           const SizedBox(width: 14),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(label, style: AppTextStyles.caption(color: AppColors.midGray)),
-              const SizedBox(height: 2),
-              Text(
-                value,
-                style: AppTextStyles.body(
-                  color: AppColors.charcoal,
-                  weight: FontWeight.w600,
-                ),
-              ),
-            ],
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: AppTextStyles.caption(color: AppColors.midGray)),
+                const SizedBox(height: 2),
+                Text(value,
+                    style: AppTextStyles.body(
+                        color: AppColors.charcoal, weight: FontWeight.w600)),
+              ],
+            ),
           ),
+          const Icon(Icons.chevron_right_rounded,
+              size: 18, color: AppColors.lightGray),
         ],
       ),
     );

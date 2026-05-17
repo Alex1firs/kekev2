@@ -163,88 +163,112 @@ class _PassengerTripHistoryScreenState
 
         return Container(
           margin: const EdgeInsets.only(bottom: 10),
-          padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
             color: AppColors.white,
             borderRadius: BorderRadius.circular(16),
             boxShadow: const [
-              BoxShadow(color: Color(0x08000000), blurRadius: 8, offset: Offset(0, 2)),
+              BoxShadow(color: Color(0x0A000000), blurRadius: 8, offset: Offset(0, 2)),
             ],
           ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: isCompleted
-                      ? const Color(0xFFD1FAE5)
-                      : const Color(0xFFFEE2E2),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(
-                  isCompleted
-                      ? Icons.check_circle_outline_rounded
-                      : Icons.cancel_outlined,
-                  color: isCompleted ? AppColors.success : AppColors.error,
-                  size: 22,
-                ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      ride.destinationAddress.isNotEmpty
-                          ? ride.destinationAddress
-                          : ride.pickupAddress.isNotEmpty
-                              ? ride.pickupAddress
-                              : 'Unknown destination',
-                      style: AppTextStyles.body(
-                        color: AppColors.charcoal,
-                        weight: FontWeight.w600,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+          child: IntrinsicHeight(
+            child: Row(
+              children: [
+                // Status accent strip
+                Container(
+                  width: 4,
+                  decoration: BoxDecoration(
+                    color: isCompleted ? AppColors.success : AppColors.error,
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(16),
+                      bottomLeft: Radius.circular(16),
                     ),
-                    if (ride.pickupAddress.isNotEmpty) ...[
-                      const SizedBox(height: 3),
-                      Text(
-                        'From: ${ride.pickupAddress}',
-                        style: AppTextStyles.bodySmall(color: AppColors.midGray),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
-                    const SizedBox(height: 8),
-                    Row(
+                  ),
+                ),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.all(14),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          _formatDate(ride.createdAt),
-                          style: AppTextStyles.caption(color: AppColors.lightGray),
+                        // Icon
+                        Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: isCompleted
+                                ? AppColors.success.withOpacity(0.1)
+                                : AppColors.error.withOpacity(0.1),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(
+                            Icons.electric_rickshaw,
+                            color: isCompleted ? AppColors.success : AppColors.error,
+                            size: 20,
+                          ),
                         ),
-                        const SizedBox(width: 8),
-                        _PaymentBadge(isCash: isCash),
-                        if (ride.paymentFailed) ...[
-                          const SizedBox(width: 6),
-                          _FailedBadge(),
-                        ],
-                        const Spacer(),
-                        Text(
-                          '₦${ride.fare.toStringAsFixed(0)}',
-                          style: AppTextStyles.body(
-                            color: isCompleted ? AppColors.charcoal : AppColors.lightGray,
-                            weight: FontWeight.w700,
+                        const SizedBox(width: 12),
+                        // Text content
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                ride.destinationAddress.isNotEmpty
+                                    ? ride.destinationAddress
+                                    : ride.pickupAddress.isNotEmpty
+                                        ? ride.pickupAddress
+                                        : 'Unknown destination',
+                                style: AppTextStyles.body(
+                                    color: AppColors.charcoal,
+                                    weight: FontWeight.w600),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              if (ride.pickupAddress.isNotEmpty) ...[
+                                const SizedBox(height: 3),
+                                Text(
+                                  'From: ${ride.pickupAddress}',
+                                  style:
+                                      AppTextStyles.bodySmall(color: AppColors.midGray),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ],
+                              const SizedBox(height: 8),
+                              Row(
+                                children: [
+                                  Text(
+                                    _formatDate(ride.createdAt),
+                                    style: AppTextStyles.caption(
+                                        color: AppColors.lightGray),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  _PaymentBadge(isCash: isCash),
+                                  if (ride.paymentFailed) ...[
+                                    const SizedBox(width: 6),
+                                    _FailedBadge(),
+                                  ],
+                                  const Spacer(),
+                                  Text(
+                                    '₦${ride.fare.toStringAsFixed(0)}',
+                                    style: AppTextStyles.body(
+                                      color: isCompleted
+                                          ? AppColors.charcoal
+                                          : AppColors.lightGray,
+                                      weight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
                           ),
                         ),
                       ],
                     ),
-                  ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         );
       },

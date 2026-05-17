@@ -34,25 +34,42 @@ class _EarningsScreenState extends ConsumerState<EarningsScreen> {
         backgroundColor: AppColors.charcoal,
         foregroundColor: AppColors.white,
         elevation: 0,
-        title: Text('Earnings & Finance', style: AppTextStyles.title(color: AppColors.white)),
+        title: Text('Earnings & Finance',
+            style: AppTextStyles.title(color: AppColors.white)),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: AppColors.white),
           onPressed: () => Navigator.pop(context),
         ),
+        actions: [
+          if (financeState.isLoading)
+            const Padding(
+              padding: EdgeInsets.only(right: 16),
+              child: Center(
+                child: SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: AppColors.primary),
+                ),
+              ),
+            ),
+        ],
       ),
       body: RefreshIndicator(
-        onRefresh: () => ref.read(driverFinanceControllerProvider.notifier).refresh(),
+        onRefresh: () =>
+            ref.read(driverFinanceControllerProvider.notifier).refresh(),
         color: AppColors.primary,
         backgroundColor: AppColors.darkGray,
         child: CustomScrollView(
           slivers: [
             if (financeState.commissionDebt >= 1000)
               SliverToBoxAdapter(child: _buildDebtAlert(financeState)),
-            SliverToBoxAdapter(child: _buildBalanceCards(financeState)),
+            SliverToBoxAdapter(child: _buildHeroCard(financeState)),
+            SliverToBoxAdapter(child: _buildPendingRow(financeState)),
             SliverToBoxAdapter(child: _buildActionRow(financeState)),
             SliverToBoxAdapter(child: _buildHistoryHeader()),
             _buildHistoryList(financeState),
-            const SliverToBoxAdapter(child: SizedBox(height: 32)),
+            const SliverToBoxAdapter(child: SizedBox(height: 40)),
           ],
         ),
       ),
@@ -71,19 +88,21 @@ class _EarningsScreenState extends ConsumerState<EarningsScreen> {
       bgColor = const Color(0xFF3B0A0A);
       fgColor = const Color(0xFFFCA5A5);
       title = 'Account Blocked';
-      message = 'Debt ₦${state.commissionDebt.toStringAsFixed(0)} exceeds limit. Clear debt to go online.';
+      message =
+          'Debt ₦${state.commissionDebt.toStringAsFixed(0)} exceeds limit. Clear to go online.';
     } else if (state.commissionDebt >= 2000) {
       borderColor = const Color(0xFFEA580C);
       bgColor = const Color(0xFF3B1A0A);
       fgColor = const Color(0xFFFBBF24);
       title = 'Cash Rides Blocked';
-      message = 'Debt ₦${state.commissionDebt.toStringAsFixed(0)} — wallet rides available. Top up to restore cash.';
+      message =
+          '₦${state.commissionDebt.toStringAsFixed(0)} debt — wallet rides still available.';
     } else {
       borderColor = AppColors.primary;
       bgColor = const Color(0xFF3B2A00);
       fgColor = AppColors.primary;
       title = 'Debt Warning';
-      message = '₦${state.commissionDebt.toStringAsFixed(0)} owed to platform. Top up wallet to clear.';
+      message = '₦${state.commissionDebt.toStringAsFixed(0)} owed to platform.';
     }
 
     return Container(
@@ -102,9 +121,13 @@ class _EarningsScreenState extends ConsumerState<EarningsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title, style: AppTextStyles.body(color: fgColor, weight: FontWeight.w700)),
+                Text(title,
+                    style: AppTextStyles.body(
+                        color: fgColor, weight: FontWeight.w700)),
                 const SizedBox(height: 2),
-                Text(message, style: AppTextStyles.bodySmall(color: fgColor.withOpacity(0.8))),
+                Text(message,
+                    style:
+                        AppTextStyles.bodySmall(color: fgColor.withOpacity(0.8))),
               ],
             ),
           ),
@@ -118,7 +141,9 @@ class _EarningsScreenState extends ConsumerState<EarningsScreen> {
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(color: fgColor.withOpacity(0.4)),
               ),
-              child: Text('Pay Now', style: AppTextStyles.bodySmall(color: fgColor, weight: FontWeight.w700)),
+              child: Text('Pay Now',
+                  style: AppTextStyles.bodySmall(
+                      color: fgColor, weight: FontWeight.w700)),
             ),
           ),
         ],
@@ -126,28 +151,116 @@ class _EarningsScreenState extends ConsumerState<EarningsScreen> {
     );
   }
 
-  Widget _buildBalanceCards(DriverFinanceState state) {
+  Widget _buildHeroCard(DriverFinanceState state) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(20, 24, 20, 0),
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: AppColors.darkGray,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: AppColors.success.withOpacity(0.3)),
+        boxShadow: const [
+          BoxShadow(
+              color: Color(0x30000000), blurRadius: 16, offset: Offset(0, 4)),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: AppColors.success.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(Icons.account_balance_wallet_outlined,
+                    color: AppColors.success, size: 20),
+              ),
+              const SizedBox(width: 12),
+              Text('Available Balance',
+                  style: AppTextStyles.body(color: AppColors.midGray)),
+              const Spacer(),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Text(
+            '₦${state.availableBalance.toStringAsFixed(2)}',
+            style: AppTextStyles.display(
+                color: AppColors.success, weight: FontWeight.w800),
+          ),
+          const SizedBox(height: 20),
+          // Action buttons
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.white,
+                    foregroundColor: AppColors.charcoal,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14)),
+                    elevation: 0,
+                  ),
+                  onPressed: state.availableBalance > 0
+                      ? () => _showPayoutDialog(state)
+                      : null,
+                  icon: const Icon(Icons.arrow_upward_rounded, size: 18),
+                  label: Text('Payout',
+                      style: AppTextStyles.body(weight: FontWeight.w700)),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primary,
+                    foregroundColor: AppColors.charcoal,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14)),
+                    elevation: 0,
+                  ),
+                  onPressed: () => _showTopUpDialog(),
+                  icon: const Icon(Icons.add_rounded, size: 18),
+                  label: Text('Top Up',
+                      style: AppTextStyles.body(weight: FontWeight.w700)),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPendingRow(DriverFinanceState state) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 24, 20, 0),
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
       child: Row(
         children: [
           Expanded(
-            child: _BalanceCard(
-              label: 'Available',
-              amount: state.availableBalance,
-              color: AppColors.success,
-              icon: Icons.account_balance_wallet_outlined,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: _BalanceCard(
+            child: _StatTile(
               label: 'Pending',
               amount: state.pendingBalance,
-              color: AppColors.lightGray,
               icon: Icons.hourglass_top_rounded,
+              color: AppColors.lightGray,
             ),
           ),
+          if (state.commissionDebt > 0) ...[
+            const SizedBox(width: 12),
+            Expanded(
+              child: _StatTile(
+                label: 'Commission Debt',
+                amount: state.commissionDebt,
+                icon: Icons.warning_amber_rounded,
+                color: AppColors.error,
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -155,64 +268,34 @@ class _EarningsScreenState extends ConsumerState<EarningsScreen> {
 
   Widget _buildActionRow(DriverFinanceState state) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.white,
-                    foregroundColor: AppColors.charcoal,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                    elevation: 0,
-                  ),
-                  onPressed: state.availableBalance > 0 ? () => _showPayoutDialog(state) : null,
-                  child: Text('Request Payout', style: AppTextStyles.body(weight: FontWeight.w700)),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primary,
-                    foregroundColor: AppColors.charcoal,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                    elevation: 0,
-                  ),
-                  onPressed: () => _showTopUpDialog(),
-                  child: Text('Top Up Wallet', style: AppTextStyles.body(weight: FontWeight.w700)),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          OutlinedButton.icon(
-            style: OutlinedButton.styleFrom(
-              foregroundColor: AppColors.lightGray,
-              side: const BorderSide(color: AppColors.darkGray),
-              padding: const EdgeInsets.symmetric(vertical: 14),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-            ),
-            onPressed: () => Navigator.push(
-              context, MaterialPageRoute(builder: (_) => const DriverTripHistoryScreen())),
-            icon: const Icon(Icons.history_rounded, size: 18),
-            label: Text('Trip History', style: AppTextStyles.body(color: AppColors.lightGray)),
-          ),
-        ],
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+      child: OutlinedButton.icon(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: AppColors.lightGray,
+          side: const BorderSide(color: AppColors.darkGray),
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        ),
+        onPressed: () => Navigator.push(context,
+            MaterialPageRoute(builder: (_) => const DriverTripHistoryScreen())),
+        icon: const Icon(Icons.history_rounded, size: 18),
+        label: Text('Trip History',
+            style: AppTextStyles.body(color: AppColors.lightGray)),
       ),
     );
   }
 
   Widget _buildHistoryHeader() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 32, 20, 12),
-      child: Text(
-        'Recent Transactions',
-        style: AppTextStyles.title(color: AppColors.white),
+      padding: const EdgeInsets.fromLTRB(20, 28, 20, 12),
+      child: Row(
+        children: [
+          Text('Recent Transactions',
+              style: AppTextStyles.title(color: AppColors.white)),
+          const Spacer(),
+          Text('Pull to refresh',
+              style: AppTextStyles.caption(color: AppColors.midGray)),
+        ],
       ),
     );
   }
@@ -221,8 +304,7 @@ class _EarningsScreenState extends ConsumerState<EarningsScreen> {
     if (state.isLoading && state.history.isEmpty) {
       return const SliverFillRemaining(
         child: Center(
-          child: CircularProgressIndicator(color: AppColors.primary),
-        ),
+            child: CircularProgressIndicator(color: AppColors.primary)),
       );
     }
 
@@ -232,9 +314,14 @@ class _EarningsScreenState extends ConsumerState<EarningsScreen> {
           padding: const EdgeInsets.only(top: 48),
           child: Column(
             children: [
-              const Icon(Icons.receipt_long_outlined, color: AppColors.darkGray, size: 48),
+              const Icon(Icons.receipt_long_outlined,
+                  color: AppColors.darkGray, size: 52),
               const SizedBox(height: 12),
-              Text('No transactions yet', style: AppTextStyles.body(color: AppColors.midGray)),
+              Text('No transactions yet',
+                  style: AppTextStyles.body(color: AppColors.midGray)),
+              const SizedBox(height: 4),
+              Text('Start driving to earn',
+                  style: AppTextStyles.bodySmall(color: AppColors.midGray)),
             ],
           ),
         ),
@@ -257,8 +344,8 @@ class _EarningsScreenState extends ConsumerState<EarningsScreen> {
             child: Row(
               children: [
                 Container(
-                  width: 38,
-                  height: 38,
+                  width: 40,
+                  height: 40,
                   decoration: BoxDecoration(
                     color: isCredit
                         ? AppColors.success.withOpacity(0.15)
@@ -266,7 +353,9 @@ class _EarningsScreenState extends ConsumerState<EarningsScreen> {
                     shape: BoxShape.circle,
                   ),
                   child: Icon(
-                    isCredit ? Icons.arrow_downward_rounded : Icons.arrow_upward_rounded,
+                    isCredit
+                        ? Icons.arrow_downward_rounded
+                        : Icons.arrow_upward_rounded,
                     color: isCredit ? AppColors.success : AppColors.error,
                     size: 18,
                   ),
@@ -319,8 +408,8 @@ class _EarningsScreenState extends ConsumerState<EarningsScreen> {
   Future<void> _showPayoutDialog(DriverFinanceState state) async {
     final bankCodeCtrl = TextEditingController();
     final accountNumCtrl = TextEditingController();
-    final amountCtrl = TextEditingController(
-        text: state.availableBalance.toStringAsFixed(0));
+    final amountCtrl =
+        TextEditingController(text: state.availableBalance.toStringAsFixed(0));
 
     final confirmed = await showDialog<bool>(
       context: context,
@@ -336,11 +425,20 @@ class _EarningsScreenState extends ConsumerState<EarningsScreen> {
               style: AppTextStyles.bodySmall(color: AppColors.success),
             ),
             const SizedBox(height: 16),
-            _DarkField(controller: amountCtrl, label: 'Amount (₦)', type: TextInputType.number),
+            _DarkField(
+                controller: amountCtrl,
+                label: 'Amount (₦)',
+                type: TextInputType.number),
             const SizedBox(height: 12),
-            _DarkField(controller: bankCodeCtrl, label: 'Bank Code (e.g. 058)', type: TextInputType.number),
+            _DarkField(
+                controller: bankCodeCtrl,
+                label: 'Bank Code (e.g. 058)',
+                type: TextInputType.number),
             const SizedBox(height: 12),
-            _DarkField(controller: accountNumCtrl, label: 'Account Number', type: TextInputType.number),
+            _DarkField(
+                controller: accountNumCtrl,
+                label: 'Account Number',
+                type: TextInputType.number),
             const SizedBox(height: 10),
             Text(
               'Requests are reviewed by the platform team before transfer.',
@@ -388,12 +486,14 @@ class _EarningsScreenState extends ConsumerState<EarningsScreen> {
       final applied = await controller.repayDebt();
       if (!mounted) return;
 
-      final remaining = ref.read(driverFinanceControllerProvider).commissionDebt;
+      final remaining =
+          ref.read(driverFinanceControllerProvider).commissionDebt;
       if (remaining <= 0) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             backgroundColor: AppColors.success,
-            content: Text('₦${applied.toStringAsFixed(0)} applied — debt cleared!',
+            content: Text(
+                '₦${applied.toStringAsFixed(0)} applied — debt cleared!',
                 style: AppTextStyles.body(color: AppColors.white)),
           ),
         );
@@ -435,9 +535,15 @@ class _EarningsScreenState extends ConsumerState<EarningsScreen> {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            _DarkField(controller: amountCtrl, label: 'Amount (₦)', type: TextInputType.number),
+            _DarkField(
+                controller: amountCtrl,
+                label: 'Amount (₦)',
+                type: TextInputType.number),
             const SizedBox(height: 12),
-            _DarkField(controller: emailCtrl, label: 'Email (for receipt)', type: TextInputType.emailAddress),
+            _DarkField(
+                controller: emailCtrl,
+                label: 'Email (for receipt)',
+                type: TextInputType.emailAddress),
           ],
         ),
         confirmLabel: 'Proceed to Payment',
@@ -477,8 +583,11 @@ class _EarningsScreenState extends ConsumerState<EarningsScreen> {
       SnackBar(
         backgroundColor: verified ? AppColors.success : AppColors.primary,
         content: Text(
-          verified ? 'Top-up successful! Balance updated.' : 'Payment received — balance updating shortly.',
-          style: AppTextStyles.body(color: verified ? AppColors.white : AppColors.charcoal),
+          verified
+              ? 'Top-up successful! Balance updated.'
+              : 'Payment received — balance updating shortly.',
+          style: AppTextStyles.body(
+              color: verified ? AppColors.white : AppColors.charcoal),
         ),
       ),
     );
@@ -495,67 +604,80 @@ class _EarningsScreenState extends ConsumerState<EarningsScreen> {
     return AlertDialog(
       backgroundColor: AppColors.darkGray,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      title: Text(title, style: AppTextStyles.title(color: AppColors.white)),
+      title: Text(title,
+          style: AppTextStyles.title(color: AppColors.white)),
       content: content,
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(ctx, false),
-          child: Text('Cancel', style: AppTextStyles.body(color: AppColors.midGray)),
+          child: Text('Cancel',
+              style: AppTextStyles.body(color: AppColors.midGray)),
         ),
         ElevatedButton(
           style: ElevatedButton.styleFrom(
             backgroundColor: confirmColor ?? AppColors.white,
             foregroundColor: confirmFgColor ?? AppColors.charcoal,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12)),
           ),
           onPressed: () => Navigator.pop(ctx, true),
-          child: Text(confirmLabel, style: AppTextStyles.body(weight: FontWeight.w700)),
+          child: Text(confirmLabel,
+              style: AppTextStyles.body(weight: FontWeight.w700)),
         ),
       ],
     );
   }
 }
 
-class _BalanceCard extends StatelessWidget {
+// ─── Sub-widgets ─────────────────────────────────────────────────────────────
+
+class _StatTile extends StatelessWidget {
   final String label;
   final double amount;
-  final Color color;
   final IconData icon;
+  final Color color;
 
-  const _BalanceCard({
+  const _StatTile({
     required this.label,
     required this.amount,
-    required this.color,
     required this.icon,
+    required this.color,
   });
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: AppColors.darkGray,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: color.withOpacity(0.25)),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: color.withOpacity(0.2)),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
         children: [
           Container(
-            width: 36,
-            height: 36,
+            width: 34,
+            height: 34,
             decoration: BoxDecoration(
-              color: color.withOpacity(0.15),
+              color: color.withOpacity(0.12),
               borderRadius: BorderRadius.circular(10),
             ),
-            child: Icon(icon, color: color, size: 18),
+            child: Icon(icon, color: color, size: 17),
           ),
-          const SizedBox(height: 12),
-          Text(label, style: AppTextStyles.caption(color: AppColors.midGray)),
-          const SizedBox(height: 4),
-          Text(
-            '₦${amount.toStringAsFixed(0)}',
-            style: AppTextStyles.title(color: AppColors.white),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label,
+                    style: AppTextStyles.caption(color: AppColors.midGray)),
+                Text(
+                  '₦${amount.toStringAsFixed(0)}',
+                  style: AppTextStyles.body(
+                      color: AppColors.white, weight: FontWeight.w700),
+                ),
+              ],
+            ),
           ),
         ],
       ),

@@ -17,7 +17,8 @@ class DriverProfileScreen extends ConsumerWidget {
     final profile = driverState.profile;
 
     String phone = '';
-    if (authState.status == AuthStatus.authenticated && authState.token != null) {
+    if (authState.status == AuthStatus.authenticated &&
+        authState.token != null) {
       try {
         final decoded = JwtDecoder.decode(authState.token!);
         phone = decoded['phone']?.toString() ?? '';
@@ -30,159 +31,299 @@ class DriverProfileScreen extends ConsumerWidget {
       if (firstName.isNotEmpty) firstName[0],
       if (lastName.isNotEmpty) lastName[0],
     ].join().toUpperCase();
+    final displayName = '$firstName $lastName'.trim();
 
     return Scaffold(
       backgroundColor: AppColors.charcoal,
-      appBar: AppBar(
-        backgroundColor: AppColors.charcoal,
-        foregroundColor: AppColors.white,
-        elevation: 0,
-        title: Text('Driver Profile', style: AppTextStyles.title(color: AppColors.white)),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: AppColors.white),
-          onPressed: () => Navigator.pop(context),
-        ),
-      ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
+      body: Column(
         children: [
-          // Avatar + name
-          Center(
-            child: Column(
+          // Dark header banner
+          _ProfileHeader(
+            initials: initials,
+            displayName: displayName,
+            status: profile.status,
+          ),
+          // Body
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(20, 24, 20, 32),
               children: [
-                Container(
-                  width: 88,
-                  height: 88,
-                  decoration: BoxDecoration(
-                    color: AppColors.primary.withOpacity(0.2),
-                    shape: BoxShape.circle,
-                    border: Border.all(color: AppColors.primary.withOpacity(0.4), width: 2),
+                // Vehicle plate — driver identity, most important tile
+                if (profile.vehiclePlate != null &&
+                    profile.vehiclePlate != 'PENDING') ...[
+                  _VehiclePlate(plate: profile.vehiclePlate!),
+                  const SizedBox(height: 12),
+                ],
+
+                if (phone.isNotEmpty)
+                  _InfoTile(
+                    icon: Icons.phone_outlined,
+                    label: 'Phone',
+                    value: phone,
                   ),
-                  child: Center(
-                    child: Text(
-                      initials.isNotEmpty ? initials : '?',
-                      style: AppTextStyles.display(
-                        color: AppColors.primary,
-                        weight: FontWeight.w700,
-                      ),
-                    ),
+                if (profile.vehicleModel != null &&
+                    profile.vehicleModel != 'PENDING')
+                  _InfoTile(
+                    icon: Icons.electric_rickshaw,
+                    label: 'Vehicle Model',
+                    value: profile.vehicleModel!,
                   ),
+                _InfoTile(
+                  icon: Icons.badge_outlined,
+                  label: 'Account Type',
+                  value: 'Driver',
                 ),
-                const SizedBox(height: 14),
-                Text(
-                  '$firstName $lastName'.trim().isEmpty
-                      ? 'Driver'
-                      : '$firstName $lastName'.trim(),
-                  style: AppTextStyles.headline(color: AppColors.white),
+
+                if (profile.debtAmount > 0) ...[
+                  const SizedBox(height: 4),
+                  _DebtWarning(amount: profile.debtAmount),
+                ],
+
+                const SizedBox(height: 40),
+                OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.error,
+                    side: const BorderSide(color: AppColors.error),
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14)),
+                  ),
+                  icon: const Icon(Icons.logout_rounded),
+                  label: Text('Logout',
+                      style: AppTextStyles.body(
+                          color: AppColors.error, weight: FontWeight.w700)),
+                  onPressed: () =>
+                      ref.read(authControllerProvider.notifier).logout(),
                 ),
-                const SizedBox(height: 8),
-                _StatusBadge(status: profile.status),
               ],
             ),
-          ),
-          const SizedBox(height: 32),
-
-          // Info tiles
-          if (phone.isNotEmpty)
-            _InfoTile(icon: Icons.phone_outlined, label: 'Phone', value: phone),
-          if (profile.vehiclePlate != null && profile.vehiclePlate != 'PENDING')
-            _InfoTile(
-              icon: Icons.electric_rickshaw,
-              label: 'Vehicle Plate',
-              value: profile.vehiclePlate!,
-            ),
-          if (profile.vehicleModel != null && profile.vehicleModel != 'PENDING')
-            _InfoTile(
-              icon: Icons.electric_rickshaw,
-              label: 'Vehicle Model',
-              value: profile.vehicleModel!,
-            ),
-          _InfoTile(icon: Icons.badge_outlined, label: 'Account Type', value: 'Driver'),
-
-          if (profile.debtAmount > 0) ...[
-            const SizedBox(height: 8),
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: const Color(0xFF3B0A0A),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: AppColors.error),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.warning_amber_rounded, color: AppColors.error, size: 22),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Commission Debt',
-                          style: AppTextStyles.body(color: AppColors.error, weight: FontWeight.w700),
-                        ),
-                        Text(
-                          '₦${profile.debtAmount.toStringAsFixed(0)} outstanding',
-                          style: AppTextStyles.bodySmall(color: const Color(0xFFFCA5A5)),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-
-          const SizedBox(height: 40),
-          OutlinedButton.icon(
-            style: OutlinedButton.styleFrom(
-              foregroundColor: AppColors.error,
-              side: const BorderSide(color: AppColors.error),
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-            ),
-            icon: const Icon(Icons.logout_rounded),
-            label: Text('Logout', style: AppTextStyles.body(color: AppColors.error, weight: FontWeight.w700)),
-            onPressed: () => ref.read(authControllerProvider.notifier).logout(),
           ),
         ],
       ),
     );
   }
 }
+
+// ─── Header banner ────────────────────────────────────────────────────────────
+
+class _ProfileHeader extends StatelessWidget {
+  final String initials;
+  final String displayName;
+  final DriverStatus status;
+
+  const _ProfileHeader({
+    required this.initials,
+    required this.displayName,
+    required this.status,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.fromLTRB(
+          20, MediaQuery.of(context).padding.top + 16, 20, 28),
+      decoration: const BoxDecoration(
+        color: AppColors.darkGray,
+        borderRadius: BorderRadius.only(
+          bottomLeft: Radius.circular(28),
+          bottomRight: Radius.circular(28),
+        ),
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.arrow_back, color: AppColors.white),
+                onPressed: () => Navigator.pop(context),
+              ),
+              const Spacer(),
+              Text('Profile',
+                  style: AppTextStyles.title(color: AppColors.white)),
+              const Spacer(),
+              const SizedBox(width: 48),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Container(
+            width: 88,
+            height: 88,
+            decoration: BoxDecoration(
+              color: AppColors.primary,
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.primary.withOpacity(0.4),
+                  blurRadius: 16,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Center(
+              child: Text(
+                initials.isNotEmpty ? initials : '?',
+                style: AppTextStyles.headline(
+                    color: AppColors.charcoal, weight: FontWeight.w800),
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            displayName.isNotEmpty ? displayName : 'Driver',
+            style: AppTextStyles.headline(color: AppColors.white),
+          ),
+          const SizedBox(height: 8),
+          _StatusBadge(status: status),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── Vehicle plate (prominent identity tile) ──────────────────────────────────
+
+class _VehiclePlate extends StatelessWidget {
+  final String plate;
+
+  const _VehiclePlate({required this.plate});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+      decoration: BoxDecoration(
+        color: AppColors.darkGray,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.primary.withOpacity(0.4)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: AppColors.primary.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Icon(Icons.electric_rickshaw,
+                color: AppColors.primary, size: 20),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Keke Plate Number',
+                    style: AppTextStyles.caption(color: AppColors.midGray)),
+                const SizedBox(height: 3),
+                Text(
+                  plate,
+                  style: AppTextStyles.title(
+                      color: AppColors.primary, weight: FontWeight.w800),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── Info tile ────────────────────────────────────────────────────────────────
 
 class _InfoTile extends StatelessWidget {
   final IconData icon;
   final String label;
   final String value;
 
-  const _InfoTile({required this.icon, required this.label, required this.value});
+  const _InfoTile(
+      {required this.icon, required this.label, required this.value});
 
   @override
   Widget build(BuildContext context) {
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       decoration: BoxDecoration(
         color: AppColors.darkGray,
         borderRadius: BorderRadius.circular(14),
       ),
       child: Row(
         children: [
-          Icon(icon, color: AppColors.midGray, size: 20),
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: AppColors.charcoal,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, color: AppColors.midGray, size: 18),
+          ),
           const SizedBox(width: 14),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(label, style: AppTextStyles.caption(color: AppColors.midGray)),
-              const SizedBox(height: 2),
-              Text(value, style: AppTextStyles.body(color: AppColors.white, weight: FontWeight.w600)),
-            ],
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label,
+                    style: AppTextStyles.caption(color: AppColors.midGray)),
+                const SizedBox(height: 2),
+                Text(value,
+                    style: AppTextStyles.body(
+                        color: AppColors.white, weight: FontWeight.w600)),
+              ],
+            ),
           ),
         ],
       ),
     );
   }
 }
+
+// ─── Debt warning ─────────────────────────────────────────────────────────────
+
+class _DebtWarning extends StatelessWidget {
+  final double amount;
+
+  const _DebtWarning({required this.amount});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF3B0A0A),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.error),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.warning_amber_rounded,
+              color: AppColors.error, size: 22),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Commission Debt',
+                    style: AppTextStyles.body(
+                        color: AppColors.error, weight: FontWeight.w700)),
+                Text(
+                  '₦${amount.toStringAsFixed(0)} outstanding',
+                  style: AppTextStyles.bodySmall(
+                      color: const Color(0xFFFCA5A5)),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── Status badge ─────────────────────────────────────────────────────────────
 
 class _StatusBadge extends StatelessWidget {
   final DriverStatus status;
@@ -233,7 +374,8 @@ class _StatusBadge extends StatelessWidget {
         color: bg,
         borderRadius: BorderRadius.circular(20),
       ),
-      child: Text(label, style: AppTextStyles.bodySmall(color: fg, weight: FontWeight.w700)),
+      child: Text(label,
+          style: AppTextStyles.bodySmall(color: fg, weight: FontWeight.w700)),
     );
   }
 }

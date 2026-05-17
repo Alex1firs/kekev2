@@ -10,10 +10,7 @@ import 'ride_chat_panel.dart';
 class TripOperationHUD extends ConsumerWidget {
   final DriverState state;
 
-  const TripOperationHUD({
-    super.key,
-    required this.state,
-  });
+  const TripOperationHUD({super.key, required this.state});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -31,43 +28,54 @@ class TripOperationHUD extends ConsumerWidget {
             topRight: Radius.circular(28),
           ),
           boxShadow: [
-            BoxShadow(color: Color(0x44000000), blurRadius: 24, offset: Offset(0, -4)),
+            BoxShadow(
+                color: Color(0x55000000),
+                blurRadius: 28,
+                offset: Offset(0, -4)),
           ],
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Drag handle
             const _SheetHandle(),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 4, 24, 28),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _buildStatusBadge(),
-                  const SizedBox(height: 8),
-                  Text(
-                    state.tripStep == TripStep.started
-                        ? state.activeRequest!.destinationAddress
-                        : state.activeRequest!.pickupAddress,
-                    style: AppTextStyles.title(color: AppColors.white),
-                    textAlign: TextAlign.center,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 20),
-                  if (state.tripStep != TripStep.completed)
-                    _buildMainAction(context, ref),
-                  if (state.tripStep == TripStep.completed)
-                    _buildCompletionPanel(ref),
-                  if ((state.tripStep == TripStep.accepted || state.tripStep == TripStep.arrived) &&
-                      state.activeRequest?.pickupCode != null) ...[
+            ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(context).size.height * 0.70,
+              ),
+              child: SingleChildScrollView(
+                physics: const BouncingScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(24, 4, 24, 28),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // Trip phase progress
+                    if (state.tripStep != TripStep.completed) ...[
+                      _TripPhaseBar(step: state.tripStep),
+                      const SizedBox(height: 16),
+                    ],
+
+                    // Status + address + fare
+                    _buildHeader(),
+                    const SizedBox(height: 16),
+
+                    // Main action or completion panel
+                    if (state.tripStep != TripStep.completed)
+                      _buildMainAction(context, ref),
+                    if (state.tripStep == TripStep.completed)
+                      _buildCompletionPanel(ref),
+
+                    // Pickup code when at/near pickup
+                    if ((state.tripStep == TripStep.accepted ||
+                            state.tripStep == TripStep.arrived) &&
+                        state.activeRequest?.pickupCode != null) ...[
+                      const SizedBox(height: 12),
+                      _buildPickupCodeCard(state.activeRequest!.pickupCode!),
+                    ],
+
                     const SizedBox(height: 14),
-                    _buildPickupCodeCard(state.activeRequest!.pickupCode!),
+                    _buildPassengerRow(context),
                   ],
-                  const SizedBox(height: 16),
-                  _buildPassengerRow(context),
-                ],
+                ),
               ),
             ),
           ],
@@ -76,49 +84,107 @@ class TripOperationHUD extends ConsumerWidget {
     );
   }
 
-  Widget _buildStatusBadge() {
-    String label;
-    Color bg;
-    Color fg;
+  Widget _buildHeader() {
+    final req = state.activeRequest!;
+    final isOnTrip = state.tripStep == TripStep.started;
+    final address =
+        isOnTrip ? req.destinationAddress : req.pickupAddress;
+
+    String statusLabel;
+    Color statusBg;
+    Color statusFg;
 
     switch (state.tripStep) {
       case TripStep.accepted:
-        label = 'Navigating to Pickup';
-        bg = const Color(0xFF1E3A5F);
-        fg = const Color(0xFF93C5FD);
+        statusLabel = 'Heading to Pickup';
+        statusBg = const Color(0xFF1E3A5F);
+        statusFg = const Color(0xFF93C5FD);
         break;
       case TripStep.arrived:
-        label = 'Waiting at Pickup';
-        bg = AppColors.primaryLight;
-        fg = AppColors.primaryDark;
+        statusLabel = 'Waiting at Pickup';
+        statusBg = AppColors.primaryLight;
+        statusFg = AppColors.primaryDark;
         break;
       case TripStep.started:
-        label = 'On Trip';
-        bg = const Color(0xFF064E3B);
-        fg = const Color(0xFF6EE7B7);
+        statusLabel = 'On Trip';
+        statusBg = const Color(0xFF064E3B);
+        statusFg = const Color(0xFF6EE7B7);
         break;
       case TripStep.completed:
-        label = 'Trip Completed';
-        bg = const Color(0xFF064E3B);
-        fg = const Color(0xFF6EE7B7);
+        statusLabel = 'Trip Completed';
+        statusBg = const Color(0xFF064E3B);
+        statusFg = const Color(0xFF6EE7B7);
         break;
       default:
         return const SizedBox.shrink();
     }
 
-    return Align(
-      alignment: Alignment.center,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-        decoration: BoxDecoration(
-          color: bg,
-          borderRadius: BorderRadius.circular(20),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: statusBg,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Text(statusLabel,
+                  style: AppTextStyles.caption(
+                      color: statusFg, weight: FontWeight.w700)),
+            ),
+            const Spacer(),
+            // Fare chip
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: AppColors.darkGray,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    '₦${req.fare.toInt()}',
+                    style: AppTextStyles.body(
+                        color: AppColors.primary, weight: FontWeight.w700),
+                  ),
+                  const SizedBox(width: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: req.isCash
+                          ? const Color(0xFF065F46)
+                          : AppColors.charcoal,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      req.isCash ? 'Cash' : 'Wallet',
+                      style: AppTextStyles.caption(
+                        color: req.isCash
+                            ? const Color(0xFF6EE7B7)
+                            : AppColors.lightGray,
+                        weight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
-        child: Text(
-          label,
-          style: AppTextStyles.caption(color: fg, weight: FontWeight.w700),
+        const SizedBox(height: 10),
+        Text(
+          address.isNotEmpty ? address : '—',
+          style: AppTextStyles.title(color: AppColors.white),
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
         ),
-      ),
+      ],
     );
   }
 
@@ -126,6 +192,7 @@ class TripOperationHUD extends ConsumerWidget {
     String text;
     Color bgColor;
     Color fgColor;
+    IconData icon;
     VoidCallback? onPressed;
 
     switch (state.tripStep) {
@@ -133,18 +200,23 @@ class TripOperationHUD extends ConsumerWidget {
         text = 'I Have Arrived';
         bgColor = AppColors.primary;
         fgColor = AppColors.charcoal;
-        onPressed = () => ref.read(driverControllerProvider.notifier).markArrived();
+        icon = Icons.location_on_rounded;
+        onPressed = () =>
+            ref.read(driverControllerProvider.notifier).markArrived();
         break;
       case TripStep.arrived:
         text = 'Start Trip';
         bgColor = AppColors.primary;
         fgColor = AppColors.charcoal;
-        onPressed = () => ref.read(driverControllerProvider.notifier).startTrip();
+        icon = Icons.play_arrow_rounded;
+        onPressed = () =>
+            ref.read(driverControllerProvider.notifier).startTrip();
         break;
       case TripStep.started:
         text = 'End Trip';
         bgColor = AppColors.error;
         fgColor = AppColors.white;
+        icon = Icons.stop_rounded;
         onPressed = () {
           if (state.activeRequest!.isCash) {
             _showCashConfirmDialog(context, ref);
@@ -166,44 +238,75 @@ class TripOperationHUD extends ConsumerWidget {
         elevation: 0,
       ),
       onPressed: onPressed,
-      child: Text(text, style: AppTextStyles.body(color: fgColor, weight: FontWeight.w700)),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, size: 22),
+          const SizedBox(width: 8),
+          Text(text,
+              style: AppTextStyles.body(
+                  color: fgColor, weight: FontWeight.w700)),
+        ],
+      ),
     );
   }
 
   Widget _buildCompletionPanel(WidgetRef ref) {
     final isCash = state.activeRequest?.isCash ?? false;
+    final fare = state.activeRequest?.fare ?? 0;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Container(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(18),
           decoration: BoxDecoration(
             color: const Color(0xFF064E3B),
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(16),
           ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
+          child: Column(
             children: [
-              const Icon(Icons.check_circle_outline, color: Color(0xFF6EE7B7), size: 20),
-              const SizedBox(width: 10),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.check_circle_rounded,
+                      color: Color(0xFF6EE7B7), size: 24),
+                  const SizedBox(width: 10),
+                  Text(
+                    'Trip Complete',
+                    style: AppTextStyles.title(
+                        color: const Color(0xFF6EE7B7),
+                        weight: FontWeight.w700),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
               Text(
-                isCash ? 'Cash received — trip complete' : 'Fare captured successfully',
-                style: AppTextStyles.body(color: const Color(0xFF6EE7B7), weight: FontWeight.w600),
+                isCash
+                    ? 'Collect ₦${fare.toInt()} cash from passenger'
+                    : '₦${fare.toInt()} captured from wallet',
+                style: AppTextStyles.body(
+                    color: const Color(0xFF6EE7B7).withOpacity(0.8)),
+                textAlign: TextAlign.center,
               ),
             ],
           ),
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 14),
         ElevatedButton(
           style: ElevatedButton.styleFrom(
             backgroundColor: AppColors.white,
             foregroundColor: AppColors.charcoal,
-            padding: const EdgeInsets.symmetric(vertical: 16),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            padding: const EdgeInsets.symmetric(vertical: 18),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
             elevation: 0,
           ),
-          onPressed: () => ref.read(driverControllerProvider.notifier).finishAndGoAvailable(),
-          child: Text('Back to Available', style: AppTextStyles.body(weight: FontWeight.w700)),
+          onPressed: () =>
+              ref.read(driverControllerProvider.notifier).finishAndGoAvailable(),
+          child: Text('Back to Available',
+              style: AppTextStyles.body(
+                  color: AppColors.charcoal, weight: FontWeight.w700)),
         ),
       ],
     );
@@ -211,35 +314,39 @@ class TripOperationHUD extends ConsumerWidget {
 
   Widget _buildPickupCodeCard(String code) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       decoration: BoxDecoration(
         color: AppColors.darkGray,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.primary.withOpacity(0.4)),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.primary.withOpacity(0.5)),
       ),
       child: Row(
         children: [
-          const Icon(Icons.key_rounded, size: 18, color: AppColors.primary),
-          const SizedBox(width: 10),
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: AppColors.primary.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Icon(Icons.key_rounded,
+                size: 18, color: AppColors.primary),
+          ),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  'Passenger ride code',
-                  style: AppTextStyles.caption(color: AppColors.midGray),
-                ),
+                Text('Ride code — ask your passenger',
+                    style: AppTextStyles.caption(color: AppColors.midGray)),
                 const SizedBox(height: 2),
                 Text(
                   code,
-                  style: AppTextStyles.title(color: AppColors.primary, weight: FontWeight.w900),
+                  style: AppTextStyles.title(
+                      color: AppColors.primary, weight: FontWeight.w900),
                 ),
               ],
             ),
-          ),
-          Text(
-            'Ask your passenger',
-            style: AppTextStyles.caption(color: AppColors.lightGray),
           ),
         ],
       ),
@@ -253,13 +360,13 @@ class TripOperationHUD extends ConsumerWidget {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
         color: AppColors.darkGray,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(16),
       ),
       child: Row(
         children: [
           Container(
-            width: 40,
-            height: 40,
+            width: 42,
+            height: 42,
             decoration: const BoxDecoration(
               color: AppColors.charcoal,
               shape: BoxShape.circle,
@@ -270,7 +377,9 @@ class TripOperationHUD extends ConsumerWidget {
           Expanded(
             child: Text(
               state.activeRequest!.passengerName,
-              style: AppTextStyles.body(color: AppColors.white, weight: FontWeight.w600),
+              style: AppTextStyles.body(
+                  color: AppColors.white, weight: FontWeight.w600),
+              maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
           ),
@@ -305,7 +414,10 @@ class TripOperationHUD extends ConsumerWidget {
                     child: Center(
                       child: Text(
                         '$unread',
-                        style: const TextStyle(color: AppColors.white, fontSize: 10, fontWeight: FontWeight.w700),
+                        style: const TextStyle(
+                            color: AppColors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700),
                       ),
                     ),
                   ),
@@ -315,13 +427,14 @@ class TripOperationHUD extends ConsumerWidget {
           const SizedBox(width: 10),
           // Call
           _ActionCircle(
-            icon: Icons.phone_outlined,
+            icon: Icons.phone_rounded,
             color: AppColors.success,
             onTap: () async {
               final phone = state.activeRequest?.passengerPhone;
               if (phone == null || phone.isEmpty) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text("Passenger's phone number is unavailable")),
+                  const SnackBar(
+                      content: Text("Passenger's phone number is unavailable")),
                 );
                 return;
               }
@@ -342,39 +455,153 @@ class TripOperationHUD extends ConsumerWidget {
       builder: (ctx) => AlertDialog(
         backgroundColor: AppColors.charcoal,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Text(
-          'Confirm Cash Received',
-          style: AppTextStyles.title(color: AppColors.white),
-        ),
-        content: Text(
-          'Did you physically collect ₦${fare.toStringAsFixed(0)} in cash from the passenger?',
-          style: AppTextStyles.body(color: AppColors.lightGray),
+        title: Text('Confirm Cash Received',
+            style: AppTextStyles.title(color: AppColors.white)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: AppColors.darkGray,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.payments_rounded,
+                      color: AppColors.primary, size: 28),
+                  const SizedBox(width: 12),
+                  Text(
+                    '₦${fare.toStringAsFixed(0)}',
+                    style: AppTextStyles.headline(
+                        color: AppColors.primary, weight: FontWeight.w800),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+            Text(
+              'Did you physically collect this cash from the passenger?',
+              style: AppTextStyles.body(color: AppColors.lightGray),
+              textAlign: TextAlign.center,
+            ),
+          ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: Text(
-              'No — Go Back',
-              style: AppTextStyles.body(color: AppColors.error),
-            ),
+            child: Text('No — Go Back',
+                style: AppTextStyles.body(color: AppColors.error)),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.success,
               foregroundColor: AppColors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
             ),
             onPressed: () {
               Navigator.pop(ctx);
               ref.read(driverControllerProvider.notifier).completeTrip();
             },
-            child: Text('Yes — Confirm', style: AppTextStyles.body(color: AppColors.white, weight: FontWeight.w700)),
+            child: Text('Yes — Confirm',
+                style: AppTextStyles.body(
+                    color: AppColors.white, weight: FontWeight.w700)),
           ),
         ],
       ),
     );
   }
 }
+
+// ─── Trip phase progress bar ────────────────────────────────────────────────
+
+class _TripPhaseBar extends StatelessWidget {
+  final TripStep step;
+
+  const _TripPhaseBar({required this.step});
+
+  @override
+  Widget build(BuildContext context) {
+    final phases = ['Pickup', 'Arrived', 'On Trip'];
+    final activeIndex = step == TripStep.accepted
+        ? 0
+        : step == TripStep.arrived
+            ? 1
+            : 2;
+
+    return Row(
+      children: [
+        for (int i = 0; i < phases.length; i++) ...[
+          _PhaseNode(
+            label: phases[i],
+            isActive: activeIndex == i,
+            isDone: activeIndex > i,
+          ),
+          if (i < phases.length - 1)
+            Expanded(
+              child: Container(
+                height: 2,
+                margin: const EdgeInsets.only(bottom: 16),
+                color: activeIndex > i
+                    ? AppColors.primary
+                    : AppColors.darkGray,
+              ),
+            ),
+        ],
+      ],
+    );
+  }
+}
+
+class _PhaseNode extends StatelessWidget {
+  final String label;
+  final bool isActive;
+  final bool isDone;
+
+  const _PhaseNode(
+      {required this.label, required this.isActive, required this.isDone});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 22,
+          height: 22,
+          decoration: BoxDecoration(
+            color: isDone
+                ? AppColors.primary
+                : isActive
+                    ? AppColors.primary
+                    : AppColors.darkGray,
+            shape: BoxShape.circle,
+            border: isActive && !isDone
+                ? Border.all(color: AppColors.primary.withOpacity(0.4), width: 4)
+                : null,
+          ),
+          child: isDone
+              ? const Icon(Icons.check_rounded,
+                  color: AppColors.charcoal, size: 13)
+              : null,
+        ),
+        const SizedBox(height: 4),
+        Text(
+          label,
+          style: AppTextStyles.caption(
+            color:
+                isActive || isDone ? AppColors.primary : AppColors.midGray,
+            weight: isActive ? FontWeight.w700 : FontWeight.w400,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ─── Shared sub-widgets ──────────────────────────────────────────────────────
 
 class _SheetHandle extends StatelessWidget {
   const _SheetHandle();
@@ -402,15 +629,16 @@ class _ActionCircle extends StatelessWidget {
   final Color color;
   final VoidCallback onTap;
 
-  const _ActionCircle({required this.icon, required this.color, required this.onTap});
+  const _ActionCircle(
+      {required this.icon, required this.color, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        width: 40,
-        height: 40,
+        width: 42,
+        height: 42,
         decoration: BoxDecoration(
           color: color.withOpacity(0.15),
           shape: BoxShape.circle,

@@ -25,28 +25,33 @@ class DriverHomeScreen extends ConsumerStatefulWidget {
 }
 
 class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
-  // Called only when the driver flips the switch to online.
-  // Goes online immediately (non-blocking), then checks battery optimization
-  // so we never hold up the driver waiting for a permissions dialog.
   void _handleGoOnline() async {
     LocationPermission permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
         if (mounted) {
-           ScaffoldMessenger.of(context).showSnackBar(
-             const SnackBar(content: Text('Location permissions are required to go online.'), backgroundColor: AppColors.error)
-           );
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Location permissions are required to go online.'),
+              backgroundColor: AppColors.error,
+            ),
+          );
         }
         return;
       }
     }
-    
+
     if (permission == LocationPermission.deniedForever) {
       if (mounted) {
-           ScaffoldMessenger.of(context).showSnackBar(
-             const SnackBar(content: Text('Location permissions are permanently denied. Please enable them in settings.'), backgroundColor: AppColors.error)
-           );
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+                'Location permissions are permanently denied. Please enable them in settings.'),
+            backgroundColor: AppColors.error,
+          ),
+        );
       }
       return;
     }
@@ -54,9 +59,12 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
     bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
       if (mounted) {
-         ScaffoldMessenger.of(context).showSnackBar(
-           const SnackBar(content: Text('Location services are disabled. Please turn on GPS.'), backgroundColor: AppColors.error)
-         );
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Location services are disabled. Please turn on GPS.'),
+            backgroundColor: AppColors.error,
+          ),
+        );
       }
       return;
     }
@@ -75,7 +83,6 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
     if (!mounted) return;
 
     if (!shown) {
-      // First time going online with optimization active — full explanation sheet.
       showModalBottomSheet(
         context: context,
         isScrollControlled: true,
@@ -83,7 +90,6 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
         builder: (_) => const BatteryOptimizationSheet(),
       );
     } else {
-      // Subsequent attempts — lightweight snack bar with a direct "Fix" action.
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: const Row(
@@ -114,8 +120,6 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
   @override
   Widget build(BuildContext context) {
     final driverState = ref.watch(driverControllerProvider);
-    final profile = driverState.profile;
-
     final hideHeader = driverState.tripStep != TripStep.none;
 
     return Scaffold(
@@ -137,8 +141,8 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
 
           if (!hideHeader) _buildStatusHeader(driverState),
 
-          if (!hideHeader && profile.debtAmount >= 1000)
-            _buildDebtBanner(profile.debtAmount),
+          if (!hideHeader && driverState.profile.debtAmount >= 1000)
+            _buildDebtBanner(driverState.profile.debtAmount),
 
           if (driverState.errorMessage != null)
             Positioned(
@@ -147,11 +151,13 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
               right: 20,
               child: _ErrorToast(
                 message: driverState.errorMessage!,
-                onDismiss: () => ref.read(driverControllerProvider.notifier).clearError(),
+                onDismiss: () =>
+                    ref.read(driverControllerProvider.notifier).clearError(),
               ),
             ),
 
-          if (driverState.activeRequest != null && driverState.tripStep == TripStep.none)
+          if (driverState.activeRequest != null &&
+              driverState.tripStep == TripStep.none)
             IncomingRequestCard(
               request: driverState.activeRequest!,
               countdown: driverState.countdown ?? 30,
@@ -179,27 +185,34 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
             child: Container(
               height: 56,
               decoration: BoxDecoration(
-                color: isOnline ? AppColors.charcoal : AppColors.charcoal,
+                color: AppColors.charcoal,
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(
                   color: isOnline ? AppColors.primary : AppColors.border,
                   width: 1.5,
                 ),
                 boxShadow: const [
-                  BoxShadow(color: Color(0x28000000), blurRadius: 12, offset: Offset(0, 4)),
+                  BoxShadow(
+                      color: Color(0x30000000),
+                      blurRadius: 12,
+                      offset: Offset(0, 4)),
                 ],
               ),
               child: Row(
                 children: [
                   const SizedBox(width: 16),
-                  Container(
-                    width: 10,
-                    height: 10,
-                    decoration: BoxDecoration(
-                      color: isOnline ? AppColors.success : AppColors.lightGray,
-                      shape: BoxShape.circle,
+                  // Online indicator dot with pulse when online
+                  if (isOnline)
+                    _PulseDot()
+                  else
+                    Container(
+                      width: 10,
+                      height: 10,
+                      decoration: const BoxDecoration(
+                        color: AppColors.lightGray,
+                        shape: BoxShape.circle,
+                      ),
                     ),
-                  ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Column(
@@ -215,15 +228,27 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
                         ),
                         if (isOnline)
                           Builder(builder: (context) {
-                            final socketService = ref.watch(socketServiceProvider);
-                            final connected = socketService?.isConnected ?? false;
+                            final socketService =
+                                ref.watch(socketServiceProvider);
+                            final connected =
+                                socketService?.isConnected ?? false;
                             return Text(
-                              connected ? 'Looking for rides...' : 'Connecting...',
+                              connected
+                                  ? 'Looking for rides...'
+                                  : 'Connecting...',
                               style: AppTextStyles.caption(
-                                color: connected ? AppColors.lightGray : AppColors.warning,
+                                color: connected
+                                    ? AppColors.lightGray
+                                    : AppColors.warning,
                               ),
                             );
                           }),
+                        if (!isOnline)
+                          Text(
+                            'Tap to go online',
+                            style:
+                                AppTextStyles.caption(color: AppColors.midGray),
+                          ),
                       ],
                     ),
                   ),
@@ -253,22 +278,28 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
           ),
           const SizedBox(width: 10),
 
-          // Action icons
+          // Wallet / earnings button
           _HeaderIconButton(
             icon: Icons.account_balance_wallet_outlined,
-            onTap: () => Navigator.push(
-              context, MaterialPageRoute(builder: (_) => const EarningsScreen())),
+            onTap: () => Navigator.push(context,
+                MaterialPageRoute(builder: (_) => const EarningsScreen())),
           ),
           const SizedBox(width: 8),
+          // Profile button
           _HeaderIconButton(
             icon: Icons.person_outline,
             onTap: () => Navigator.push(
-              context, MaterialPageRoute(builder: (_) => const DriverProfileScreen())),
+                context,
+                MaterialPageRoute(
+                    builder: (_) => const DriverProfileScreen())),
           ),
           const SizedBox(width: 8),
+          // Logout button
           _HeaderIconButton(
             icon: Icons.logout_rounded,
-            onTap: () => ref.read(authControllerProvider.notifier).logout(),
+            onTap: () =>
+                ref.read(authControllerProvider.notifier).logout(),
+            isDestructive: true,
           ),
         ],
       ),
@@ -280,23 +311,28 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
 
     Color borderColor;
     Color bgColor;
+    Color fgColor;
     String message;
     IconData icon;
 
     if (amount >= 5000) {
       borderColor = AppColors.error;
       bgColor = const Color(0xFFFFEBEB);
+      fgColor = const Color(0xFF991B1B);
       message = 'Account blocked — pay ₦${amount.toStringAsFixed(0)} to go online';
       icon = Icons.block_rounded;
     } else if (amount >= 2000) {
       borderColor = const Color(0xFFEA580C);
       bgColor = const Color(0xFFFFF7ED);
-      message = 'Cash rides blocked — ₦${amount.toStringAsFixed(0)} debt outstanding';
+      fgColor = const Color(0xFF9A3412);
+      message =
+          'Cash rides blocked — ₦${amount.toStringAsFixed(0)} debt outstanding';
       icon = Icons.warning_amber_rounded;
     } else {
       borderColor = AppColors.primary;
       bgColor = AppColors.primaryLight;
-      message = 'Debt warning: ₦${amount.toStringAsFixed(0)} owed to platform';
+      fgColor = AppColors.primaryDark;
+      message = 'Debt warning: ₦${amount.toStringAsFixed(0)} owed';
       icon = Icons.info_outline_rounded;
     }
 
@@ -305,8 +341,8 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
       left: 16,
       right: 16,
       child: GestureDetector(
-        onTap: () => Navigator.push(
-          context, MaterialPageRoute(builder: (_) => const EarningsScreen())),
+        onTap: () => Navigator.push(context,
+            MaterialPageRoute(builder: (_) => const EarningsScreen())),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
           decoration: BoxDecoration(
@@ -314,22 +350,75 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
             borderRadius: BorderRadius.circular(12),
             border: Border.all(color: borderColor),
             boxShadow: const [
-              BoxShadow(color: Color(0x18000000), blurRadius: 8, offset: Offset(0, 2)),
+              BoxShadow(
+                  color: Color(0x20000000), blurRadius: 8, offset: Offset(0, 2)),
             ],
           ),
           child: Row(
             children: [
-              Icon(icon, color: borderColor, size: 18),
+              Icon(icon, color: fgColor, size: 18),
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
                   message,
-                  style: AppTextStyles.bodySmall(color: borderColor, weight: FontWeight.w600),
+                  style: AppTextStyles.bodySmall(
+                      color: fgColor, weight: FontWeight.w600),
                 ),
               ),
-              Icon(Icons.chevron_right, color: borderColor, size: 18),
+              Icon(Icons.chevron_right, color: fgColor, size: 18),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Widgets ─────────────────────────────────────────────────────────────────
+
+class _PulseDot extends StatefulWidget {
+  @override
+  State<_PulseDot> createState() => _PulseDotState();
+}
+
+class _PulseDotState extends State<_PulseDot>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulse;
+  late final Animation<double> _scale;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulse = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 900))
+      ..repeat(reverse: true);
+    _scale = Tween<double>(begin: 0.85, end: 1.15)
+        .animate(CurvedAnimation(parent: _pulse, curve: Curves.easeInOut));
+  }
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ScaleTransition(
+      scale: _scale,
+      child: Container(
+        width: 10,
+        height: 10,
+        decoration: BoxDecoration(
+          color: AppColors.success,
+          shape: BoxShape.circle,
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.success.withOpacity(0.5),
+              blurRadius: 6,
+              spreadRadius: 1,
+            ),
+          ],
         ),
       ),
     );
@@ -339,25 +428,41 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
 class _HeaderIconButton extends StatelessWidget {
   final IconData icon;
   final VoidCallback onTap;
+  final bool isDestructive;
 
-  const _HeaderIconButton({required this.icon, required this.onTap});
+  const _HeaderIconButton({
+    required this.icon,
+    required this.onTap,
+    this.isDestructive = false,
+  });
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        width: 44,
+        width: 48,
         height: 56,
         decoration: BoxDecoration(
           color: AppColors.charcoal,
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: AppColors.border.withOpacity(0.3)),
+          border: Border.all(
+            color: isDestructive
+                ? AppColors.error.withOpacity(0.3)
+                : AppColors.border.withOpacity(0.3),
+          ),
           boxShadow: const [
-            BoxShadow(color: Color(0x28000000), blurRadius: 12, offset: Offset(0, 4)),
+            BoxShadow(
+                color: Color(0x28000000),
+                blurRadius: 12,
+                offset: Offset(0, 4)),
           ],
         ),
-        child: Icon(icon, color: AppColors.white, size: 20),
+        child: Icon(
+          icon,
+          color: isDestructive ? AppColors.error : AppColors.white,
+          size: 20,
+        ),
       ),
     );
   }
@@ -395,7 +500,9 @@ class _ErrorToastState extends State<_ErrorToast> {
       decoration: BoxDecoration(
         color: AppColors.charcoal,
         borderRadius: BorderRadius.circular(12),
-        boxShadow: const [BoxShadow(color: Color(0x33000000), blurRadius: 16)],
+        boxShadow: const [
+          BoxShadow(color: Color(0x33000000), blurRadius: 16)
+        ],
       ),
       child: Row(
         children: [

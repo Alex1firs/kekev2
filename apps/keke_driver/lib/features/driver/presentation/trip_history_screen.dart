@@ -73,7 +73,8 @@ class _DriverTripHistoryScreenState
       });
     } on dio.DioException catch (e) {
       setState(() {
-        _error = e.response?.data?['error']?.toString() ?? 'Failed to load history';
+        _error = e.response?.data?['error']?.toString() ??
+            'Failed to load history';
         _isLoading = false;
       });
     } catch (_) {
@@ -92,7 +93,8 @@ class _DriverTripHistoryScreenState
         backgroundColor: AppColors.charcoal,
         foregroundColor: AppColors.white,
         elevation: 0,
-        title: Text('Trip History', style: AppTextStyles.title(color: AppColors.white)),
+        title: Text('Trip History',
+            style: AppTextStyles.title(color: AppColors.white)),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: AppColors.white),
           onPressed: () => Navigator.pop(context),
@@ -110,8 +112,7 @@ class _DriverTripHistoryScreenState
   Widget _buildBody() {
     if (_isLoading) {
       return const Center(
-        child: CircularProgressIndicator(color: AppColors.primary),
-      );
+          child: CircularProgressIndicator(color: AppColors.primary));
     }
 
     if (_error != null) {
@@ -125,7 +126,8 @@ class _DriverTripHistoryScreenState
             const SizedBox(height: 16),
             TextButton(
               onPressed: _loadHistory,
-              child: Text('Retry', style: AppTextStyles.body(color: AppColors.primary)),
+              child: Text('Retry',
+                  style: AppTextStyles.body(color: AppColors.primary)),
             ),
           ],
         ),
@@ -137,9 +139,11 @@ class _DriverTripHistoryScreenState
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.electric_rickshaw, color: AppColors.darkGray, size: 64),
+            const Icon(Icons.electric_rickshaw,
+                color: AppColors.darkGray, size: 64),
             const SizedBox(height: 16),
-            Text('No trips yet', style: AppTextStyles.title(color: AppColors.midGray)),
+            Text('No trips yet',
+                style: AppTextStyles.title(color: AppColors.midGray)),
             const SizedBox(height: 6),
             Text(
               'Completed trips will appear here',
@@ -160,81 +164,107 @@ class _DriverTripHistoryScreenState
 
         return Container(
           margin: const EdgeInsets.only(bottom: 10),
-          padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
             color: AppColors.darkGray,
             borderRadius: BorderRadius.circular(16),
           ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: isCompleted
-                      ? AppColors.success.withOpacity(0.15)
-                      : AppColors.error.withOpacity(0.1),
-                  shape: BoxShape.circle,
+          child: IntrinsicHeight(
+            child: Row(
+              children: [
+                // Status accent strip
+                Container(
+                  width: 4,
+                  decoration: BoxDecoration(
+                    color: isCompleted
+                        ? AppColors.success
+                        : AppColors.error,
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(16),
+                      bottomLeft: Radius.circular(16),
+                    ),
+                  ),
                 ),
-                child: Icon(
-                  isCompleted ? Icons.check_rounded : Icons.close_rounded,
-                  color: isCompleted ? AppColors.success : AppColors.error,
-                  size: 20,
-                ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.all(14),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        // Icon
+                        Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: isCompleted
+                                ? AppColors.success.withOpacity(0.12)
+                                : AppColors.error.withOpacity(0.12),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(
+                            Icons.electric_rickshaw,
+                            color: isCompleted
+                                ? AppColors.success
+                                : AppColors.error,
+                            size: 20,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        // Content
                         Expanded(
-                          child: Text(
-                            ride.pickupAddress.isNotEmpty
-                                ? ride.pickupAddress
-                                : 'Unknown pickup',
-                            style: AppTextStyles.body(
-                                color: AppColors.white, weight: FontWeight.w600),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                ride.pickupAddress.isNotEmpty
+                                    ? ride.pickupAddress
+                                    : 'Unknown pickup',
+                                style: AppTextStyles.body(
+                                    color: AppColors.white,
+                                    weight: FontWeight.w600),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              if (ride.destinationAddress.isNotEmpty) ...[
+                                const SizedBox(height: 3),
+                                Text(
+                                  '→ ${ride.destinationAddress}',
+                                  style: AppTextStyles.bodySmall(
+                                      color: AppColors.midGray),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ],
+                              const SizedBox(height: 8),
+                              Row(
+                                children: [
+                                  Text(
+                                    _formatDate(ride.createdAt),
+                                    style: AppTextStyles.caption(
+                                        color: AppColors.midGray),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  _PaymentBadge(isCash: isCash),
+                                  const Spacer(),
+                                  Text(
+                                    '₦${ride.fare.toStringAsFixed(0)}',
+                                    style: AppTextStyles.body(
+                                      color: isCompleted
+                                          ? AppColors.success
+                                          : AppColors.midGray,
+                                      weight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
                           ),
                         ),
-                        const SizedBox(width: 8),
-                        _PaymentBadge(isCash: isCash),
                       ],
                     ),
-                    if (ride.destinationAddress.isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        '→ ${ride.destinationAddress}',
-                        style: AppTextStyles.bodySmall(color: AppColors.midGray),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
-                    const SizedBox(height: 8),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          _formatDate(ride.createdAt),
-                          style: AppTextStyles.caption(color: AppColors.midGray),
-                        ),
-                        Text(
-                          '₦${ride.fare.toStringAsFixed(0)}',
-                          style: AppTextStyles.body(
-                            color: isCompleted ? AppColors.success : AppColors.midGray,
-                            weight: FontWeight.w700,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         );
       },
@@ -262,9 +292,7 @@ class _PaymentBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: isCash
-            ? const Color(0xFF065F46)
-            : AppColors.charcoal,
+        color: isCash ? const Color(0xFF065F46) : AppColors.charcoal,
         borderRadius: BorderRadius.circular(8),
       ),
       child: Text(

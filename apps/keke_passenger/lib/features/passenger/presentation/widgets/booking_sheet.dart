@@ -12,7 +12,10 @@ import '../destination_search_screen.dart';
 import '../wallet_screen.dart';
 import 'ride_chat_panel.dart';
 import 'ride_receipt_sheet.dart';
+import 'dart:async';
 import 'dart:math' as math;
+import 'package:flutter/rendering.dart' show ScrollDirection;
+import 'package:flutter/scheduler.dart' show Ticker;
 
 class BookingSheet extends ConsumerWidget {
   const BookingSheet({super.key});
@@ -80,10 +83,10 @@ class BookingSheet extends ConsumerWidget {
               child: CircularProgressIndicator(color: AppColors.primary)),
         );
       case BookingStep.idle:
+      case BookingStep.selectingDestination:
+        return _buildHomePanel(context, ref, state);
       case BookingStep.selectingPickup:
         return _buildPickupPanel(context, ref, state);
-      case BookingStep.selectingDestination:
-        return _buildDestinationPanel(context, ref, state);
       case BookingStep.selectingDestinationOnMap:
         return _buildDestinationMapPanel(context, ref, state);
       case BookingStep.previewEstimate:
@@ -113,24 +116,30 @@ class BookingSheet extends ConsumerWidget {
         // Header
         Row(
           children: [
-            Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                color: AppColors.primary,
-                borderRadius: BorderRadius.circular(10),
+            GestureDetector(
+              onTap: () => ref
+                  .read(bookingControllerProvider.notifier)
+                  .cancelPickupEdit(),
+              child: Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: AppColors.paleGray,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: AppColors.border),
+                ),
+                child: const Icon(Icons.arrow_back_rounded,
+                    size: 18, color: AppColors.charcoal),
               ),
-              child: const Icon(Icons.my_location_rounded,
-                  color: AppColors.charcoal, size: 18),
             ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Confirm Pickup', style: AppTextStyles.title()),
+                  Text('Change Pickup', style: AppTextStyles.title()),
                   Text(
-                    'Choose where your Keke should meet you',
+                    'Drag the map to set your pickup point',
                     style: AppTextStyles.caption(color: AppColors.midGray),
                   ),
                 ],
@@ -224,7 +233,7 @@ class BookingSheet extends ConsumerWidget {
 
         // CTA
         _PrimaryButton(
-          label: 'Confirm Pickup',
+          label: 'Set Pickup',
           icon: Icons.check_rounded,
           enabled: !isMoving && state.pickupLocation != null,
           onTap: () =>
@@ -234,86 +243,43 @@ class BookingSheet extends ConsumerWidget {
     );
   }
 
-  // ── Destination selection ──────────────────────────────────────────────
+  // ── Home / destination-first panel ────────────────────────────────────────
 
-  Widget _buildDestinationPanel(
+  Widget _buildHomePanel(
       BuildContext context, WidgetRef ref, BookingState state) {
+    final address = state.pickupAddress;
+    final isLocating = address == null ||
+        address == 'Locating...' ||
+        address == 'Loading address...';
+
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        // Header
         Row(
           children: [
-            GestureDetector(
-              onTap: () =>
-                  ref.read(bookingControllerProvider.notifier).retreatToPickup(),
-              child: Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                  color: AppColors.paleGray,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: AppColors.border),
-                ),
-                child: const Icon(Icons.arrow_back_rounded,
-                    size: 18, color: AppColors.charcoal),
+            Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                color: AppColors.primary,
+                borderRadius: BorderRadius.circular(11),
               ),
+              child: const Icon(Icons.electric_rickshaw,
+                  color: AppColors.charcoal, size: 20),
             ),
             const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Where to?', style: AppTextStyles.title()),
-                  Text('Set your destination',
-                      style: AppTextStyles.caption(color: AppColors.midGray)),
-                ],
-              ),
-            ),
+            Text('Where to?',
+                style: AppTextStyles.headline(weight: FontWeight.w800)),
           ],
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 14),
 
-        // Pickup row (read-only reference)
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          decoration: BoxDecoration(
-            color: AppColors.surfaceVariant,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: AppColors.border),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 8,
-                height: 8,
-                decoration: const BoxDecoration(
-                    color: AppColors.primary, shape: BoxShape.circle),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  state.pickupAddress ?? 'Pickup',
-                  style: AppTextStyles.bodySmall(color: AppColors.midGray),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 4),
-
-        // Vertical connector
-        Padding(
-          padding: const EdgeInsets.only(left: 17),
-          child: Container(width: 2, height: 14, color: AppColors.border),
-        ),
-        const SizedBox(height: 4),
-
-        // Destination search tap target
+        // ── Hero destination tap target
         GestureDetector(
           onTap: () async {
+            HapticFeedback.lightImpact();
             final result = await Navigator.push<Map<String, dynamic>>(
               context,
               MaterialPageRoute(
@@ -333,7 +299,67 @@ class BookingSheet extends ConsumerWidget {
           },
           child: Container(
             padding:
-                const EdgeInsets.symmetric(horizontal: 14, vertical: 15),
+                const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
+            decoration: BoxDecoration(
+              color: AppColors.primary,
+              borderRadius: BorderRadius.circular(18),
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.primary.withOpacity(0.30),
+                  blurRadius: 18,
+                  offset: const Offset(0, 5),
+                ),
+              ],
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.search_rounded,
+                    color: AppColors.charcoal, size: 22),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Where to?',
+                    style: AppTextStyles.title(
+                        color: AppColors.charcoal, weight: FontWeight.w700),
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: const Color(0x22111827),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text('Search',
+                      style: AppTextStyles.caption(
+                          color: AppColors.charcoal,
+                          weight: FontWeight.w800)),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 10),
+
+        // ── Pickup row (auto-filled, editable)
+        GestureDetector(
+          onTap: () async {
+            HapticFeedback.selectionClick();
+            final result = await Navigator.push<Map<String, dynamic>>(
+              context,
+              MaterialPageRoute(
+                  builder: (_) => const DestinationSearchScreen(
+                      hintText: 'Change pickup location')),
+            );
+            if (result != null) {
+              ref.read(bookingControllerProvider.notifier).setPickup(
+                  result['address'] as String,
+                  result['location'] as LatLng);
+            }
+          },
+          child: Container(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
             decoration: BoxDecoration(
               color: AppColors.paleGray,
               borderRadius: BorderRadius.circular(12),
@@ -341,16 +367,72 @@ class BookingSheet extends ConsumerWidget {
             ),
             child: Row(
               children: [
-                const Icon(Icons.search_rounded,
-                    color: AppColors.midGray, size: 20),
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: const BoxDecoration(
+                      color: AppColors.primary, shape: BoxShape.circle),
+                ),
                 const SizedBox(width: 10),
-                Text('Search destination…',
-                    style: AppTextStyles.body(color: AppColors.lightGray)),
+                if (isLocating) ...[
+                  const SizedBox(
+                    width: 11,
+                    height: 11,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 1.5, color: AppColors.primary),
+                  ),
+                  const SizedBox(width: 8),
+                  Text('Detecting your location…',
+                      style:
+                          AppTextStyles.bodySmall(color: AppColors.midGray)),
+                ] else
+                  Expanded(
+                    child: Text(
+                      address,
+                      style:
+                          AppTextStyles.bodySmall(color: AppColors.midGray),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                const SizedBox(width: 6),
+                const Icon(Icons.edit_rounded,
+                    size: 13, color: AppColors.lightGray),
               ],
             ),
           ),
         ),
-        const SizedBox(height: 8),
+
+        // ── Nearby ETA strip
+        if (state.nearbyDrivers.isNotEmpty &&
+            state.pickupLocation != null) ...[
+          const SizedBox(height: 8),
+          _NearbyEtaBanner(
+            pickup: state.pickupLocation!,
+            drivers: state.nearbyDrivers,
+          ),
+        ],
+
+        const SizedBox(height: 18),
+
+        // ── Landmarks section label
+        Text('Popular destinations',
+            style: AppTextStyles.label(
+                color: AppColors.midGray, weight: FontWeight.w700)),
+        const SizedBox(height: 10),
+
+        // ── Horizontally auto-scrolling landmark rail
+        SizedBox(
+          height: 72,
+          child: _LandmarksRail(
+            onSelect: (lm) {
+              HapticFeedback.mediumImpact();
+              ref.read(bookingControllerProvider.notifier).setDestination(
+                  lm.name, lm.location);
+            },
+          ),
+        ),
+        const SizedBox(height: 4),
       ],
     );
   }
@@ -717,7 +799,228 @@ class BookingSheet extends ConsumerWidget {
     if (step == BookingStep.confirmed ||
         step == BookingStep.arrived ||
         step == BookingStep.started) return 'ride_active';
+    if (step == BookingStep.idle ||
+        step == BookingStep.selectingDestination) return 'home';
     return step.toString();
+  }
+}
+
+// ── Landmark data model ───────────────────────────────────────────────────────
+
+class _Landmark {
+  final String name;
+  final String area;
+  final IconData icon;
+  final LatLng location;
+
+  const _Landmark({
+    required this.name,
+    required this.area,
+    required this.icon,
+    required this.location,
+  });
+}
+
+// ── Horizontally auto-scrolling landmarks rail ────────────────────────────────
+
+class _LandmarksRail extends StatefulWidget {
+  final void Function(_Landmark) onSelect;
+
+  const _LandmarksRail({required this.onSelect});
+
+  @override
+  State<_LandmarksRail> createState() => _LandmarksRailState();
+}
+
+class _LandmarksRailState extends State<_LandmarksRail>
+    with SingleTickerProviderStateMixin {
+  static const _landmarks = [
+    _Landmark(
+      name: 'Aroma Junction',
+      area: 'Awka',
+      icon: Icons.traffic_rounded,
+      location: LatLng(6.2097, 7.0562),
+    ),
+    _Landmark(
+      name: 'Roban Stores',
+      area: 'Awka',
+      icon: Icons.storefront_rounded,
+      location: LatLng(6.2032, 7.0598),
+    ),
+    _Landmark(
+      name: 'UNIZIK Gate',
+      area: 'Awka',
+      icon: Icons.school_rounded,
+      location: LatLng(6.2139, 7.0576),
+    ),
+    _Landmark(
+      name: 'Eke Awka Market',
+      area: 'Awka',
+      icon: Icons.shopping_basket_rounded,
+      location: LatLng(6.2085, 7.0537),
+    ),
+    _Landmark(
+      name: 'Government House',
+      area: 'Awka',
+      icon: Icons.location_city_rounded,
+      location: LatLng(6.2248, 7.0741),
+    ),
+    _Landmark(
+      name: 'Shoprite Onitsha',
+      area: 'Onitsha',
+      icon: Icons.local_grocery_store_rounded,
+      location: LatLng(6.1631, 6.7872),
+    ),
+    _Landmark(
+      name: 'Main Market',
+      area: 'Onitsha',
+      icon: Icons.store_rounded,
+      location: LatLng(6.1584, 6.7837),
+    ),
+    _Landmark(
+      name: 'Bridge Head',
+      area: 'Onitsha',
+      icon: Icons.directions_rounded,
+      location: LatLng(6.1527, 6.7816),
+    ),
+    _Landmark(
+      name: 'Workers\' Corner',
+      area: 'Awka',
+      icon: Icons.apartment_rounded,
+      location: LatLng(6.2112, 7.0612),
+    ),
+    _Landmark(
+      name: 'Nkpor Junction',
+      area: 'Nkpor',
+      icon: Icons.place_rounded,
+      location: LatLng(6.1902, 6.8123),
+    ),
+    _Landmark(
+      name: 'Awka Motor Park',
+      area: 'Awka',
+      icon: Icons.directions_bus_rounded,
+      location: LatLng(6.2072, 7.0523),
+    ),
+    _Landmark(
+      name: 'Holy Trinity Cathedral',
+      area: 'Awka',
+      icon: Icons.church_rounded,
+      location: LatLng(6.2110, 7.0588),
+    ),
+  ];
+
+  late final ScrollController _scrollCtrl;
+  late final Ticker _ticker;
+  bool _userScrolling = false;
+  Timer? _resumeTimer;
+
+  static const double _pixelsPerFrame = 0.55;
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollCtrl = ScrollController();
+    _ticker = createTicker(_onTick)..start();
+  }
+
+  void _onTick(Duration _) {
+    if (_userScrolling || !_scrollCtrl.hasClients) return;
+    final pos = _scrollCtrl.position;
+    if (pos.maxScrollExtent <= 0) return;
+    final next = pos.pixels + _pixelsPerFrame;
+    if (next >= pos.maxScrollExtent) {
+      _scrollCtrl.jumpTo(0);
+    } else {
+      _scrollCtrl.jumpTo(next);
+    }
+  }
+
+  void _onUserScroll(UserScrollNotification n) {
+    if (n.direction != ScrollDirection.idle) {
+      _userScrolling = true;
+      _resumeTimer?.cancel();
+    } else {
+      _resumeTimer?.cancel();
+      _resumeTimer = Timer(const Duration(seconds: 3), () {
+        if (mounted) _userScrolling = false;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _resumeTimer?.cancel();
+    _ticker.dispose();
+    _scrollCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return NotificationListener<UserScrollNotification>(
+      onNotification: (n) {
+        _onUserScroll(n);
+        return false;
+      },
+      child: ListView.builder(
+        controller: _scrollCtrl,
+        scrollDirection: Axis.horizontal,
+        physics: const BouncingScrollPhysics(),
+        itemCount: _landmarks.length,
+        padding: EdgeInsets.zero,
+        itemBuilder: (ctx, i) {
+          final lm = _landmarks[i];
+          return GestureDetector(
+            onTap: () => widget.onSelect(lm),
+            child: Container(
+              margin: const EdgeInsets.only(right: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: AppColors.charcoal,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                    color: const Color(0xFF374151)),
+                boxShadow: const [
+                  BoxShadow(
+                      color: Color(0x16000000),
+                      blurRadius: 8,
+                      offset: Offset(0, 2)),
+                ],
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 30,
+                    height: 30,
+                    decoration: BoxDecoration(
+                      color: AppColors.primary.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child:
+                        Icon(lm.icon, color: AppColors.primary, size: 16),
+                  ),
+                  const SizedBox(width: 10),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(lm.name,
+                          style: AppTextStyles.bodySmall(
+                              color: AppColors.white,
+                              weight: FontWeight.w700)),
+                      Text(lm.area,
+                          style: AppTextStyles.caption(
+                              color: AppColors.midGray)),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
   }
 }
 

@@ -180,21 +180,14 @@ class BookingController extends StateNotifier<BookingState> {
   }
 
   void _resetBookingState() {
-    state = state.copyWith(
-      step: BookingStep.selectingPickup,
-      destinationAddress: null,
-      destinationLocation: null,
-      estimatedDistance: null,
-      estimatedFareAmount: null,
-      estimatedTime: null,
-      activeRoutePolyline: [],
-      clearAssignedDriver: true,
-      clearRideId: true,
-      assignedDriverLocation: null,
-      chatMessages: [],
-      clearPickupCode: true,
-      clearEta: true,
-      isDriverNearby: false,
+    // Construct cleanly so all receipt/ride fields truly reset to null defaults.
+    state = BookingState(
+      step: BookingStep.selectingDestination,
+      mapCenter: state.mapCenter,
+      pickupLocation: state.pickupLocation,
+      pickupAddress: state.pickupAddress,
+      nearbyDrivers: state.nearbyDrivers,
+      paymentMethod: state.paymentMethod,
     );
     _stopWatchdog();
   }
@@ -219,7 +212,7 @@ class BookingController extends StateNotifier<BookingState> {
     final center = userLocation ?? defaultLocation;
 
     state = state.copyWith(
-      step: BookingStep.selectingPickup,
+      step: BookingStep.selectingDestination,
       mapCenter: center,
       pickupLocation: center,
       pickupAddress: 'Locating...',
@@ -308,7 +301,8 @@ class BookingController extends StateNotifier<BookingState> {
     
     final address = await _mapRepo.reverseGeocode(target);
     
-    if (isPickup && state.step == BookingStep.selectingPickup) {
+    if (isPickup && (state.step == BookingStep.selectingPickup ||
+        state.step == BookingStep.selectingDestination)) {
       state = state.copyWith(pickupAddress: address);
     } else if (!isPickup && state.step == BookingStep.selectingDestinationOnMap) {
       state = state.copyWith(destinationAddress: address);
@@ -321,11 +315,19 @@ class BookingController extends StateNotifier<BookingState> {
   }
 
   void retreatToPickup() {
-    state = state.copyWith(
-      step: BookingStep.selectingPickup,
-      destinationLocation: null,
-      destinationAddress: null,
+    // Go back to the home/destination panel and clear all fare/route state.
+    state = BookingState(
+      step: BookingStep.selectingDestination,
+      mapCenter: state.mapCenter,
+      pickupLocation: state.pickupLocation,
+      pickupAddress: state.pickupAddress,
+      nearbyDrivers: state.nearbyDrivers,
+      paymentMethod: state.paymentMethod,
     );
+  }
+
+  void cancelPickupEdit() {
+    state = state.copyWith(step: BookingStep.selectingDestination);
   }
 
   void setPickup(String address, LatLng location) {

@@ -144,6 +144,20 @@ class _HomeMapScreenState extends ConsumerState<HomeMapScreen> {
       if (next != BookingStep.confirmed) _hasFitToDriver = false;
     });
 
+    ref.listen(bookingControllerProvider.select((s) => s.step), (prev, next) {
+      // Re-center on pickup when entering edit mode so the map pin lands correctly.
+      if (prev != BookingStep.selectingPickup &&
+          next == BookingStep.selectingPickup &&
+          _mapController != null) {
+        final pickup =
+            ref.read(bookingControllerProvider).pickupLocation;
+        if (pickup != null) {
+          _mapController!
+              .animateCamera(CameraUpdate.newLatLng(pickup));
+        }
+      }
+    });
+
     ref.listen(bookingControllerProvider, (previous, next) {
       if (next.step == BookingStep.previewEstimate && _mapController != null) {
         if (next.pickupLocation != null && next.destinationLocation != null) {

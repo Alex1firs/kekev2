@@ -9,6 +9,7 @@ import { Ride } from '../models/Ride';
 import { DriverProfile } from '../models/DriverProfile';
 import { redis } from '../config/redis';
 import { WalletService, DEBT_CASH_BLOCK, DEBT_HARD_BLOCK } from '../services/wallet_service';
+import { In } from 'typeorm';
 
 const _jwtSecret = process.env.JWT_SECRET;
 if (!_jwtSecret) {
@@ -159,7 +160,25 @@ export class SocketHandler {
 
                 await DispatchService.updateDriverLocation(data.driverId, data.lat, data.lng);
 
-                const activeRideId = this.driverRideMap.get(data.driverId);
+                let activeRideId = this.driverRideMap.get(data.driverId);
+
+                // Recover from server restart: driverRideMap is in-memory and wipes on redeploy.
+                // If the map has no entry, look up the active ride from the DB and repopulate.
+                if (!activeRideId) {
+                    try {
+                        const activeRide = await AppDataSource.getRepository(Ride).findOne({
+                            where: { driverId: data.driverId, status: In(['accepted', 'arrived', 'in_progress'] as any[]) },
+                        });
+                        if (activeRide) {
+                            activeRideId = activeRide.rideId;
+                            this.driverRideMap.set(data.driverId, activeRideId);
+                            log.info(`[HEARTBEAT_RECOVERY] Repopulated driverRideMap: ${data.driverId} → ${activeRideId}`);
+                        }
+                    } catch (err) {
+                        log.error('Failed to recover driverRideMap from DB:', err);
+                    }
+                }
+
                 if (activeRideId) {
                     this.io.to(`ride:${activeRideId}`).emit('driver:location_update', {
                         driverId: data.driverId, lat: data.lat, lng: data.lng,

@@ -604,12 +604,19 @@ class BookingController extends StateNotifier<BookingState> {
     if (_socketService != null && state.rideId != null) {
       print('[PASSENGER_LIFECYCLE] Requesting cancellation for: ${state.rideId}');
       state = state.copyWith(step: BookingStep.loading);
-      
+
       _socketService!.emit('ride:cancel', {
         'rideId': state.rideId,
         'passengerId': passengerId,
       });
-      // NOTICE: We wait for the backend 'ride:cancelled' event for a strict sync.
+
+      // Fallback: if the server never echoes ride:cancelled (socket blip), reset anyway.
+      Future.delayed(const Duration(seconds: 6), () {
+        if (mounted && state.step == BookingStep.loading) {
+          print('[PASSENGER_LIFECYCLE] Cancel fallback triggered — resetting state');
+          _resetBookingState();
+        }
+      });
     }
   }
 

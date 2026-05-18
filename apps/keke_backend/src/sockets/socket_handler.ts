@@ -259,8 +259,16 @@ export class SocketHandler {
                     this.io.to('admin').emit('ride:status_update', { rideId: data.rideId, status: 'canceled' });
                     this.broadcastToRide(data.rideId, 'ride:cancelled', { rideId: data.rideId });
 
-                    if (ride.driverId) this.driverRideMap.delete(ride.driverId);
+                    // Notify the assigned driver directly (activeDispatches is cleared on accept)
+                    if (ride.driverId) {
+                        this.driverRideMap.delete(ride.driverId);
+                        this.io.to(`driver:${ride.driverId}`).emit('ride:cancelled', { rideId: data.rideId });
+                        NotificationService.sendToUser(ride.driverId, UserRole.DRIVER, 'Ride Cancelled', 'The passenger cancelled the ride.', {
+                            type: 'RIDE_CANCELLED', rideId: data.rideId, intent: 'home',
+                        });
+                    }
 
+                    // Dismiss any drivers still in the dispatch queue (searching phase)
                     const notifiedDrivers = this.activeDispatches.get(data.rideId);
                     if (notifiedDrivers) {
                         log.info(`[BACKEND_DISMISS] Signaling ${notifiedDrivers.size} drivers to dismiss ride ${data.rideId}`);

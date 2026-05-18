@@ -176,7 +176,10 @@ class DriverController extends StateNotifier<DriverState> {
 
   Future<void> _sendHeartbeat() async {
     if (!mounted) return;
-    if (state.operationStatus == OperationStatus.available && _socketService != null) {
+    // Send while available OR while on an active ride so the passenger sees live location.
+    final isOnline = state.operationStatus == OperationStatus.available ||
+        state.operationStatus == OperationStatus.busy;
+    if (isOnline && _socketService != null) {
       if (state.profile.status != DriverStatus.approved) return;
       if (!_socketService!.isConnected) {
         print('[HEARTBEAT] Socket not yet connected — will retry on next tick');

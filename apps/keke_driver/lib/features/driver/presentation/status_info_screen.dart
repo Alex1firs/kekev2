@@ -15,7 +15,6 @@ class StatusInfoScreen extends ConsumerWidget {
     final status = driverState.profile.status;
     final config = _StatusConfig.from(status);
     final canRefresh = status == DriverStatus.pendingApproval ||
-        status == DriverStatus.pendingDocuments ||
         status == DriverStatus.unregistered;
 
     return Scaffold(
@@ -58,6 +57,30 @@ class StatusInfoScreen extends ConsumerWidget {
                 textAlign: TextAlign.center,
                 style: AppTextStyles.body(color: AppColors.midGray),
               ),
+
+              // Complete onboarding CTA for pending documents
+              if (status == DriverStatus.pendingDocuments) ...[
+                const SizedBox(height: 40),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      foregroundColor: AppColors.charcoal,
+                      padding: const EdgeInsets.symmetric(vertical: 18),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16)),
+                      elevation: 0,
+                    ),
+                    onPressed: () => context.push('/onboarding'),
+                    child: Text(
+                      'Complete Onboarding',
+                      style: AppTextStyles.body(
+                          color: AppColors.charcoal, weight: FontWeight.w700),
+                    ),
+                  ),
+                ),
+              ],
 
               // Resubmit button for rejected status
               if (status == DriverStatus.rejected) ...[

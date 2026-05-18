@@ -205,7 +205,9 @@ class _DestinationSearchScreenState
           ),
           title: Text(primary,
               style: AppTextStyles.body(
-                  color: AppColors.charcoal, weight: FontWeight.w600)),
+                  color: AppColors.charcoal, weight: FontWeight.w600),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis),
           subtitle: secondary.isNotEmpty
               ? Text(secondary,
                   style: AppTextStyles.bodySmall(color: AppColors.midGray),

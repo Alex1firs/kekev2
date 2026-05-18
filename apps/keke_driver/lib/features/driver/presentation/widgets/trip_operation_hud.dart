@@ -283,7 +283,7 @@ class TripOperationHUD extends ConsumerWidget {
               const SizedBox(height: 10),
               Text(
                 isCash
-                    ? 'Collect ₦${fare.toInt()} cash from passenger'
+                    ? 'Cash received: ₦${fare.toInt()}'
                     : '₦${fare.toInt()} captured from wallet',
                 style: AppTextStyles.body(
                     color: const Color(0xFF6EE7B7).withOpacity(0.8)),
@@ -405,20 +405,19 @@ class TripOperationHUD extends ConsumerWidget {
                   right: 0,
                   top: 0,
                   child: Container(
-                    width: 16,
-                    height: 16,
-                    decoration: const BoxDecoration(
+                    constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                    decoration: BoxDecoration(
                       color: AppColors.error,
-                      shape: BoxShape.circle,
+                      borderRadius: BorderRadius.circular(8),
                     ),
-                    child: Center(
-                      child: Text(
-                        '$unread',
-                        style: const TextStyle(
-                            color: AppColors.white,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w700),
-                      ),
+                    child: Text(
+                      unread > 99 ? '99+' : '$unread',
+                      style: const TextStyle(
+                          color: AppColors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700),
+                      textAlign: TextAlign.center,
                     ),
                   ),
                 ),

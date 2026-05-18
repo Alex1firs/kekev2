@@ -231,6 +231,8 @@ class _RideReceiptSheetState extends ConsumerState<RideReceiptSheet>
                                   style: AppTextStyles.body(
                                       color: AppColors.charcoal,
                                       weight: FontWeight.w600),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                 ),
                                 Text(
                                   [driver['vehicleModel'], driver['vehiclePlate']]
@@ -239,6 +241,8 @@ class _RideReceiptSheetState extends ConsumerState<RideReceiptSheet>
                                       .join(' · '),
                                   style:
                                       AppTextStyles.bodySmall(color: AppColors.midGray),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                 ),
                               ],
                             ),

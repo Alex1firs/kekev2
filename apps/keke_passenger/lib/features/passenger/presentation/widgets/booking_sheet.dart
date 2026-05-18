@@ -74,12 +74,12 @@ class BookingSheet extends ConsumerWidget {
   Widget _buildPanel(BuildContext context, WidgetRef ref, BookingState state) {
     switch (state.step) {
       case BookingStep.loading:
-      case BookingStep.idle:
         return const SizedBox(
           height: 120,
           child: Center(
               child: CircularProgressIndicator(color: AppColors.primary)),
         );
+      case BookingStep.idle:
       case BookingStep.selectingPickup:
         return _buildPickupPanel(context, ref, state);
       case BookingStep.selectingDestination:

@@ -124,7 +124,8 @@ class _PassengerTripHistoryScreenState
           children: [
             const Icon(Icons.error_outline, color: AppColors.error, size: 48),
             const SizedBox(height: 12),
-            Text(_error!, style: AppTextStyles.body(color: AppColors.error)),
+            Text(_error!, style: AppTextStyles.body(color: AppColors.error),
+                maxLines: 3, overflow: TextOverflow.ellipsis),
             const SizedBox(height: 16),
             TextButton(
               onPressed: _loadHistory,
@@ -147,6 +148,9 @@ class _PassengerTripHistoryScreenState
             Text(
               'Your completed rides will appear here',
               style: AppTextStyles.body(color: AppColors.lightGray),
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
             ),
           ],
         ),

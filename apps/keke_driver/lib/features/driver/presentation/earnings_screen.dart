@@ -274,6 +274,7 @@ class _EarningsScreenState extends ConsumerState<EarningsScreen> {
           foregroundColor: AppColors.lightGray,
           side: const BorderSide(color: AppColors.darkGray),
           padding: const EdgeInsets.symmetric(vertical: 14),
+          minimumSize: const Size(double.infinity, 50),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
         ),
         onPressed: () => Navigator.push(context,

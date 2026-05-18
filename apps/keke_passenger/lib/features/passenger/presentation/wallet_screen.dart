@@ -117,6 +117,8 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
               '₦${NumberFormat('#,###.00').format(state.balance)}',
               style: AppTextStyles.display(
                   color: AppColors.primary, weight: FontWeight.w800),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
             const SizedBox(height: 24),
             SizedBox(

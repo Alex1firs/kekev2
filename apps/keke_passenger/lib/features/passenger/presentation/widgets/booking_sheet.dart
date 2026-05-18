@@ -352,9 +352,16 @@ class BookingSheet extends ConsumerWidget {
                       hintText: 'Change pickup location')),
             );
             if (result != null) {
-              ref.read(bookingControllerProvider.notifier).setPickup(
-                  result['address'] as String,
-                  result['location'] as LatLng);
+              if (result['manual_selection'] == true) {
+                // User wants to drag-pin the pickup — enter map mode
+                ref
+                    .read(bookingControllerProvider.notifier)
+                    .enterPickupMapSelection();
+              } else {
+                ref.read(bookingControllerProvider.notifier).setPickup(
+                    result['address'] as String,
+                    result['location'] as LatLng);
+              }
             }
           },
           child: Container(
@@ -382,9 +389,11 @@ class BookingSheet extends ConsumerWidget {
                         strokeWidth: 1.5, color: AppColors.primary),
                   ),
                   const SizedBox(width: 8),
-                  Text('Detecting your location…',
-                      style:
-                          AppTextStyles.bodySmall(color: AppColors.midGray)),
+                  Expanded(
+                    child: Text('Detecting your location…',
+                        style: AppTextStyles.bodySmall(
+                            color: AppColors.midGray)),
+                  ),
                 ] else
                   Expanded(
                     child: Text(

@@ -185,11 +185,25 @@ class BookingController extends StateNotifier<BookingState> {
       step: BookingStep.selectingDestination,
       mapCenter: state.mapCenter,
       pickupLocation: state.pickupLocation,
-      pickupAddress: state.pickupAddress,
-      nearbyDrivers: state.nearbyDrivers,
+      pickupAddress: 'Locating...',
       paymentMethod: state.paymentMethod,
     );
     _stopWatchdog();
+    // Re-detect current location — the passenger is now at the trip destination,
+    // not the original pickup point.
+    _refreshCurrentLocation();
+  }
+
+  Future<void> _refreshCurrentLocation() async {
+    final location = await _mapRepo.getCurrentLocation();
+    if (location == null || !mounted) return;
+    state = state.copyWith(
+      mapCenter: location,
+      pickupLocation: location,
+      pickupAddress: 'Locating...',
+    );
+    _triggerReverseGeocode(location, isPickup: true);
+    _fetchNearbyDrivers();
   }
 
   /// Haversine great-circle distance between two coordinates, in metres.
@@ -328,6 +342,13 @@ class BookingController extends StateNotifier<BookingState> {
 
   void cancelPickupEdit() {
     state = state.copyWith(step: BookingStep.selectingDestination);
+  }
+
+  void enterPickupMapSelection() {
+    state = state.copyWith(
+      step: BookingStep.selectingPickup,
+      mapCenter: state.pickupLocation,
+    );
   }
 
   void setPickup(String address, LatLng location) {

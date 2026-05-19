@@ -36,7 +36,8 @@ class AuthGuard extends ChangeNotifier {
     final isAuthRoute = loc == '/login' ||
                         loc == '/signup' ||
                         loc == '/verify-email' ||
-                        loc == '/forgot-password';
+                        loc == '/forgot-password' ||
+                        loc == '/welcome';
     final isOnboarding = loc == '/onboarding';
     final isStatusPage = loc == '/status';
 
@@ -52,7 +53,7 @@ class AuthGuard extends ChangeNotifier {
 
     // 3. Unauthenticated state
     if (authState.status == AuthStatus.unauthenticated) {
-      if (!isAuthRoute) return '/login';
+      if (!isAuthRoute) return '/welcome';
       return null;
     }
 

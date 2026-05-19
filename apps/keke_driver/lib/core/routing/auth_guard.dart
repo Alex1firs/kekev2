@@ -21,6 +21,10 @@ class AuthGuard extends ChangeNotifier {
       driverControllerProvider.select((s) => s.profile.status),
       (_, __) => notifyListeners(),
     );
+    _ref.listen(
+      driverControllerProvider.select((s) => s.isLoading),
+      (_, __) => notifyListeners(),
+    );
   }
 
   String? redirectHook(BuildContext context, GoRouterState state) {
@@ -55,6 +59,11 @@ class AuthGuard extends ChangeNotifier {
     // 4. Authenticated state - Handle Driver Status
     if (authState.status == AuthStatus.authenticated) {
       final status = driverState.profile.status;
+
+      // Profile fetch still in flight — hold on splash to prevent flash
+      if (driverState.isLoading && status == DriverStatus.unregistered) {
+        return isSplash ? null : '/splash';
+      }
 
       if (status == DriverStatus.unregistered) {
         if (!isOnboarding) return '/onboarding';

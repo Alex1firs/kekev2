@@ -41,11 +41,16 @@ class DriverController extends StateNotifier<DriverState> {
   void setWalletRefreshCallback(void Function() cb) => _onWalletRefreshNeeded = cb;
 
   DriverController(SocketService? initialSocket, this._apiClient, this._notificationService, this._soundService, this._userId)
-      : super(const DriverState(
-          profile: DriverProfile(status: DriverStatus.unregistered),
+      : super(DriverState(
+          profile: const DriverProfile(status: DriverStatus.unregistered),
+          isLoading: true, // hold routing on splash until profile is fetched
         )) {
     _socketService = initialSocket;
-    if (_userId != 'guest' && _userId != 'session_invalid') _initDriver();
+    if (_userId != 'guest' && _userId != 'session_invalid') {
+      _initDriver();
+    } else {
+      state = state.copyWith(isLoading: false);
+    }
     if (_socketService != null) _listenToSocket();
     _startHeartbeat();
     _listenToNotifications();

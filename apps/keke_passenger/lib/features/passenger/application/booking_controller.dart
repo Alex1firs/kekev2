@@ -640,6 +640,8 @@ class BookingController extends StateNotifier<BookingState> {
   }
 
   void cancelBooking() {
+    // Trip already in progress — cancellation not allowed
+    if (state.step == BookingStep.started) return;
     if (_socketService != null && state.rideId != null) {
       print('[PASSENGER_LIFECYCLE] Requesting cancellation for: ${state.rideId}');
       state = state.copyWith(step: BookingStep.loading);

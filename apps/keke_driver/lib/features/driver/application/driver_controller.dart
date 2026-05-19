@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:dio/dio.dart' as dio;
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
@@ -19,6 +20,7 @@ import 'package:jwt_decoder/jwt_decoder.dart';
 import '../../../core/network/notification_service.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import '../../../core/services/sound_service.dart';
+import '../../../core/config/env_config.dart';
 
 class DriverController extends StateNotifier<DriverState> {
   SocketService? _socketService;
@@ -100,8 +102,11 @@ class DriverController extends StateNotifier<DriverState> {
             state = state.copyWith(
               tripStep: TripStep.accepted,
               countdown: null,
+              clearPickupRoute: true,
+              clearRouteEta: true,
             );
             _startWatchdog();
+            _fetchPickupRoute(); // fire-and-forget
           }
           break;
         case 'ride:cancelled':
@@ -221,6 +226,29 @@ class DriverController extends StateNotifier<DriverState> {
         'lat': lat,
         'lng': lng,
       });
+
+      if (mounted) {
+        state = state.copyWith(driverCurrentPosition: LatLng(lat, lng));
+      }
+
+      // Update live ETA/distance for active trip
+      if (state.activeRequest != null && mounted) {
+        final driverLoc = LatLng(lat, lng);
+        LatLng? target;
+        if (state.tripStep == TripStep.accepted) {
+          target = state.activeRequest!.pickupLocation;
+          if (state.pickupRoute.isEmpty) _fetchPickupRoute();
+        } else if (state.tripStep == TripStep.arrived || state.tripStep == TripStep.started) {
+          target = state.activeRequest!.destinationLocation;
+        }
+        if (target != null && mounted) {
+          final dist = _haversineDistance(driverLoc, target);
+          state = state.copyWith(
+            routeEtaMinutes: (dist / 230).clamp(0.0, 999.0),
+            routeDistanceMeters: dist,
+          );
+        }
+      }
     }
   }
 
@@ -275,6 +303,105 @@ class DriverController extends StateNotifier<DriverState> {
   }
 
 
+
+  double _haversineDistance(LatLng a, LatLng b) {
+    const r = 6371000.0;
+    final dLat = (b.latitude - a.latitude) * math.pi / 180;
+    final dLon = (b.longitude - a.longitude) * math.pi / 180;
+    final sinDLat = math.sin(dLat / 2);
+    final sinDLon = math.sin(dLon / 2);
+    final aVal = sinDLat * sinDLat +
+        math.cos(a.latitude * math.pi / 180) *
+            math.cos(b.latitude * math.pi / 180) *
+            sinDLon * sinDLon;
+    return r * 2 * math.atan2(math.sqrt(aVal), math.sqrt(1 - aVal));
+  }
+
+  List<LatLng> _decodePolyline(String encoded) {
+    final polyline = <LatLng>[];
+    int index = 0;
+    final len = encoded.length;
+    int lat = 0, lng = 0;
+    while (index < len) {
+      int b, shift = 0, result = 0;
+      do {
+        b = encoded.codeUnitAt(index++) - 63;
+        result |= (b & 0x1f) << shift;
+        shift += 5;
+      } while (b >= 0x20);
+      lat += ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
+      shift = 0;
+      result = 0;
+      do {
+        b = encoded.codeUnitAt(index++) - 63;
+        result |= (b & 0x1f) << shift;
+        shift += 5;
+      } while (b >= 0x20);
+      lng += ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
+      polyline.add(LatLng(lat / 1E5, lng / 1E5));
+    }
+    return polyline;
+  }
+
+  Future<List<LatLng>> _fetchRoutePolyline(LatLng origin, LatLng destination) async {
+    final apiKey = EnvConfig.current.googleMapsApiKey;
+    if (apiKey.isEmpty) return [];
+    try {
+      final url = 'https://maps.googleapis.com/maps/api/directions/json'
+          '?origin=${origin.latitude},${origin.longitude}'
+          '&destination=${destination.latitude},${destination.longitude}'
+          '&key=$apiKey';
+      final response = await dio.Dio().get(url, options: dio.Options(headers: {
+        'X-Ios-Bundle-Identifier': 'ng.kekeride.driver',
+        'X-Android-Package': 'ng.kekeride.driver',
+      }));
+      if (response.data['status'] == 'OK') {
+        final encoded = response.data['routes'][0]['overview_polyline']['points'] as String;
+        return _decodePolyline(encoded);
+      }
+    } catch (_) {}
+    return [];
+  }
+
+  Future<void> _fetchPickupRoute() async {
+    if (state.activeRequest == null) return;
+    double lat, lng;
+    try {
+      final pos = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.low,
+          timeLimit: const Duration(seconds: 5));
+      lat = pos.latitude;
+      lng = pos.longitude;
+    } catch (_) {
+      final last = await Geolocator.getLastKnownPosition();
+      if (last == null) return;
+      lat = last.latitude;
+      lng = last.longitude;
+    }
+    final driverLoc = LatLng(lat, lng);
+    final points = await _fetchRoutePolyline(driverLoc, state.activeRequest!.pickupLocation);
+    if (!mounted || state.tripStep != TripStep.accepted) return;
+    final dist = _haversineDistance(driverLoc, state.activeRequest!.pickupLocation);
+    state = state.copyWith(
+      pickupRoute: points,
+      routeEtaMinutes: (dist / 230).clamp(0.0, 999.0),
+      routeDistanceMeters: dist,
+    );
+  }
+
+  Future<void> _fetchDestinationRoute() async {
+    if (state.activeRequest == null) return;
+    final pickup = state.activeRequest!.pickupLocation;
+    final destination = state.activeRequest!.destinationLocation;
+    final points = await _fetchRoutePolyline(pickup, destination);
+    if (!mounted) return;
+    final dist = _haversineDistance(pickup, destination);
+    state = state.copyWith(
+      destinationRoute: points.isNotEmpty ? points : state.destinationRoute,
+      routeEtaMinutes: (dist / 230).clamp(0.0, 999.0),
+      routeDistanceMeters: dist,
+    );
+  }
 
   Future<void> _initDriver() async {
     // Small delay ensures Riverpod state finishes spreading before we hit the network
@@ -571,6 +698,9 @@ class DriverController extends StateNotifier<DriverState> {
       tripStep: TripStep.none,
       clearActiveRequest: true,
       clearCountdown: true,
+      clearPickupRoute: true,
+      clearDestinationRoute: true,
+      clearRouteEta: true,
     );
     _soundService.stop();
   }
@@ -600,14 +730,20 @@ class DriverController extends StateNotifier<DriverState> {
 
   void markArrived() {
     if (_socketService == null || state.activeRequest == null) return;
-    
+
     _socketService!.emit('ride:arrived', {
       'rideId': state.activeRequest!.id,
       'driverId': _userId,
     });
 
-    state = state.copyWith(tripStep: TripStep.arrived, waitTimeSeconds: 0);
-    
+    state = state.copyWith(
+      tripStep: TripStep.arrived,
+      waitTimeSeconds: 0,
+      clearPickupRoute: true,
+      clearRouteEta: true,
+    );
+    _fetchDestinationRoute(); // fire-and-forget
+
     _waitTimer?.cancel();
     _waitTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (mounted) {
@@ -672,6 +808,9 @@ class DriverController extends StateNotifier<DriverState> {
       clearActiveRequest: true,
       clearCountdown: true,
       chatMessages: [],
+      clearPickupRoute: true,
+      clearDestinationRoute: true,
+      clearRouteEta: true,
     );
     _stopWatchdog();
   }

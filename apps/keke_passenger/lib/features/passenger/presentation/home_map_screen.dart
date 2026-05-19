@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:ui' as ui;
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
@@ -26,30 +28,45 @@ class _HomeMapScreenState extends ConsumerState<HomeMapScreen> {
   BitmapDescriptor? _driverMarkerIcon;
   bool _hasFitToDriver = false;
 
+  LatLng? _animatedDriverPos;
+  Timer? _animTimer;
+
   @override
   void initState() {
     super.initState();
     _loadKekeMarkers();
   }
 
+  @override
+  void dispose() {
+    _animTimer?.cancel();
+    super.dispose();
+  }
+
+  void _animateDriverTo(LatLng target) {
+    _animTimer?.cancel();
+    final start = _animatedDriverPos ?? target;
+    const steps = 20;
+    int step = 0;
+    _animTimer = Timer.periodic(const Duration(milliseconds: 50), (t) {
+      step++;
+      final fraction = step / steps;
+      if (mounted) {
+        setState(() {
+          _animatedDriverPos = LatLng(
+            start.latitude + (target.latitude - start.latitude) * fraction,
+            start.longitude + (target.longitude - start.longitude) * fraction,
+          );
+        });
+      }
+      if (step >= steps) t.cancel();
+    });
+  }
+
   Future<void> _loadKekeMarkers() async {
     final results = await Future.wait([
-      // Nearby idle drivers — yellow, smaller
-      _drawKekeMarker(
-        size: 58,
-        bg: const Color(0xFFF59E0B),
-        iconColor: const Color(0xFF111827),
-        ringColor: Colors.white,
-        ringWidth: 2.5,
-      ),
-      // Assigned driver — inverted (charcoal bg, yellow icon + ring) so yours stands out
-      _drawKekeMarker(
-        size: 72,
-        bg: const Color(0xFF111827),
-        iconColor: const Color(0xFFF59E0B),
-        ringColor: const Color(0xFFF59E0B),
-        ringWidth: 3.0,
-      ),
+      _makeKekeAssetMarker(68),                      // nearby idle drivers
+      _makeKekeAssetMarker(84, highlight: true),     // assigned driver (yellow border)
     ]);
     if (mounted) {
       setState(() {
@@ -59,53 +76,72 @@ class _HomeMapScreenState extends ConsumerState<HomeMapScreen> {
     }
   }
 
-  Future<BitmapDescriptor> _drawKekeMarker({
-    required double size,
-    required Color bg,
-    required Color iconColor,
-    required Color ringColor,
-    required double ringWidth,
-  }) async {
+  Future<BitmapDescriptor> _makeKekeAssetMarker(double markerW, {bool highlight = false}) async {
+    final markerH = markerW * 0.68; // keke image is landscape ~4:3
+    const ptrH = 13.0;
+    final cW = markerW + 10;
+    final cH = markerH + ptrH + 8;
+
+    final data = await rootBundle.load('assets/images/keke_marker.jpg');
+    final codec = await ui.instantiateImageCodec(
+      data.buffer.asUint8List(),
+      targetWidth: markerW.toInt(),
+      targetHeight: markerH.toInt(),
+    );
+    final kekeImg = (await codec.getNextFrame()).image;
+
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
-    final r = size / 2 - 4.0;
-    final center = Offset(size / 2, size / 2);
+
+    final bgRect = RRect.fromRectAndRadius(
+      Rect.fromLTWH(4, 2, cW - 8, cH - ptrH - 2),
+      const Radius.circular(10),
+    );
+    final borderColor = highlight ? const Color(0xFFF59E0B) : Colors.white;
 
     // Drop shadow
-    canvas.drawCircle(
-      center + const Offset(1, 2.5),
-      r,
+    canvas.drawRRect(
+      bgRect.shift(const Offset(0, 3)),
       Paint()
         ..color = const Color(0x55000000)
-        ..maskFilter = const MaskFilter.blur(ui.BlurStyle.normal, 5),
+        ..maskFilter = const MaskFilter.blur(ui.BlurStyle.normal, 6),
     );
-    // Background fill
-    canvas.drawCircle(center, r, Paint()..color = bg);
-    // Ring border
-    canvas.drawCircle(
-      center,
-      r,
+    // White bg
+    canvas.drawRRect(bgRect, Paint()..color = Colors.white);
+    // Clip and draw keke photo
+    canvas.save();
+    canvas.clipRRect(bgRect);
+    canvas.drawImageRect(
+      kekeImg,
+      Rect.fromLTWH(0, 0, kekeImg.width.toDouble(), kekeImg.height.toDouble()),
+      Rect.fromLTRB(bgRect.left + 2, bgRect.top + 2, bgRect.right - 2, bgRect.bottom - 2),
+      Paint(),
+    );
+    canvas.restore();
+    // Border
+    canvas.drawRRect(
+      bgRect,
       Paint()
-        ..color = ringColor
+        ..color = borderColor
         ..style = PaintingStyle.stroke
-        ..strokeWidth = ringWidth,
+        ..strokeWidth = highlight ? 3.0 : 2.0,
     );
-    // Rickshaw icon via Material icon font glyph
-    final tp = TextPainter(
-      textDirection: TextDirection.ltr,
-      text: TextSpan(
-        text: String.fromCharCode(Icons.electric_rickshaw.codePoint),
-        style: TextStyle(
-          fontFamily: Icons.electric_rickshaw.fontFamily,
-          fontSize: size * 0.44,
-          color: iconColor,
-        ),
-      ),
-    )..layout();
-    tp.paint(canvas, center - Offset(tp.width / 2, tp.height / 2));
+    // Pointer triangle
+    final tipX = cW / 2;
+    final triY = cH - ptrH;
+    final tri = Path()
+      ..moveTo(tipX - 7, triY)
+      ..lineTo(tipX + 7, triY)
+      ..lineTo(tipX, cH - 2)
+      ..close();
+    canvas.drawPath(tri, Paint()..color = Colors.white);
+    canvas.drawPath(tri, Paint()
+      ..color = borderColor
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = highlight ? 2.5 : 1.5);
 
     final picture = recorder.endRecording();
-    final img = await picture.toImage(size.toInt(), size.toInt());
+    final img = await picture.toImage(cW.toInt(), cH.toInt());
     final bytes = await img.toByteData(format: ui.ImageByteFormat.png);
     return BitmapDescriptor.fromBytes(bytes!.buffer.asUint8List());
   }
@@ -121,7 +157,9 @@ class _HomeMapScreenState extends ConsumerState<HomeMapScreen> {
     });
 
     ref.listen(bookingControllerProvider.select((s) => s.assignedDriverLocation), (prev, next) {
-      if (next == null || _mapController == null) return;
+      if (next == null) return;
+      _animateDriverTo(next);
+      if (_mapController == null) return;
       final step = ref.read(bookingControllerProvider).step;
       if (step != BookingStep.confirmed) return;
       if (_hasFitToDriver) return;
@@ -145,15 +183,30 @@ class _HomeMapScreenState extends ConsumerState<HomeMapScreen> {
     });
 
     ref.listen(bookingControllerProvider.select((s) => s.step), (prev, next) {
-      // Re-center on pickup when entering edit mode so the map pin lands correctly.
       if (prev != BookingStep.selectingPickup &&
           next == BookingStep.selectingPickup &&
           _mapController != null) {
-        final pickup =
-            ref.read(bookingControllerProvider).pickupLocation;
+        final pickup = ref.read(bookingControllerProvider).pickupLocation;
         if (pickup != null) {
-          _mapController!
-              .animateCamera(CameraUpdate.newLatLng(pickup));
+          _mapController!.animateCamera(CameraUpdate.newLatLng(pickup));
+        }
+      }
+      // Fit camera to driver + destination when trip starts
+      if (prev != BookingStep.started && next == BookingStep.started && _mapController != null) {
+        final s = ref.read(bookingControllerProvider);
+        final driver = _animatedDriverPos ?? s.assignedDriverLocation;
+        final dest = s.destinationLocation;
+        if (driver != null && dest != null) {
+          final sw = LatLng(
+            driver.latitude < dest.latitude ? driver.latitude : dest.latitude,
+            driver.longitude < dest.longitude ? driver.longitude : dest.longitude,
+          );
+          final ne = LatLng(
+            driver.latitude > dest.latitude ? driver.latitude : dest.latitude,
+            driver.longitude > dest.longitude ? driver.longitude : dest.longitude,
+          );
+          _mapController!.animateCamera(
+              CameraUpdate.newLatLngBounds(LatLngBounds(southwest: sw, northeast: ne), 100));
         }
       }
     });
@@ -329,16 +382,13 @@ class _HomeMapScreenState extends ConsumerState<HomeMapScreen> {
         (state.step == BookingStep.confirmed ||
             state.step == BookingStep.arrived ||
             state.step == BookingStep.started)) {
-      bool isStale = false;
-      if (state.lastLocationUpdate != null) {
-        if (DateTime.now().difference(state.lastLocationUpdate!).inSeconds > 30) {
-          isStale = true;
-        }
-      }
+      final isStale = state.lastLocationUpdate != null &&
+          DateTime.now().difference(state.lastLocationUpdate!).inSeconds > 30;
       if (!isStale) {
+        final markerPos = _animatedDriverPos ?? state.assignedDriverLocation!;
         markers.add(Marker(
           markerId: const MarkerId('driver'),
-          position: state.assignedDriverLocation!,
+          position: markerPos,
           icon: _driverMarkerIcon ??
               _kekeMarkerIcon ??
               BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange),
@@ -380,19 +430,28 @@ class _HomeMapScreenState extends ConsumerState<HomeMapScreen> {
       ));
     }
 
-    if (state.step == BookingStep.confirmed &&
-        state.assignedDriverLocation != null &&
-        state.pickupLocation != null) {
-      polylines.add(Polyline(
-        polylineId: const PolylineId('driver_approach'),
-        color: AppColors.primary,
-        width: 3,
-        points: [state.assignedDriverLocation!, state.pickupLocation!],
-        jointType: JointType.round,
-        endCap: Cap.roundCap,
-        startCap: Cap.roundCap,
-        patterns: [PatternItem.dash(20), PatternItem.gap(10)],
-      ));
+    if (state.step == BookingStep.confirmed) {
+      if (state.approachRoutePolyline.isNotEmpty) {
+        polylines.add(Polyline(
+          polylineId: const PolylineId('driver_approach'),
+          color: AppColors.primary,
+          width: 4,
+          points: state.approachRoutePolyline,
+          jointType: JointType.round,
+          endCap: Cap.roundCap,
+          startCap: Cap.roundCap,
+        ));
+      } else if (state.assignedDriverLocation != null && state.pickupLocation != null) {
+        // Straight dashed fallback while road route is loading
+        final driverPos = _animatedDriverPos ?? state.assignedDriverLocation!;
+        polylines.add(Polyline(
+          polylineId: const PolylineId('driver_approach'),
+          color: AppColors.primary.withOpacity(0.6),
+          width: 3,
+          points: [driverPos, state.pickupLocation!],
+          patterns: [PatternItem.dash(16), PatternItem.gap(8)],
+        ));
+      }
     }
 
     return polylines;

@@ -2164,6 +2164,36 @@ class _OnTripCard extends StatelessWidget {
             ),
           ),
 
+          // ETA to destination stat row
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 0),
+            child: Row(
+              children: [
+                Expanded(
+                  child: _StatBox(
+                    icon: Icons.schedule_rounded,
+                    label: 'ETA to destination',
+                    value: state.etaToDestinationMinutes != null
+                        ? '≈ ${state.etaToDestinationMinutes!.round()} min'
+                        : '—',
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: _StatBox(
+                    icon: Icons.straighten_rounded,
+                    label: 'Distance left',
+                    value: state.distanceToDestinationMeters != null
+                        ? state.distanceToDestinationMeters! >= 1000
+                            ? '${(state.distanceToDestinationMeters! / 1000).toStringAsFixed(1)} km'
+                            : '${state.distanceToDestinationMeters!.round()} m'
+                        : '—',
+                  ),
+                ),
+              ],
+            ),
+          ),
+
           // Driver row with actions
           Padding(
             padding: const EdgeInsets.all(14),

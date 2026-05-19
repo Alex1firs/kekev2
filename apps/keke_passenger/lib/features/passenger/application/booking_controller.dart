@@ -104,10 +104,20 @@ class BookingController extends StateNotifier<BookingState> {
         case 'ride:status_update':
            print('[PASSENGER_SYNC] Status update: ${data['status']}');
            if (data['status'] == 'arrived') {
-             state = state.copyWith(step: BookingStep.arrived);
-             _soundService.playAlert(); // 🔔 Driver arrived
+             state = state.copyWith(
+               step: BookingStep.arrived,
+               clearApproachRoute: true,
+               clearEta: true,
+             );
+             _soundService.playAlert();
            } else if (data['status'] == 'started') {
-             state = state.copyWith(step: BookingStep.started);
+             state = state.copyWith(
+               step: BookingStep.started,
+               clearApproachRoute: true,
+               clearLastApproachOrigin: true,
+               clearEta: true,
+               clearDestinationEta: true,
+             );
            }
            break;
         case 'chat:message':
@@ -150,21 +160,39 @@ class BookingController extends StateNotifier<BookingState> {
               (data['lat'] as num?)?.toDouble() ?? 0.0,
               (data['lng'] as num?)?.toDouble() ?? 0.0,
             );
-            double? eta, dist;
-            bool nearby = false;
-            if (state.pickupLocation != null && state.step == BookingStep.confirmed) {
-              dist = _haversineDistance(driverLoc, state.pickupLocation!);
-              // ~300 m/min ≈ 18 km/h average keke speed in city; add 30% road factor
-              eta = (dist / 230).clamp(0, 999);
-              nearby = dist < 150;
+            if (state.step == BookingStep.confirmed && state.pickupLocation != null) {
+              final dist = _haversineDistance(driverLoc, state.pickupLocation!);
+              final eta = (dist / 230).clamp(0.0, 999.0);
+              final nearby = dist < 150;
+              // Re-fetch approach polyline when driver moves >50 m from last fetch origin
+              final lastOrigin = state.lastApproachOrigin;
+              if (lastOrigin == null || _haversineDistance(driverLoc, lastOrigin) > 50) {
+                _fetchApproachRoute(driverLoc);
+              }
+              state = state.copyWith(
+                assignedDriverLocation: driverLoc,
+                lastLocationUpdate: DateTime.now(),
+                etaMinutes: eta,
+                distanceToPickupMeters: dist,
+                isDriverNearby: nearby,
+                clearDestinationEta: true,
+              );
+            } else if (state.step == BookingStep.started && state.destinationLocation != null) {
+              final destDist = _haversineDistance(driverLoc, state.destinationLocation!);
+              final destEta = (destDist / 230).clamp(0.0, 999.0);
+              state = state.copyWith(
+                assignedDriverLocation: driverLoc,
+                lastLocationUpdate: DateTime.now(),
+                etaToDestinationMinutes: destEta,
+                distanceToDestinationMeters: destDist,
+                clearEta: true,
+              );
+            } else {
+              state = state.copyWith(
+                assignedDriverLocation: driverLoc,
+                lastLocationUpdate: DateTime.now(),
+              );
             }
-            state = state.copyWith(
-              assignedDriverLocation: driverLoc,
-              lastLocationUpdate: DateTime.now(),
-              etaMinutes: eta,
-              distanceToPickupMeters: dist,
-              isDriverNearby: nearby,
-            );
           } catch (e) {
             print('[PASSENGER] Failed to parse driver location: $e');
           }
@@ -218,6 +246,17 @@ class BookingController extends StateNotifier<BookingState> {
             math.cos(b.latitude * math.pi / 180) *
             sinDLon * sinDLon;
     return r * 2 * math.atan2(math.sqrt(aVal), math.sqrt(1 - aVal));
+  }
+
+  Future<void> _fetchApproachRoute(LatLng driverLoc) async {
+    if (state.pickupLocation == null) return;
+    final points = await _mapRepo.getRoutePath(driverLoc, state.pickupLocation!);
+    if (mounted && state.step == BookingStep.confirmed && points.isNotEmpty) {
+      state = state.copyWith(
+        approachRoutePolyline: points,
+        lastApproachOrigin: driverLoc,
+      );
+    }
   }
 
   Future<void> _initializeMap() async {

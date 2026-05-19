@@ -56,7 +56,15 @@ class TripOperationHUD extends ConsumerWidget {
 
                     // Status + address + fare
                     _buildHeader(),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 12),
+
+                    // Live ETA + distance row
+                    if (state.tripStep == TripStep.accepted ||
+                        state.tripStep == TripStep.arrived ||
+                        state.tripStep == TripStep.started) ...[
+                      _buildEtaRow(),
+                      const SizedBox(height: 12),
+                    ],
 
                     // Main action or completion panel
                     if (state.tripStep != TripStep.completed)
@@ -185,6 +193,48 @@ class TripOperationHUD extends ConsumerWidget {
           overflow: TextOverflow.ellipsis,
         ),
       ],
+    );
+  }
+
+  Widget _buildEtaRow() {
+    final eta = state.routeEtaMinutes;
+    final dist = state.routeDistanceMeters;
+    final etaText = eta != null ? '≈ ${eta.round()} min' : '—';
+    final distText = dist != null
+        ? dist >= 1000
+            ? '${(dist / 1000).toStringAsFixed(1)} km'
+            : '${dist.round()} m'
+        : '—';
+    final label = state.tripStep == TripStep.started ? 'To destination' : 'To pickup';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppColors.darkGray,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.schedule_rounded, color: AppColors.primary, size: 16),
+          const SizedBox(width: 8),
+          Text(
+            etaText,
+            style: AppTextStyles.body(color: AppColors.white, weight: FontWeight.w700),
+          ),
+          const SizedBox(width: 16),
+          const Icon(Icons.straighten_rounded, color: AppColors.lightGray, size: 16),
+          const SizedBox(width: 6),
+          Text(
+            distText,
+            style: AppTextStyles.body(color: AppColors.lightGray),
+          ),
+          const Spacer(),
+          Text(
+            label,
+            style: AppTextStyles.caption(color: AppColors.midGray),
+          ),
+        ],
+      ),
     );
   }
 

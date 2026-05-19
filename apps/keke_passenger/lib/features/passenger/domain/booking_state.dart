@@ -48,6 +48,12 @@ class BookingState {
   final double? etaMinutes;
   final double? distanceToPickupMeters;
   final bool isDriverNearby;
+  final List<LatLng> approachRoutePolyline; // driver→pickup road route
+  final LatLng? lastApproachOrigin;         // driver pos when approach route was last fetched
+
+  // On-trip navigation fields — populated during started state
+  final double? etaToDestinationMinutes;
+  final double? distanceToDestinationMeters;
 
   // Receipt data — populated when ride:finished arrives
   final String? receiptPickupAddress;
@@ -82,6 +88,10 @@ class BookingState {
     this.etaMinutes,
     this.distanceToPickupMeters,
     this.isDriverNearby = false,
+    this.approachRoutePolyline = const [],
+    this.lastApproachOrigin,
+    this.etaToDestinationMinutes,
+    this.distanceToDestinationMeters,
     this.receiptPickupAddress,
     this.receiptDestinationAddress,
     this.receiptFare,
@@ -120,6 +130,13 @@ class BookingState {
     bool clearEta = false,
     double? distanceToPickupMeters,
     bool? isDriverNearby,
+    List<LatLng>? approachRoutePolyline,
+    bool clearApproachRoute = false,
+    LatLng? lastApproachOrigin,
+    bool clearLastApproachOrigin = false,
+    double? etaToDestinationMinutes,
+    bool clearDestinationEta = false,
+    double? distanceToDestinationMeters,
     String? receiptPickupAddress,
     String? receiptDestinationAddress,
     int? receiptFare,
@@ -152,6 +169,10 @@ class BookingState {
       etaMinutes: clearEta ? null : (etaMinutes ?? this.etaMinutes),
       distanceToPickupMeters: clearEta ? null : (distanceToPickupMeters ?? this.distanceToPickupMeters),
       isDriverNearby: isDriverNearby ?? this.isDriverNearby,
+      approachRoutePolyline: clearApproachRoute ? [] : (approachRoutePolyline ?? this.approachRoutePolyline),
+      lastApproachOrigin: clearLastApproachOrigin ? null : (lastApproachOrigin ?? this.lastApproachOrigin),
+      etaToDestinationMinutes: clearDestinationEta ? null : (etaToDestinationMinutes ?? this.etaToDestinationMinutes),
+      distanceToDestinationMeters: clearDestinationEta ? null : (distanceToDestinationMeters ?? this.distanceToDestinationMeters),
       receiptPickupAddress: receiptPickupAddress ?? this.receiptPickupAddress,
       receiptDestinationAddress: receiptDestinationAddress ?? this.receiptDestinationAddress,
       receiptFare: receiptFare ?? this.receiptFare,

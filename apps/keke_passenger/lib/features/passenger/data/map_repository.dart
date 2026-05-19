@@ -140,6 +140,24 @@ class MapRepository {
     throw Exception('Failed to calculate route.');
   }
 
+  /// Fetches only the road-route polyline between two points (no fare calculation).
+  Future<List<LatLng>> getRoutePath(LatLng origin, LatLng destination) async {
+    final apiKey = EnvConfig.current.googleMapsApiKey;
+    if (apiKey.isEmpty) return [];
+    try {
+      final url = 'https://maps.googleapis.com/maps/api/directions/json'
+          '?origin=${origin.latitude},${origin.longitude}'
+          '&destination=${destination.latitude},${destination.longitude}'
+          '&key=$apiKey';
+      final response = await _dio.get(url, options: _mapHeaders);
+      if (response.data['status'] == 'OK') {
+        final encoded = response.data['routes'][0]['overview_polyline']['points'] as String;
+        return _decodePolyline(encoded);
+      }
+    } catch (_) {}
+    return [];
+  }
+
   List<LatLng> _decodePolyline(String encoded) {
     List<LatLng> polyline = [];
     int index = 0, len = encoded.length;

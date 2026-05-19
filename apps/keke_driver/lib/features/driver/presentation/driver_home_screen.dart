@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
@@ -25,6 +27,174 @@ class DriverHomeScreen extends ConsumerStatefulWidget {
 }
 
 class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
+  GoogleMapController? _mapController;
+  BitmapDescriptor? _kekeMarkerIcon;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadKekeMarker();
+  }
+
+  Future<void> _loadKekeMarker() async {
+    final icon = await _makeKekeAssetMarker(80, highlight: true);
+    if (mounted) setState(() => _kekeMarkerIcon = icon);
+  }
+
+  Future<BitmapDescriptor> _makeKekeAssetMarker(double markerW, {bool highlight = false}) async {
+    final markerH = markerW * 0.68;
+    const ptrH = 13.0;
+    final cW = markerW + 10;
+    final cH = markerH + ptrH + 8;
+
+    final data = await rootBundle.load('assets/images/keke_marker.jpg');
+    final codec = await ui.instantiateImageCodec(
+      data.buffer.asUint8List(),
+      targetWidth: markerW.toInt(),
+      targetHeight: markerH.toInt(),
+    );
+    final kekeImg = (await codec.getNextFrame()).image;
+
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+
+    final bgRect = RRect.fromRectAndRadius(
+      Rect.fromLTWH(4, 2, cW - 8, cH - ptrH - 2),
+      const Radius.circular(10),
+    );
+    final borderColor = highlight ? const Color(0xFFF59E0B) : Colors.white;
+
+    // Shadow
+    canvas.drawRRect(
+      bgRect.shift(const Offset(0, 3)),
+      Paint()
+        ..color = const Color(0x55000000)
+        ..maskFilter = const MaskFilter.blur(ui.BlurStyle.normal, 6),
+    );
+    canvas.drawRRect(bgRect, Paint()..color = Colors.white);
+    canvas.save();
+    canvas.clipRRect(bgRect);
+    canvas.drawImageRect(
+      kekeImg,
+      Rect.fromLTWH(0, 0, kekeImg.width.toDouble(), kekeImg.height.toDouble()),
+      Rect.fromLTRB(bgRect.left + 2, bgRect.top + 2, bgRect.right - 2, bgRect.bottom - 2),
+      Paint(),
+    );
+    canvas.restore();
+    canvas.drawRRect(bgRect, Paint()
+      ..color = borderColor
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = highlight ? 3.0 : 2.0);
+
+    final tipX = cW / 2;
+    final triY = cH - ptrH;
+    final tri = Path()
+      ..moveTo(tipX - 7, triY)
+      ..lineTo(tipX + 7, triY)
+      ..lineTo(tipX, cH - 2)
+      ..close();
+    canvas.drawPath(tri, Paint()..color = Colors.white);
+    canvas.drawPath(tri, Paint()
+      ..color = borderColor
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = highlight ? 2.5 : 1.5);
+
+    final picture = recorder.endRecording();
+    final img = await picture.toImage(cW.toInt(), cH.toInt());
+    final bytes = await img.toByteData(format: ui.ImageByteFormat.png);
+    return BitmapDescriptor.fromBytes(bytes!.buffer.asUint8List());
+  }
+
+  void _fitCameraToRoute(List<LatLng> points) {
+    if (_mapController == null || points.isEmpty) return;
+    double minLat = points.first.latitude;
+    double maxLat = points.first.latitude;
+    double minLng = points.first.longitude;
+    double maxLng = points.first.longitude;
+    for (final p in points) {
+      if (p.latitude < minLat) minLat = p.latitude;
+      if (p.latitude > maxLat) maxLat = p.latitude;
+      if (p.longitude < minLng) minLng = p.longitude;
+      if (p.longitude > maxLng) maxLng = p.longitude;
+    }
+    _mapController!.animateCamera(CameraUpdate.newLatLngBounds(
+      LatLngBounds(
+        southwest: LatLng(minLat, minLng),
+        northeast: LatLng(maxLat, maxLng),
+      ),
+      80,
+    ));
+  }
+
+  Set<Marker> _buildMarkers(DriverState state) {
+    final markers = <Marker>{};
+
+    // Driver's own position marker when online
+    final isOnline = state.operationStatus == OperationStatus.available ||
+        state.operationStatus == OperationStatus.busy;
+    if (isOnline && state.driverCurrentPosition != null) {
+      markers.add(Marker(
+        markerId: const MarkerId('self'),
+        position: state.driverCurrentPosition!,
+        icon: _kekeMarkerIcon ??
+            BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange),
+        infoWindow: const InfoWindow(title: 'You'),
+        zIndex: 3,
+      ));
+    }
+
+    if (state.activeRequest == null) return markers;
+    final req = state.activeRequest!;
+
+    if (state.tripStep == TripStep.accepted || state.tripStep == TripStep.arrived) {
+      markers.add(Marker(
+        markerId: const MarkerId('pickup'),
+        position: req.pickupLocation,
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueYellow),
+        infoWindow: InfoWindow(title: 'Pickup', snippet: req.pickupAddress),
+      ));
+    }
+    if (state.tripStep == TripStep.arrived ||
+        state.tripStep == TripStep.started ||
+        state.tripStep == TripStep.completed) {
+      markers.add(Marker(
+        markerId: const MarkerId('destination'),
+        position: req.destinationLocation,
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+        infoWindow: InfoWindow(title: 'Destination', snippet: req.destinationAddress),
+      ));
+    }
+    return markers;
+  }
+
+  Set<Polyline> _buildPolylines(DriverState state) {
+    final polylines = <Polyline>{};
+    if (state.tripStep == TripStep.accepted && state.pickupRoute.isNotEmpty) {
+      polylines.add(Polyline(
+        polylineId: const PolylineId('pickup_route'),
+        color: const Color(0xFFF59E0B),
+        width: 5,
+        points: state.pickupRoute,
+        jointType: JointType.round,
+        endCap: Cap.roundCap,
+        startCap: Cap.roundCap,
+      ));
+    }
+    if ((state.tripStep == TripStep.started || state.tripStep == TripStep.arrived) &&
+        state.destinationRoute.isNotEmpty) {
+      polylines.add(Polyline(
+        polylineId: const PolylineId('destination_route'),
+        color: const Color(0xFF10B981),
+        width: 5,
+        points: state.destinationRoute,
+        jointType: JointType.round,
+        endCap: Cap.roundCap,
+        startCap: Cap.roundCap,
+      ));
+    }
+    return polylines;
+  }
+
   void _handleGoOnline() async {
     LocationPermission permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
@@ -122,6 +292,18 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
     final driverState = ref.watch(driverControllerProvider);
     final hideHeader = driverState.tripStep != TripStep.none;
 
+    ref.listen(driverControllerProvider.select((s) => s.pickupRoute), (prev, next) {
+      if (next.isNotEmpty && (prev == null || prev.isEmpty)) {
+        _fitCameraToRoute(next);
+      }
+    });
+
+    ref.listen(driverControllerProvider.select((s) => s.destinationRoute), (prev, next) {
+      if (next.isNotEmpty && (prev == null || prev.isEmpty)) {
+        _fitCameraToRoute(next);
+      }
+    });
+
     return Scaffold(
       backgroundColor: AppColors.charcoal,
       body: Stack(
@@ -135,8 +317,10 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
             myLocationButtonEnabled: false,
             zoomControlsEnabled: false,
             compassEnabled: false,
-            onMapCreated: (_) {},
+            onMapCreated: (c) => _mapController = c,
             mapType: MapType.normal,
+            markers: _buildMarkers(driverState),
+            polylines: _buildPolylines(driverState),
           ),
 
           if (!hideHeader) _buildStatusHeader(driverState),

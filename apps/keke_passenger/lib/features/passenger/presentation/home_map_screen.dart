@@ -293,22 +293,14 @@ class _HomeMapScreenState extends ConsumerState<HomeMapScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              width: 72,
-              height: 72,
-              decoration: BoxDecoration(
-                color: AppColors.primary,
-                borderRadius: BorderRadius.circular(22),
-                boxShadow: [
-                  BoxShadow(
-                    color: AppColors.primary.withOpacity(0.4),
-                    blurRadius: 24,
-                    offset: const Offset(0, 8),
-                  ),
-                ],
+            ClipRRect(
+              borderRadius: BorderRadius.circular(22),
+              child: Image.asset(
+                'assets/images/app_logo.png',
+                width: 72,
+                height: 72,
+                fit: BoxFit.cover,
               ),
-              child: const Icon(Icons.electric_rickshaw,
-                  color: AppColors.charcoal, size: 40),
             ),
             const SizedBox(height: 24),
             const SizedBox(

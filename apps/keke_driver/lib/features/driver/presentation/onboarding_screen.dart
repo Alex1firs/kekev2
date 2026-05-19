@@ -80,15 +80,14 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  width: 44,
-                  height: 44,
-                  decoration: BoxDecoration(
-                    color: AppColors.primary.withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(12),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: Image.asset(
+                    'assets/images/app_logo.png',
+                    width: 44,
+                    height: 44,
+                    fit: BoxFit.cover,
                   ),
-                  child: const Icon(Icons.electric_rickshaw,
-                      color: AppColors.primary, size: 24),
                 ),
                 const SizedBox(height: 20),
                 Text(

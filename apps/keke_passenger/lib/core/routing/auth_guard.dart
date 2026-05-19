@@ -22,7 +22,8 @@ class AuthGuard extends ChangeNotifier {
     final isAuthRoute = state.matchedLocation == '/login' ||
                         state.matchedLocation == '/signup' ||
                         state.matchedLocation == '/verify-email' ||
-                        state.matchedLocation == '/forgot-password';
+                        state.matchedLocation == '/forgot-password' ||
+                        state.matchedLocation == '/welcome';
 
     if (authState.status == AuthStatus.initializing) {
       // Must stay on splash page while restoring session
@@ -38,7 +39,7 @@ class AuthGuard extends ChangeNotifier {
 
     if (authState.status == AuthStatus.unauthenticated) {
       if (!isAuthRoute) {
-        return '/login'; // Unauthenticated users sent to login from any protected route/splash
+        return '/welcome'; // Unauthenticated users land on welcome screen first
       }
       return null;
     }

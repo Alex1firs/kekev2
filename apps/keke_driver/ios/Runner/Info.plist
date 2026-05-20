@@ -94,5 +94,9 @@
 		<string>fetch</string>
 		<string>remote-notification</string>
 	</array>
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>arm64e</string>
+	</array>
 </dict>
 </plist>

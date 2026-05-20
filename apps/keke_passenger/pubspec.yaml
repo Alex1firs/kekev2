@@ -47,3 +47,6 @@ flutter:
     - assets/images/keke_marker.jpg
     - assets/images/app_logo.png
     - assets/images/splash_bg.png
+
+dependency_overrides:
+  objective_c: ^8.1.0

@@ -46,3 +46,4 @@ flutter:
     - assets/sounds/keke_ring.wav
     - assets/images/keke_marker.jpg
     - assets/images/app_logo.png
+    - assets/images/splash_bg.png

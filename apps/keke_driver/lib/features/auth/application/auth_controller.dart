@@ -124,7 +124,10 @@ final authControllerProvider = StateNotifierProvider<AuthController, AuthState>(
   );
 
   // Wire up the 401 callback so api_client can trigger logout without a circular import
-  ref.read(unauthorizedCallbackProvider.notifier).state = controller.forceUnauthorizedCleanup;
+  // Wrapped in Future.microtask to prevent modifying state during provider initialization
+  Future.microtask(() {
+    ref.read(unauthorizedCallbackProvider.notifier).state = controller.forceUnauthorizedCleanup;
+  });
 
   return controller;
 });

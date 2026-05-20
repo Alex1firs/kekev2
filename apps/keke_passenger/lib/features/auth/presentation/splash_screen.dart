@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import '../../../core/theme/app_theme.dart';
 
 class SplashScreen extends StatelessWidget {
   const SplashScreen({super.key});
@@ -8,75 +7,59 @@ class SplashScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.charcoal,
-      body: SafeArea(
-        child: Column(
-          children: [
-            const Spacer(flex: 2),
-            Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(24),
-                    child: Image.asset(
-                      'assets/images/app_logo.png',
-                      width: 110,
-                      height: 110,
-                      fit: BoxFit.cover,
-                    ),
+      backgroundColor: Colors.white,
+      body: Stack(
+        children: [
+          // 1. The full-screen image provided by the user
+          Positioned.fill(
+            child: Image.asset(
+              'assets/images/splash_bg.png',
+              fit: BoxFit.cover,
+            ),
+          ),
+          
+          // 2. The functional Get Started button overlay
+          Positioned(
+            bottom: 40,
+            left: 24,
+            right: 24,
+            child: SizedBox(
+              height: 56,
+              child: ElevatedButton(
+                onPressed: () {
+                  // TODO: Add navigation logic to Onboarding or Home
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF1E1E1E), // Dark charcoal
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(28),
                   ),
-                  const SizedBox(height: 24),
-                  Text(
-                    'Keke',
-                    style: GoogleFonts.plusJakartaSans(
-                      fontSize: 40,
-                      fontWeight: FontWeight.w800,
-                      color: AppColors.white,
-                      letterSpacing: -1.0,
+                  elevation: 0,
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      'Get Started',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                        color: const Color(0xFFFFC500),
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Your Ride, Your Way',
-                    style: GoogleFonts.plusJakartaSans(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w400,
-                      color: AppColors.midGray,
-                      letterSpacing: 0.2,
+                    const SizedBox(width: 8),
+                    const Icon(
+                      Icons.arrow_forward_rounded,
+                      color: Color(0xFFFFC500),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
-            const Spacer(flex: 2),
-            Padding(
-              padding: const EdgeInsets.only(bottom: 48),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  SizedBox(
-                    width: 28,
-                    height: 28,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2.5,
-                      valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Getting things ready...',
-                    style: GoogleFonts.plusJakartaSans(
-                      fontSize: 13,
-                      color: AppColors.midGray,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 }
+

@@ -139,15 +139,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       error: _emailError,
                       onSubmitted: (_) => _next(),
                     ),
+                  ),
+                  AuthStepPage(
+                    question: 'Now enter\nyour password.',
                     footer: GestureDetector(
                       onTap: () => Navigator.push(context,
                           MaterialPageRoute(builder: (_) => const ForgotPasswordScreen())),
                       child: Text('Forgot password?',
                           style: AppTextStyles.bodySmall(color: AppColors.primary, weight: FontWeight.w600)),
                     ),
-                  ),
-                  AuthStepPage(
-                    question: 'Now enter\nyour password.',
                     child: _buildField(
                       controller: _passwordCtrl,
                       focusNode: _passwordFocus,

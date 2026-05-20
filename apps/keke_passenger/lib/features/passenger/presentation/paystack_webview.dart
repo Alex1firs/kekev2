@@ -22,7 +22,11 @@ class _PaystackWebViewState extends State<PaystackWebView> {
         NavigationDelegate(
           onNavigationRequest: (request) {
             if (request.url.contains('callback') || request.url.contains('close')) {
-              Navigator.pop(context, true);
+              final uri = Uri.tryParse(request.url);
+              final ref = uri?.queryParameters['reference'] ??
+                  uri?.queryParameters['trxref'] ??
+                  'success';
+              Navigator.pop(context, ref);
               return NavigationDecision.prevent;
             }
             return NavigationDecision.navigate;

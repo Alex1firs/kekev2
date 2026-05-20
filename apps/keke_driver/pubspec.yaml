@@ -52,3 +52,4 @@ flutter:
 
 dependency_overrides:
   objective_c: ^8.1.0
+  path_provider_foundation: 2.5.1

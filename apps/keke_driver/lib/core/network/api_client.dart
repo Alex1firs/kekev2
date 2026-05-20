@@ -37,7 +37,7 @@ final dioProvider = Provider<Dio>((ref) {
         return handler.next(options);
       },
       onError: (DioException e, handler) async {
-        if (e.response?.statusCode == 401) {
+        if (e.response?.statusCode == 401 && !e.requestOptions.path.contains('/auth/')) {
           // Trigger logout callback — AuthController.logout() handles FCM
           // token deregistration before clearing storage.
           final callback = ref.read(unauthorizedCallbackProvider);

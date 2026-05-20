@@ -33,7 +33,7 @@ final dioProvider = Provider<Dio>((ref) {
         return handler.next(options);
       },
       onError: (DioException e, handler) async {
-        if (e.response?.statusCode == 401) {
+        if (e.response?.statusCode == 401 && !e.requestOptions.path.contains('/auth/')) {
           // Deregister FCM device token before clearing auth so the old token
           // is marked inactive and won't deliver notifications to the next user.
           try {

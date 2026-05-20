@@ -41,10 +41,12 @@ post_install do |installer|
     flutter_additional_ios_build_settings(target)
     target.build_configurations.each do |config|
       config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '16.0'
-      # Exclude arm64e from pod compilation so objective_c (and all other pods)
-      # build arm64-only. arm64 runs on all devices; arm64e-only frameworks are
-      # rejected by App Store Connect with error 91080.
-      config.build_settings['EXCLUDED_ARCHS[sdk=iphoneos*]'] = 'arm64e'
+      # Force arm64 only. App Store Connect rejects arm64e for standard apps.
+      config.build_settings['ARCHS'] = 'arm64'
+      config.build_settings['VALID_ARCHS'] = 'arm64'
+      config.build_settings.delete('EXCLUDED_ARCHS')
+      config.build_settings.delete('EXCLUDED_ARCHS[sdk=iphoneos*]')
+      config.build_settings['ONLY_ACTIVE_ARCH'] = 'NO'
     end
   end
 end

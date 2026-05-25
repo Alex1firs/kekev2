@@ -60,25 +60,27 @@ class AuthStepPage extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(28, 40, 28, 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            question,
-            style: GoogleFonts.plusJakartaSans(
-              fontSize: 34,
-              fontWeight: FontWeight.w800,
-              color: AppColors.white,
-              height: 1.15,
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              question,
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 34,
+                fontWeight: FontWeight.w800,
+                color: AppColors.white,
+                height: 1.15,
+              ),
             ),
-          ),
-          const SizedBox(height: 36),
-          child,
-          if (footer != null) ...[
-            const SizedBox(height: 16),
-            footer!,
+            const SizedBox(height: 36),
+            child,
+            if (footer != null) ...[
+              const SizedBox(height: 16),
+              footer!,
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
@@ -105,7 +107,7 @@ class AuthBottomBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: EdgeInsets.fromLTRB(28, 8, 28, MediaQuery.of(context).viewInsets.bottom + 28),
+      padding: const EdgeInsets.fromLTRB(28, 8, 28, 28),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [

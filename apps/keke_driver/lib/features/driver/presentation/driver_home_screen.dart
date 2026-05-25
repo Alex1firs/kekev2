@@ -360,44 +360,44 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
 
     return Positioned(
       top: topPad,
-      left: 16,
-      right: 16,
+      left: 12,
+      right: 12,
       child: Row(
         children: [
           // Status pill
           Expanded(
             child: Container(
-              height: 56,
+              height: 42, // Compact height for dynamic island look
               decoration: BoxDecoration(
                 color: AppColors.charcoal,
-                borderRadius: BorderRadius.circular(16),
+                borderRadius: BorderRadius.circular(12),
                 border: Border.all(
-                  color: isOnline ? AppColors.primary : AppColors.border,
+                  color: isOnline ? AppColors.primary : AppColors.border.withOpacity(0.3),
                   width: 1.5,
                 ),
                 boxShadow: const [
                   BoxShadow(
                       color: Color(0x30000000),
-                      blurRadius: 12,
-                      offset: Offset(0, 4)),
+                      blurRadius: 8,
+                      offset: Offset(0, 3)),
                 ],
               ),
               child: Row(
                 children: [
-                  const SizedBox(width: 16),
-                  // Online indicator dot with pulse when online
+                  const SizedBox(width: 10),
+                  // Online indicator dot
                   if (isOnline)
                     _PulseDot()
                   else
                     Container(
-                      width: 10,
-                      height: 10,
+                      width: 8,
+                      height: 8,
                       decoration: const BoxDecoration(
                         color: AppColors.lightGray,
                         shape: BoxShape.circle,
                       ),
                     ),
-                  const SizedBox(width: 10),
+                  const SizedBox(width: 8),
                   Expanded(
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
@@ -408,36 +408,29 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
                           style: AppTextStyles.body(
                             color: AppColors.white,
                             weight: FontWeight.w700,
-                          ),
+                          ).copyWith(fontSize: 13, height: 1.1),
                         ),
-                        if (isOnline)
-                          Builder(builder: (context) {
-                            final socketService =
-                                ref.watch(socketServiceProvider);
-                            final connected =
-                                socketService?.isConnected ?? false;
-                            return Text(
-                              connected
+                        Text(
+                          isOnline
+                              ? (ref.watch(socketServiceProvider)?.isConnected ?? false
                                   ? 'Looking for rides...'
-                                  : 'Connecting...',
-                              style: AppTextStyles.caption(
-                                color: connected
+                                  : 'Connecting...')
+                              : 'Tap to go online',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: AppTextStyles.caption(
+                            color: isOnline
+                                ? (ref.watch(socketServiceProvider)?.isConnected ?? false
                                     ? AppColors.lightGray
-                                    : AppColors.warning,
-                              ),
-                            );
-                          }),
-                        if (!isOnline)
-                          Text(
-                            'Tap to go online',
-                            style:
-                                AppTextStyles.caption(color: AppColors.midGray),
-                          ),
+                                    : AppColors.warning)
+                                : AppColors.midGray,
+                          ).copyWith(fontSize: 9, height: 1.1),
+                        ),
                       ],
                     ),
                   ),
                   Transform.scale(
-                    scale: 0.85,
+                    scale: 0.68, // Sleek switch fitting 42px height
                     child: Switch(
                       value: isOnline,
                       onChanged: (goingOnline) {
@@ -453,6 +446,7 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
                       activeTrackColor: AppColors.primary,
                       inactiveThumbColor: AppColors.lightGray,
                       inactiveTrackColor: AppColors.darkGray,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     ),
                   ),
                   const SizedBox(width: 4),
@@ -460,7 +454,7 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
               ),
             ),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 8),
 
           // Wallet / earnings button
           _HeaderIconButton(
@@ -468,7 +462,7 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
             onTap: () => Navigator.push(context,
                 MaterialPageRoute(builder: (_) => const EarningsScreen())),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
           // Profile button
           _HeaderIconButton(
             icon: Icons.person_outline,
@@ -477,7 +471,7 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
                 MaterialPageRoute(
                     builder: (_) => const DriverProfileScreen())),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
           // Logout button
           _HeaderIconButton(
             icon: Icons.logout_rounded,
@@ -625,11 +619,11 @@ class _HeaderIconButton extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        width: 48,
-        height: 56,
+        width: 42,
+        height: 42,
         decoration: BoxDecoration(
           color: AppColors.charcoal,
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(12),
           border: Border.all(
             color: isDestructive
                 ? AppColors.error.withOpacity(0.3)
@@ -638,14 +632,14 @@ class _HeaderIconButton extends StatelessWidget {
           boxShadow: const [
             BoxShadow(
                 color: Color(0x28000000),
-                blurRadius: 12,
-                offset: Offset(0, 4)),
+                blurRadius: 8,
+                offset: Offset(0, 3)),
           ],
         ),
         child: Icon(
           icon,
           color: isDestructive ? AppColors.error : AppColors.white,
-          size: 20,
+          size: 18,
         ),
       ),
     );

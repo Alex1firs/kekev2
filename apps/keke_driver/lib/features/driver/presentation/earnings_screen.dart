@@ -240,27 +240,53 @@ class _EarningsScreenState extends ConsumerState<EarningsScreen> {
   Widget _buildPendingRow(DriverFinanceState state) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
-      child: Row(
+      child: Column(
         children: [
-          Expanded(
-            child: _StatTile(
-              label: 'Pending',
-              amount: state.pendingBalance,
-              icon: Icons.hourglass_top_rounded,
-              color: AppColors.lightGray,
-            ),
-          ),
-          if (state.commissionDebt > 0) ...[
-            const SizedBox(width: 12),
-            Expanded(
-              child: _StatTile(
-                label: 'Commission Debt',
-                amount: state.commissionDebt,
-                icon: Icons.warning_amber_rounded,
-                color: AppColors.error,
+          Row(
+            children: [
+              Expanded(
+                child: _StatTile(
+                  label: 'Pending',
+                  displayValue: '₦${state.pendingBalance.toStringAsFixed(0)}',
+                  icon: Icons.hourglass_top_rounded,
+                  color: AppColors.lightGray,
+                ),
               ),
-            ),
-          ],
+              if (state.commissionDebt > 0) ...[
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _StatTile(
+                    label: 'Commission Debt',
+                    displayValue: '₦${state.commissionDebt.toStringAsFixed(0)}',
+                    icon: Icons.warning_amber_rounded,
+                    color: AppColors.error,
+                  ),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: _StatTile(
+                  label: 'Total Trips',
+                  displayValue: '${state.totalTrips}',
+                  icon: Icons.local_taxi_rounded,
+                  color: AppColors.primary,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _StatTile(
+                  label: 'Commission Paid',
+                  displayValue: '₦${state.totalCommissionPaid.toStringAsFixed(0)}',
+                  icon: Icons.check_circle_outline_rounded,
+                  color: AppColors.success,
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );
@@ -407,7 +433,7 @@ class _EarningsScreenState extends ConsumerState<EarningsScreen> {
   }
 
   Future<void> _showPayoutDialog(DriverFinanceState state) async {
-    final bankCodeCtrl = TextEditingController();
+    final bankNameCtrl = TextEditingController();
     final accountNumCtrl = TextEditingController();
     final amountCtrl =
         TextEditingController(text: state.availableBalance.toStringAsFixed(0));
@@ -432,9 +458,9 @@ class _EarningsScreenState extends ConsumerState<EarningsScreen> {
                 type: TextInputType.number),
             const SizedBox(height: 12),
             _DarkField(
-                controller: bankCodeCtrl,
-                label: 'Bank Code (e.g. 058)',
-                type: TextInputType.number),
+                controller: bankNameCtrl,
+                label: 'Bank Name (e.g. GTBank, Zenith)',
+                type: TextInputType.text),
             const SizedBox(height: 12),
             _DarkField(
                 controller: accountNumCtrl,
@@ -454,10 +480,10 @@ class _EarningsScreenState extends ConsumerState<EarningsScreen> {
     if (confirmed != true || !mounted) return;
 
     final amount = double.tryParse(amountCtrl.text.trim()) ?? 0;
-    final bankCode = bankCodeCtrl.text.trim();
+    final bankName = bankNameCtrl.text.trim();
     final accountNum = accountNumCtrl.text.trim();
 
-    if (amount <= 0 || bankCode.isEmpty || accountNum.isEmpty) {
+    if (amount <= 0 || bankName.isEmpty || accountNum.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('All fields are required')),
       );
@@ -466,7 +492,7 @@ class _EarningsScreenState extends ConsumerState<EarningsScreen> {
 
     final success = await ref
         .read(driverFinanceControllerProvider.notifier)
-        .initiatePayout(amount, bankCode, accountNum);
+        .initiatePayout(amount, bankName, accountNum);
 
     if (!mounted) return;
     if (success) {
@@ -634,13 +660,13 @@ class _EarningsScreenState extends ConsumerState<EarningsScreen> {
 
 class _StatTile extends StatelessWidget {
   final String label;
-  final double amount;
+  final String displayValue;
   final IconData icon;
   final Color color;
 
   const _StatTile({
     required this.label,
-    required this.amount,
+    required this.displayValue,
     required this.icon,
     required this.color,
   });
@@ -673,7 +699,7 @@ class _StatTile extends StatelessWidget {
                 Text(label,
                     style: AppTextStyles.caption(color: AppColors.midGray)),
                 Text(
-                  '₦${amount.toStringAsFixed(0)}',
+                  displayValue,
                   style: AppTextStyles.body(
                       color: AppColors.white, weight: FontWeight.w700),
                 ),

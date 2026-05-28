@@ -36,6 +36,8 @@ class DriverFinanceController extends StateNotifier<DriverFinanceState> {
         availableBalance: double.tryParse(balance['driverAvailableBalance']?.toString() ?? '0') ?? 0,
         pendingBalance: double.tryParse(balance['driverPendingBalance']?.toString() ?? '0') ?? 0,
         commissionDebt: double.tryParse(balance['driverCommissionDebt']?.toString() ?? '0') ?? 0,
+        totalCommissionPaid: double.tryParse(data['totalCommissionPaid']?.toString() ?? '0') ?? 0.0,
+        totalTrips: int.tryParse(data['totalTrips']?.toString() ?? '0') ?? 0,
         history: history,
         isLoading: false,
       );

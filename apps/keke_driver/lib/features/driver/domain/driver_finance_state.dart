@@ -2,6 +2,8 @@ class DriverFinanceState {
   final double availableBalance;
   final double pendingBalance;
   final double commissionDebt;
+  final double totalCommissionPaid;
+  final int totalTrips;
   final List<DriverHistoryEntry> history;
   final bool isLoading;
   final String? errorMessage;
@@ -10,6 +12,8 @@ class DriverFinanceState {
     this.availableBalance = 0.0,
     this.pendingBalance = 0.0,
     this.commissionDebt = 0.0,
+    this.totalCommissionPaid = 0.0,
+    this.totalTrips = 0,
     this.history = const [],
     this.isLoading = false,
     this.errorMessage,
@@ -19,6 +23,8 @@ class DriverFinanceState {
     double? availableBalance,
     double? pendingBalance,
     double? commissionDebt,
+    double? totalCommissionPaid,
+    int? totalTrips,
     List<DriverHistoryEntry>? history,
     bool? isLoading,
     String? errorMessage,
@@ -27,6 +33,8 @@ class DriverFinanceState {
       availableBalance: availableBalance ?? this.availableBalance,
       pendingBalance: pendingBalance ?? this.pendingBalance,
       commissionDebt: commissionDebt ?? this.commissionDebt,
+      totalCommissionPaid: totalCommissionPaid ?? this.totalCommissionPaid,
+      totalTrips: totalTrips ?? this.totalTrips,
       history: history ?? this.history,
       isLoading: isLoading ?? this.isLoading,
       errorMessage: errorMessage ?? this.errorMessage,

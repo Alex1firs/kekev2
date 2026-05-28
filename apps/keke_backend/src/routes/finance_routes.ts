@@ -4,7 +4,8 @@ import { Not, In } from "typeorm";
 import { WalletService } from "../services/wallet_service";
 import { PaystackService } from "../services/paystack_service";
 import { AppDataSource } from "../config/data_source";
-import { LedgerEntry, BalanceType } from "../models/LedgerEntry";
+import { LedgerEntry, BalanceType, TransactionType } from "../models/LedgerEntry";
+import { Ride, RideStatus } from "../models/Ride";
 import { authMiddleware, AuthRequest } from "../middleware/auth_middleware";
 import { errBody, ErrorCode } from "../utils/errors";
 
@@ -43,7 +44,34 @@ router.get("/balance/:userId", authMiddleware, async (req: AuthRequest, res: Res
             h.balanceType !== BalanceType.PLATFORM_REVENUE
         ).slice(0, 20);
 
-        res.json({ balance: wallet, history });
+        const totalTrips = await AppDataSource.getRepository(Ride).count({
+            where: { driverId: userId, status: RideStatus.COMPLETED }
+        });
+
+        const walletRidesSumResult = await AppDataSource.getRepository(Ride)
+            .createQueryBuilder("ride")
+            .select("SUM(ride.fare)", "sum")
+            .where("ride.driverId = :driverId AND ride.status = :status AND ride.paymentMode = :paymentMode", {
+                driverId: userId,
+                status: RideStatus.COMPLETED,
+                paymentMode: "wallet"
+            })
+            .getRawOne();
+        const walletCommissionSum = Number(walletRidesSumResult?.sum || 0) * 0.10;
+
+        const ledgerChargesResult = await AppDataSource.getRepository(LedgerEntry)
+            .createQueryBuilder("ledger")
+            .select("SUM(ABS(ledger.amount))", "sum")
+            .where("ledger.walletId = :walletId AND ledger.balanceType = :balanceType AND ledger.transactionType IN (:...types)", {
+                walletId: userId,
+                balanceType: BalanceType.DRIVER_AVAILABLE,
+                types: [TransactionType.COMMISSION_CHARGE, TransactionType.DEBT_RECOVERY]
+            })
+            .getRawOne();
+        const ledgerCommissionSum = Number(ledgerChargesResult?.sum || 0);
+        const totalCommissionPaid = Math.round((walletCommissionSum + ledgerCommissionSum) * 100) / 100;
+
+        res.json({ balance: wallet, history, totalTrips, totalCommissionPaid });
     } catch (err: any) {
         console.error('[FINANCE] Balance fetch error:', err?.message);
         res.status(500).json(errBody(ErrorCode.INTERNAL_ERROR, "We couldn't load your balance right now. Please try again."));

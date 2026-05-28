@@ -113,18 +113,7 @@ class DriverProfileScreen extends ConsumerWidget {
                         iconColor: AppColors.paleGray,
                         title: 'Privacy Policy',
                         subtitle: 'Read our official data privacy policy',
-                        onTap: () async {
-                          final url = Uri.parse('https://kekeride.ng/privacy');
-                          if (await canLaunchUrl(url)) {
-                            await launchUrl(url, mode: LaunchMode.externalApplication);
-                          } else {
-                            if (context.mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('Could not open privacy policy URL.')),
-                              );
-                            }
-                          }
-                        },
+                        onTap: () => _showPrivacyPolicySheet(context),
                       ),
                       const Divider(color: AppColors.charcoal, height: 1),
                       // Log Out Tile
@@ -816,4 +805,141 @@ class _DisclosureBullet extends StatelessWidget {
       ),
     );
   }
+}
+
+void _showPrivacyPolicySheet(BuildContext context) {
+  showModalBottomSheet(
+    context: context,
+    backgroundColor: AppColors.charcoal,
+    isScrollControlled: true,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    ),
+    builder: (context) {
+      return Container(
+        height: MediaQuery.of(context).size.height * 0.85,
+        padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 48,
+                height: 5,
+                decoration: BoxDecoration(
+                  color: AppColors.darkGray,
+                  borderRadius: BorderRadius.circular(2.5),
+                ),
+              ),
+            ),
+            const SizedBox(height: 24),
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.privacy_tip_outlined, color: AppColors.primary, size: 28),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Text(
+                    'Privacy Policy',
+                    style: AppTextStyles.headline(color: AppColors.white),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            Expanded(
+              child: SingleChildScrollView(
+                physics: const BouncingScrollPhysics(),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'This policy outlines how KekeRide collects, uses, and protects information across our website and products, including Dispatcher, KekeRide Passenger, and KekeRide Driver Apps.',
+                      style: AppTextStyles.body(color: AppColors.paleGray, weight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 20),
+                    _buildPolicySection(
+                      title: '1. Personal Data We Collect',
+                      content: 'To ensure a reliable and secure ride experience, we collect:\n'
+                          '• Contact Info: Your name, phone number, and email address.\n'
+                          '• Profile Details: Profile picture, gender, and date of birth.\n'
+                          '• Driver Credentials: Driver\'s license number, license plate, tricycle photo, and vehicle registration documents.\n'
+                          '• Transactional History: Ride routes, fare details, and payout logs.',
+                    ),
+                    _buildPolicySection(
+                      title: '2. Location Data Collection & Use',
+                      content: 'To enable dispatching, routing, and safety tracking, KekeRide collects location data:\n\n'
+                          '• KekeRide Driver App: We collect precise background location data ONLY when your driver status is ONLINE. This is critical for matching you with passengers, calculating distance-based fares, and ensuring safety. Location collection stops completely when you go offline.\n\n'
+                          '• KekeRide Passenger App: Foreground location data is collected when passengers request rides or look for nearby tricycles.',
+                    ),
+                    _buildPolicySection(
+                      title: '3. How We Use Information',
+                      content: 'We use your information to:\n'
+                          '• Match drivers with passengers in real-time.\n'
+                          '• Calculate accurate distance-based ride fares.\n'
+                          '• Verify driver identity and credentials for safety audits.\n'
+                          '• Process payouts and wallet top-ups.\n'
+                          '• Send ride alerts, safety notifications, and app updates.',
+                    ),
+                    _buildPolicySection(
+                      title: '4. Information Sharing & Security',
+                      content: '• Sharing: Matched passengers will see your name, photo, phone number, current location, and vehicle license plate.\n'
+                          '• Protection: Your personal data is stored securely using high-grade encryption to prevent unauthorized access.\n'
+                          '• Disclosure: KekeRide does NOT sell or rent your personal data to third parties under any circumstances.',
+                    ),
+                    _buildPolicySection(
+                      title: '5. Data Retention & Deletion',
+                      content: '• You have the right to request deletion of your account at any time.\n'
+                          '• Tapping "Delete Account" inside this dashboard initiates a secure, cascading deletion pipeline that permanently purges your driver profile, vehicle logs, wallet information, and personal identity records from our database within regulatory audit timeframes.',
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: AppColors.charcoal,
+                minimumSize: const Size(double.infinity, 50),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              onPressed: () => Navigator.pop(context),
+              child: Text(
+                'I Acknowledge & Accept',
+                style: AppTextStyles.button(color: AppColors.charcoal),
+              ),
+            ),
+          ],
+        ),
+      );
+    },
+  );
+}
+
+Widget _buildPolicySection({required String title, required String content}) {
+  return Padding(
+    padding: const EdgeInsets.only(bottom: 20),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: AppTextStyles.body(color: AppColors.white, weight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          content,
+          style: AppTextStyles.bodySmall(color: AppColors.paleGray),
+        ),
+      ],
+    ),
+  );
 }

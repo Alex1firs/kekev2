@@ -2,7 +2,7 @@ import { Router, Request, Response } from "express";
 import { AppDataSource } from "../config/data_source";
 import { DriverProfile, DriverStatus } from "../models/DriverProfile";
 import { Wallet } from "../models/Wallet";
-import { onboardingLimiter } from "../middleware/rate_limit";
+import { onboardingLimiter, uploadLimiter } from "../middleware/rate_limit";
 import { upload } from "../middleware/upload_middleware";
 import { driverOnboardingSchema } from "../services/validation_service";
 import { authMiddleware, AuthRequest } from "../middleware/auth_middleware";
@@ -58,7 +58,7 @@ router.post("/onboarding", authMiddleware, onboardingLimiter, async (req: AuthRe
  * POST /api/v1/drivers/upload
  * Upload a specific KYC document.
  */
-router.post("/upload", authMiddleware, onboardingLimiter, upload.single("document"), async (req: AuthRequest, res: Response) => {
+router.post("/upload", authMiddleware, uploadLimiter, upload.single("document"), async (req: AuthRequest, res: Response) => {
     try {
         const { userId, docType } = req.body ?? {};
         if (!userId || !docType || !req.file) {

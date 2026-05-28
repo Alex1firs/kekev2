@@ -66,7 +66,7 @@ class AuthGuard extends ChangeNotifier {
         return isSplash ? null : '/splash';
       }
 
-      if (status == DriverStatus.unregistered) {
+      if (status == DriverStatus.unregistered || status == DriverStatus.pendingDocuments) {
         if (!isOnboarding) return '/onboarding';
         return null;
       }

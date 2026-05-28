@@ -24,8 +24,12 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final profile = ref.read(driverControllerProvider).profile;
-      _plateController.text = profile.vehiclePlate ?? '';
-      _modelController.text = profile.vehicleModel ?? '';
+      _firstNameController.text = profile.firstName ?? '';
+      _lastNameController.text = profile.lastName ?? '';
+      final plate = profile.vehiclePlate;
+      final model = profile.vehicleModel;
+      _plateController.text = (plate != null && plate != 'PENDING') ? plate : '';
+      _modelController.text = (model != null && model != 'PENDING') ? model : '';
     });
   }
 

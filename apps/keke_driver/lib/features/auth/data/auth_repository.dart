@@ -50,19 +50,19 @@ class AuthRepository {
 
   Future<Map<String, dynamic>> requestEmailVerification(String email) async {
     try {
-      final response = await _apiClient.dio.post('/auth/email-verification/request', data: {'email': email});
+      final response = await _apiClient.dio.post('/driver/auth/email-verification/request', data: {'email': email});
       return Map<String, dynamic>.from(response.data);
     } on DioException catch (e) {
       if (e.response?.statusCode == 429) {
-        throw Exception(e.response?.data?['error']?.toString() ?? 'Please wait before requesting another code.');
+        throw Exception(e.response?.data?['message']?.toString() ?? 'Please wait before requesting another code.');
       }
-      throw Exception(e.response?.data?['error']?.toString() ?? 'Request failed');
+      throw Exception(e.response?.data?['message']?.toString() ?? 'Request failed');
     }
   }
 
   Future<String> confirmEmailVerification(String email, String otp) async {
     try {
-      final response = await _apiClient.dio.post('/auth/email-verification/confirm', data: {
+      final response = await _apiClient.dio.post('/driver/auth/email-verification/confirm', data: {
         'email': email,
         'otp': otp,
       });
@@ -71,7 +71,7 @@ class AuthRepository {
       if (e.response?.statusCode == 429) {
         throw Exception('Too many failed attempts. Request a new code.');
       }
-      throw Exception(e.response?.data?['error']?.toString() ?? 'Verification failed');
+      throw Exception(e.response?.data?['message']?.toString() ?? 'Verification failed');
     }
   }
 

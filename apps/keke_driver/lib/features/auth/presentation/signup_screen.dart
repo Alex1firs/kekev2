@@ -6,7 +6,6 @@ import '../application/auth_controller.dart';
 import '../domain/auth_state.dart';
 import '../../../core/theme/app_theme.dart';
 import 'auth_widgets.dart';
-import 'verify_email_screen.dart';
 
 class SignupScreen extends ConsumerStatefulWidget {
   const SignupScreen({super.key});
@@ -154,9 +153,10 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
 
     ref.listen(authControllerProvider, (_, next) {
       if (next.status == AuthStatus.needsEmailVerification && next.pendingEmail != null) {
-        Navigator.push(context, MaterialPageRoute(
-          builder: (_) => VerifyEmailScreen(email: next.pendingEmail!, devOtp: next.devOtp),
-        ));
+        context.push('/verify-email', extra: {
+          'email': next.pendingEmail!,
+          'devOtp': next.devOtp,
+        });
       }
     });
 

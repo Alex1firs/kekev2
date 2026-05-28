@@ -6,16 +6,48 @@ import '../../auth/application/auth_controller.dart';
 import '../application/driver_controller.dart';
 import '../domain/driver_profile.dart';
 
-class StatusInfoScreen extends ConsumerWidget {
+class StatusInfoScreen extends ConsumerStatefulWidget {
   const StatusInfoScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<StatusInfoScreen> createState() => _StatusInfoScreenState();
+}
+
+class _StatusInfoScreenState extends ConsumerState<StatusInfoScreen> {
+  bool _justChecked = false;
+
+  @override
+  Widget build(BuildContext context) {
     final driverState = ref.watch(driverControllerProvider);
     final status = driverState.profile.status;
     final config = _StatusConfig.from(status);
-    final canRefresh = status == DriverStatus.pendingApproval ||
-        status == DriverStatus.unregistered;
+    final isChecking = driverState.isLoading;
+
+    ref.listen(driverControllerProvider, (previous, next) {
+      if (previous?.isLoading == true && !next.isLoading && _justChecked) {
+        _justChecked = false;
+
+        if (next.errorMessage != null) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(next.errorMessage!),
+            backgroundColor: AppColors.error,
+            behavior: SnackBarBehavior.floating,
+          ));
+          return;
+        }
+
+        if (next.profile.status == DriverStatus.pendingApproval) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: const Text(
+                "Still under review — we'll notify you once your account is approved."),
+            backgroundColor: const Color(0xFF1E293B),
+            behavior: SnackBarBehavior.floating,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ));
+        }
+      }
+    });
 
     return Scaffold(
       backgroundColor: AppColors.charcoal,
@@ -35,8 +67,8 @@ class StatusInfoScreen extends ConsumerWidget {
                 decoration: BoxDecoration(
                   color: config.color.withOpacity(0.12),
                   shape: BoxShape.circle,
-                  border: Border.all(
-                      color: config.color.withOpacity(0.3), width: 2),
+                  border:
+                      Border.all(color: config.color.withOpacity(0.3), width: 2),
                 ),
                 child: Icon(config.icon, size: 48, color: config.color),
               ),
@@ -106,27 +138,51 @@ class StatusInfoScreen extends ConsumerWidget {
                 ),
               ],
 
-              // Refresh button for pending states
-              if (canRefresh) ...[
+              // Check Status button for pending approval
+              if (status == DriverStatus.pendingApproval) ...[
                 const SizedBox(height: 32),
                 SizedBox(
                   width: double.infinity,
-                  child: OutlinedButton.icon(
+                  child: OutlinedButton(
                     style: OutlinedButton.styleFrom(
                       foregroundColor: config.color,
-                      side: BorderSide(color: config.color.withOpacity(0.4)),
-                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      side: BorderSide(color: config.color.withOpacity(0.5)),
+                      padding: const EdgeInsets.symmetric(vertical: 16),
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(14)),
                     ),
-                    onPressed: () =>
-                        ref.read(driverControllerProvider.notifier).syncStatus(),
-                    icon: Icon(Icons.refresh_rounded, size: 18, color: config.color),
-                    label: Text(
-                      'Check Status',
-                      style: AppTextStyles.body(
-                          color: config.color, weight: FontWeight.w600),
-                    ),
+                    onPressed: isChecking
+                        ? null
+                        : () {
+                            setState(() => _justChecked = true);
+                            ref
+                                .read(driverControllerProvider.notifier)
+                                .refreshDriverStatus();
+                          },
+                    child: isChecking
+                        ? SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2.5,
+                              valueColor:
+                                  AlwaysStoppedAnimation<Color>(config.color),
+                            ),
+                          )
+                        : Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.refresh_rounded,
+                                  size: 18, color: config.color),
+                              const SizedBox(width: 8),
+                              Text(
+                                'Check Status',
+                                style: AppTextStyles.body(
+                                    color: config.color,
+                                    weight: FontWeight.w600),
+                              ),
+                            ],
+                          ),
                   ),
                 ),
               ],

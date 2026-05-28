@@ -144,13 +144,37 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                             (_currentStep == 1 && !allDocsUploaded)
                         ? null
                         : () {
+                            if (_currentStep == 0) {
+                              final fn = _firstNameController.text.trim();
+                              final ln = _lastNameController.text.trim();
+                              final pl = _plateController.text.trim();
+                              final mo = _modelController.text.trim();
+                              if (fn.isEmpty || ln.isEmpty || pl.isEmpty || mo.isEmpty) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    backgroundColor: AppColors.error,
+                                    behavior: SnackBarBehavior.floating,
+                                    shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(12)),
+                                    content: Text(
+                                      'Please fill in all fields before continuing.',
+                                      style: AppTextStyles.body(color: AppColors.white),
+                                    ),
+                                  ),
+                                );
+                                return;
+                              }
+                            }
                             if (_currentStep == 1 && !allDocsUploaded) {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
-                                  backgroundColor: AppColors.primary,
+                                  backgroundColor: AppColors.error,
+                                  behavior: SnackBarBehavior.floating,
+                                  shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12)),
                                   content: Text(
                                     'Please upload all 3 required documents.',
-                                    style: AppTextStyles.body(color: AppColors.charcoal),
+                                    style: AppTextStyles.body(color: AppColors.white),
                                   ),
                                 ),
                               );

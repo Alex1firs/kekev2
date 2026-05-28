@@ -832,6 +832,38 @@ class DriverController extends StateNotifier<DriverState> {
     });
   }
 
+  Future<void> refreshDriverStatus() async {
+    if (!mounted) return;
+    state = state.copyWith(isLoading: true, clearErrorMessage: true);
+    try {
+      final response = await _apiClient.dio.get('/drivers/status/$_userId');
+      if (!mounted) return;
+      final data = response.data;
+      if (data != null && data['status'] != null) {
+        final newStatus = _mapStatus(data['status'].toString());
+        state = state.copyWith(
+          profile: state.profile.copyWith(
+            status: newStatus,
+            firstName: data['firstName']?.toString() ?? state.profile.firstName,
+            lastName: data['lastName']?.toString() ?? state.profile.lastName,
+            vehiclePlate: data['vehiclePlate']?.toString() ?? state.profile.vehiclePlate,
+            vehicleModel: data['vehicleModel']?.toString() ?? state.profile.vehicleModel,
+            debtAmount: (data['commissionDebt'] as num?)?.toDouble() ?? state.profile.debtAmount,
+          ),
+          isLoading: false,
+        );
+      } else {
+        state = state.copyWith(isLoading: false);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      state = state.copyWith(
+        isLoading: false,
+        errorMessage: 'Could not reach the server. Check your connection and try again.',
+      );
+    }
+  }
+
   Future<void> syncStatus() async {
     try {
       final response = await _apiClient.dio.get('/rides/active/driver');

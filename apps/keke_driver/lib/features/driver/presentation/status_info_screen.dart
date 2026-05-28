@@ -39,11 +39,18 @@ class _StatusInfoScreenState extends ConsumerState<StatusInfoScreen> {
         if (next.profile.status == DriverStatus.pendingApproval) {
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: const Text(
-                "Still under review — we'll notify you once your account is approved."),
-            backgroundColor: const Color(0xFF1E293B),
+              "Still under review — we'll notify you once your account is approved.",
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            backgroundColor: const Color(0xFF334155),
             behavior: SnackBarBehavior.floating,
             shape:
                 RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           ));
         }
       }

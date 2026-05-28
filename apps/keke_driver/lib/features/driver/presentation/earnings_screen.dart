@@ -433,57 +433,85 @@ class _EarningsScreenState extends ConsumerState<EarningsScreen> {
   }
 
   Future<void> _showPayoutDialog(DriverFinanceState state) async {
-    final bankNameCtrl = TextEditingController();
     final accountNumCtrl = TextEditingController();
     final amountCtrl =
         TextEditingController(text: state.availableBalance.toStringAsFixed(0));
+    String? selectedBank;
 
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (ctx) => _buildDarkDialog(
-        ctx: ctx,
-        title: 'Request Payout',
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Available: ₦${state.availableBalance.toStringAsFixed(2)}',
-              style: AppTextStyles.bodySmall(color: AppColors.success),
-            ),
-            const SizedBox(height: 16),
-            _DarkField(
-                controller: amountCtrl,
-                label: 'Amount (₦)',
-                type: TextInputType.number),
-            const SizedBox(height: 12),
-            _DarkField(
-                controller: bankNameCtrl,
-                label: 'Bank Name (e.g. GTBank, Zenith)',
-                type: TextInputType.text),
-            const SizedBox(height: 12),
-            _DarkField(
-                controller: accountNumCtrl,
-                label: 'Account Number',
-                type: TextInputType.number),
-            const SizedBox(height: 10),
-            Text(
-              'Requests are reviewed by the platform team before transfer.',
-              style: AppTextStyles.caption(color: AppColors.midGray),
-            ),
-          ],
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => _buildDarkDialog(
+          ctx: ctx,
+          title: 'Request Payout',
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Available: ₦${state.availableBalance.toStringAsFixed(2)}',
+                style: AppTextStyles.bodySmall(color: AppColors.success),
+              ),
+              const SizedBox(height: 16),
+              _DarkField(
+                  controller: amountCtrl,
+                  label: 'Amount (₦)',
+                  type: TextInputType.number),
+              const SizedBox(height: 12),
+              // Bank picker
+              GestureDetector(
+                onTap: () async {
+                  final bank = await _showBankPicker(ctx);
+                  if (bank != null) setDialogState(() => selectedBank = bank);
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  decoration: const BoxDecoration(
+                    border: Border(
+                      bottom: BorderSide(color: AppColors.midGray, width: 1),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          selectedBank ?? 'Select Bank',
+                          style: AppTextStyles.body(
+                            color: selectedBank != null
+                                ? AppColors.white
+                                : AppColors.midGray,
+                          ),
+                        ),
+                      ),
+                      const Icon(Icons.arrow_drop_down,
+                          color: AppColors.midGray),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              _DarkField(
+                  controller: accountNumCtrl,
+                  label: 'Account Number',
+                  type: TextInputType.number),
+              const SizedBox(height: 10),
+              Text(
+                'Requests are reviewed by the platform team before transfer.',
+                style: AppTextStyles.caption(color: AppColors.midGray),
+              ),
+            ],
+          ),
+          confirmLabel: 'Submit Request',
         ),
-        confirmLabel: 'Submit Request',
       ),
     );
 
     if (confirmed != true || !mounted) return;
 
     final amount = double.tryParse(amountCtrl.text.trim()) ?? 0;
-    final bankName = bankNameCtrl.text.trim();
     final accountNum = accountNumCtrl.text.trim();
 
-    if (amount <= 0 || bankName.isEmpty || accountNum.isEmpty) {
+    if (amount <= 0 || selectedBank == null || accountNum.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('All fields are required')),
       );
@@ -492,7 +520,7 @@ class _EarningsScreenState extends ConsumerState<EarningsScreen> {
 
     final success = await ref
         .read(driverFinanceControllerProvider.notifier)
-        .initiatePayout(amount, bankName, accountNum);
+        .initiatePayout(amount, selectedBank!, accountNum);
 
     if (!mounted) return;
     if (success) {
@@ -504,6 +532,78 @@ class _EarningsScreenState extends ConsumerState<EarningsScreen> {
         ),
       );
     }
+  }
+
+  Future<String?> _showBankPicker(BuildContext ctx) async {
+    final searchCtrl = TextEditingController();
+    List<String> filtered = _kNigerianBanks;
+
+    return showDialog<String>(
+      context: ctx,
+      builder: (pickerCtx) => StatefulBuilder(
+        builder: (pickerCtx, setPickerState) => Dialog(
+          backgroundColor: AppColors.darkGray,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('Select Bank',
+                    style: AppTextStyles.title(color: AppColors.white)),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: searchCtrl,
+                  autofocus: true,
+                  style: AppTextStyles.body(color: AppColors.white),
+                  decoration: InputDecoration(
+                    hintText: 'Search bank...',
+                    hintStyle:
+                        AppTextStyles.body(color: AppColors.midGray),
+                    prefixIcon: const Icon(Icons.search,
+                        color: AppColors.midGray, size: 20),
+                    filled: true,
+                    fillColor: AppColors.charcoal,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide.none,
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 10),
+                  ),
+                  onChanged: (q) {
+                    setPickerState(() {
+                      filtered = _kNigerianBanks
+                          .where((b) =>
+                              b.toLowerCase().contains(q.toLowerCase()))
+                          .toList();
+                    });
+                  },
+                ),
+                const SizedBox(height: 8),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 320),
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: filtered.length,
+                    itemBuilder: (_, i) => ListTile(
+                      title: Text(filtered[i],
+                          style: AppTextStyles.body(color: AppColors.white)),
+                      onTap: () => Navigator.pop(pickerCtx, filtered[i]),
+                      dense: true,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8)),
+                      hoverColor: AppColors.primary.withOpacity(0.08),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _handlePayNow(DriverFinanceState state) async {
@@ -655,6 +755,38 @@ class _EarningsScreenState extends ConsumerState<EarningsScreen> {
     );
   }
 }
+
+// ─── Nigerian bank list ───────────────────────────────────────────────────────
+
+const _kNigerianBanks = [
+  'Access Bank',
+  'Citibank Nigeria',
+  'Ecobank Nigeria',
+  'Fidelity Bank',
+  'First Bank of Nigeria',
+  'First City Monument Bank (FCMB)',
+  'Globus Bank',
+  'Guaranty Trust Bank (GTBank)',
+  'Heritage Bank',
+  'Keystone Bank',
+  'Kuda Bank',
+  'Moniepoint Microfinance Bank',
+  'Opay',
+  'Palmpay',
+  'Polaris Bank',
+  'Providus Bank',
+  'Stanbic IBTC Bank',
+  'Standard Chartered Bank',
+  'Sterling Bank',
+  'SunTrust Bank',
+  'Titan Trust Bank',
+  'Union Bank of Nigeria',
+  'United Bank for Africa (UBA)',
+  'Unity Bank',
+  'VFD Microfinance Bank',
+  'Wema Bank',
+  'Zenith Bank',
+];
 
 // ─── Sub-widgets ─────────────────────────────────────────────────────────────
 

@@ -147,9 +147,19 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                             if (_currentStep == 0) {
                               final fn = _firstNameController.text.trim();
                               final ln = _lastNameController.text.trim();
-                              final pl = _plateController.text.trim();
+                              final pl = _plateController.text.trim().toUpperCase();
                               final mo = _modelController.text.trim();
-                              if (fn.isEmpty || ln.isEmpty || pl.isEmpty || mo.isEmpty) {
+
+                              String? error;
+                              if (fn.isEmpty || ln.isEmpty) {
+                                error = 'Please enter your first and last name.';
+                              } else if (pl.isEmpty || pl == 'PENDING' || pl.length < 4) {
+                                error = 'Please enter a valid keke plate number (e.g. ANK-123KW).';
+                              } else if (mo.isEmpty || mo.toUpperCase() == 'PENDING' || mo.length < 2) {
+                                error = 'Please enter a valid vehicle model (e.g. TVS King Deluxe).';
+                              }
+
+                              if (error != null) {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
                                     backgroundColor: AppColors.error,
@@ -157,7 +167,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                                     shape: RoundedRectangleBorder(
                                         borderRadius: BorderRadius.circular(12)),
                                     content: Text(
-                                      'Please fill in all fields before continuing.',
+                                      error,
                                       style: AppTextStyles.body(color: AppColors.white),
                                     ),
                                   ),

@@ -7,8 +7,8 @@ export const driverOnboardingSchema = z.object({
   userId: z.string().min(1, "User ID is required").optional(),
   firstName: z.string().min(2, "First name must be at least 2 characters"),
   lastName: z.string().min(2, "Last name must be at least 2 characters"),
-  vehiclePlate: z.string().min(4, "Invalid vehicle plate"),
-  vehicleModel: z.string().min(2, "Invalid vehicle model"),
+  vehiclePlate: z.string().min(4, "Invalid vehicle plate").refine(v => v.trim().toUpperCase() !== 'PENDING', "A real plate number is required"),
+  vehicleModel: z.string().min(2, "Invalid vehicle model").refine(v => v.trim().toUpperCase() !== 'PENDING', "A real vehicle model is required"),
 });
 
 /**

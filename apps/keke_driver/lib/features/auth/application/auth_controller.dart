@@ -107,6 +107,29 @@ class AuthController extends StateNotifier<AuthState> {
     state = AuthState.unauthenticated();
   }
 
+  Future<void> deleteAccount() async {
+    if (state.status == AuthStatus.authenticating) return;
+    state = state.copyWith(status: AuthStatus.authenticating);
+    try {
+      final token = await _notificationService.getToken();
+      if (token != null) {
+        try {
+          await _notificationService.deleteToken(token);
+        } catch (_) {}
+      }
+      await _authRepository.deleteAccount();
+      state = AuthState.initializing();
+      await _secureStorage.clearAll();
+      state = AuthState.unauthenticated();
+    } catch (e) {
+      state = state.copyWith(
+        status: AuthStatus.authenticated,
+        errorMessage: e.toString().replaceFirst('Exception: ', ''),
+      );
+      rethrow;
+    }
+  }
+
   Future<void> forceUnauthorizedCleanup() async {
     if (state.status == AuthStatus.unauthenticated) return;
     await _secureStorage.clearAll();

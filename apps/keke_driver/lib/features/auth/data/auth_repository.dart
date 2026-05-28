@@ -101,6 +101,14 @@ class AuthRepository {
       throw Exception(e.response?.data?['error']?.toString() ?? 'Reset failed');
     }
   }
+
+  Future<void> deleteAccount() async {
+    try {
+      await _apiClient.dio.delete('/driver/auth/account');
+    } on DioException catch (e) {
+      throw Exception(e.response?.data?['message']?.toString() ?? 'Failed to delete account');
+    }
+  }
 }
 
 class EmailNotVerifiedException implements Exception {

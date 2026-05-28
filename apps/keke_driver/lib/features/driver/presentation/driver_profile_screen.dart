@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:jwt_decoder/jwt_decoder.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../application/driver_controller.dart';
 import '../domain/driver_profile.dart';
@@ -79,21 +80,73 @@ class DriverProfileScreen extends ConsumerWidget {
                   _DebtWarning(amount: profile.debtAmount),
                 ],
 
-                const SizedBox(height: 40),
-                OutlinedButton.icon(
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.error,
-                    side: const BorderSide(color: AppColors.error),
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14)),
+                const SizedBox(height: 32),
+                Padding(
+                  padding: const EdgeInsets.only(left: 4, bottom: 12),
+                  child: Text(
+                    'ACCOUNT & PRIVACY',
+                    style: AppTextStyles.caption(
+                      color: AppColors.lightGray,
+                      weight: FontWeight.w800,
+                    ).copyWith(letterSpacing: 1.5),
                   ),
-                  icon: const Icon(Icons.logout_rounded),
-                  label: Text('Logout',
-                      style: AppTextStyles.body(
-                          color: AppColors.error, weight: FontWeight.w700)),
-                  onPressed: () =>
-                      ref.read(authControllerProvider.notifier).logout(),
+                ),
+                Container(
+                  decoration: BoxDecoration(
+                    color: AppColors.darkGray,
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Column(
+                    children: [
+                      // Location Details Tile
+                      _DashboardTile(
+                        icon: Icons.location_on_outlined,
+                        iconColor: AppColors.primary,
+                        title: 'Location Transparency',
+                        subtitle: 'Learn why and when your location is tracked',
+                        onTap: () => _showLocationDisclosureSheet(context),
+                      ),
+                      const Divider(color: AppColors.charcoal, height: 1),
+                      // Privacy Policy Tile
+                      _DashboardTile(
+                        icon: Icons.privacy_tip_outlined,
+                        iconColor: AppColors.paleGray,
+                        title: 'Privacy Policy',
+                        subtitle: 'Read our official data privacy policy',
+                        onTap: () async {
+                          final url = Uri.parse('https://kekeride.ng/privacy');
+                          if (await canLaunchUrl(url)) {
+                            await launchUrl(url, mode: LaunchMode.externalApplication);
+                          } else {
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('Could not open privacy policy URL.')),
+                              );
+                            }
+                          }
+                        },
+                      ),
+                      const Divider(color: AppColors.charcoal, height: 1),
+                      // Log Out Tile
+                      _DashboardTile(
+                        icon: Icons.logout_rounded,
+                        iconColor: AppColors.paleGray,
+                        title: 'Log Out',
+                        subtitle: 'Safely sign out from this device',
+                        onTap: () => ref.read(authControllerProvider.notifier).logout(),
+                      ),
+                      const Divider(color: AppColors.charcoal, height: 1),
+                      // Delete Account Tile (Destructive)
+                      _DashboardTile(
+                        icon: Icons.delete_forever_outlined,
+                        iconColor: AppColors.error,
+                        title: 'Permanently Delete Account',
+                        subtitle: 'Erase profile, wallet, and all records instantly',
+                        isDestructive: true,
+                        onTap: () => _showDeleteAccountSheet(context, ref),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -376,6 +429,391 @@ class _StatusBadge extends StatelessWidget {
       ),
       child: Text(label,
           style: AppTextStyles.bodySmall(color: fg, weight: FontWeight.w700)),
+    );
+  }
+}
+
+// ─── Location Transparency & Disclosure Sheet ────────────────────────────────
+
+void _showLocationDisclosureSheet(BuildContext context) {
+  showModalBottomSheet(
+    context: context,
+    backgroundColor: AppColors.charcoal,
+    isScrollControlled: true,
+    builder: (context) {
+      return Container(
+        padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 48,
+                height: 5,
+                decoration: BoxDecoration(
+                  color: AppColors.darkGray,
+                  borderRadius: BorderRadius.circular(2.5),
+                ),
+              ),
+            ),
+            const SizedBox(height: 24),
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.location_on, color: AppColors.primary, size: 28),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Text(
+                    'Location Consent',
+                    style: AppTextStyles.headline(color: AppColors.white),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            Text(
+              'To receive ride requests and earn with KekeRide, the application requires your background location access.',
+              style: AppTextStyles.body(color: AppColors.paleGray, weight: FontWeight.w600),
+            ),
+            const SizedBox(height: 20),
+            const _DisclosureBullet(
+              icon: Icons.wifi_tethering,
+              title: 'Only Active When Online',
+              description: 'We ONLY track your background location when your status is set to ONLINE on the Home screen. Tracking stops completely the moment you go offline.',
+            ),
+            const _DisclosureBullet(
+              icon: Icons.electric_rickshaw_rounded,
+              title: 'Precise Dispatching',
+              description: 'Location data ensures passengers are matched with the nearest available tricycle, drastically reducing your wait time and increasing trip acceptance.',
+            ),
+            const _DisclosureBullet(
+              icon: Icons.route_rounded,
+              title: 'Fare & Safety Tracking',
+              description: 'Real-time location is required to calculate accurate trip distance, determine exact fares, and ensure passenger and driver safety.',
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: AppColors.charcoal,
+                minimumSize: const Size(double.infinity, 50),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              onPressed: () => Navigator.pop(context),
+              child: Text(
+                'I Understand',
+                style: AppTextStyles.button(color: AppColors.charcoal),
+              ),
+            ),
+          ],
+        ),
+      );
+    },
+  );
+}
+
+// ─── Delete Account Confirmation Bottom Sheet ────────────────────────────────
+
+void _showDeleteAccountSheet(BuildContext context, WidgetRef ref) {
+  bool isLoading = false;
+  showModalBottomSheet(
+    context: context,
+    backgroundColor: AppColors.charcoal,
+    isScrollControlled: true,
+    builder: (context) {
+      return StatefulBuilder(
+        builder: (context, setState) {
+          return Container(
+            padding: EdgeInsets.fromLTRB(24, 20, 24, MediaQuery.of(context).viewInsets.bottom + 32),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 48,
+                    height: 5,
+                    decoration: BoxDecoration(
+                      color: AppColors.darkGray,
+                      borderRadius: BorderRadius.circular(2.5),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: AppColors.error.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Icon(Icons.warning_amber_rounded, color: AppColors.error, size: 28),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Text(
+                        'Delete Your Account?',
+                        style: AppTextStyles.headline(color: AppColors.white),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+                Text(
+                  'Warning: This action is permanent and completely irreversible. All your profiles, wallet balances, trip history, and documents will be permanently erased.',
+                  style: AppTextStyles.body(color: AppColors.paleGray),
+                ),
+                const SizedBox(height: 20),
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: AppColors.darkGray,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppColors.error.withOpacity(0.4)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'What you will lose:',
+                        style: AppTextStyles.body(color: AppColors.white, weight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          const Icon(Icons.circle, color: AppColors.error, size: 8),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'All active wallet balances and earnings',
+                              style: AppTextStyles.bodySmall(color: AppColors.lightGray),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          const Icon(Icons.circle, color: AppColors.error, size: 8),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Verified status and vehicle approval',
+                              style: AppTextStyles.bodySmall(color: AppColors.lightGray),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          const Icon(Icons.circle, color: AppColors.error, size: 8),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Access to KekeRide Driver services',
+                              style: AppTextStyles.bodySmall(color: AppColors.lightGray),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 28),
+                if (isLoading)
+                  const Center(
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(vertical: 8),
+                      child: CircularProgressIndicator(color: AppColors.error),
+                    ),
+                  )
+                else
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.white,
+                            side: const BorderSide(color: AppColors.midGray),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                          ),
+                          onPressed: () => Navigator.pop(context),
+                          child: const Text('Cancel'),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.error,
+                            foregroundColor: AppColors.white,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                          ),
+                          onPressed: () async {
+                            setState(() {
+                              isLoading = true;
+                            });
+                            try {
+                              await ref.read(authControllerProvider.notifier).deleteAccount();
+                              if (context.mounted) {
+                                Navigator.pop(context);
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Your account has been deleted successfully.'),
+                                    backgroundColor: AppColors.success,
+                                  ),
+                                );
+                              }
+                            } catch (err) {
+                              setState(() {
+                                isLoading = false;
+                              });
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('Failed to delete account: $err'),
+                                    backgroundColor: AppColors.error,
+                                  ),
+                                );
+                              }
+                            }
+                          },
+                          child: const Text('Delete'),
+                        ),
+                      ),
+                    ],
+                  ),
+              ],
+            ),
+          );
+        },
+      );
+    },
+  );
+}
+
+// ─── Dashboard Tile Widget ───────────────────────────────────────────────────
+
+class _DashboardTile extends StatelessWidget {
+  final IconData icon;
+  final Color iconColor;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+  final bool isDestructive;
+
+  const _DashboardTile({
+    required this.icon,
+    required this.iconColor,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+    this.isDestructive = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        child: Row(
+          children: [
+            Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                color: isDestructive ? AppColors.error.withOpacity(0.12) : AppColors.charcoal,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(icon, color: iconColor, size: 20),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: AppTextStyles.body(
+                      color: isDestructive ? AppColors.error : AppColors.white,
+                      weight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: AppTextStyles.caption(
+                      color: isDestructive ? AppColors.error.withOpacity(0.7) : AppColors.lightGray,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Icon(
+              Icons.chevron_right_rounded,
+              color: isDestructive ? AppColors.error.withOpacity(0.5) : AppColors.midGray,
+              size: 20,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Disclosure Bullet Item Widget ───────────────────────────────────────────
+
+class _DisclosureBullet extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String description;
+
+  const _DisclosureBullet({
+    required this.icon,
+    required this.title,
+    required this.description,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: AppColors.primary, size: 20),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: AppTextStyles.body(color: AppColors.white, weight: FontWeight.bold),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  description,
+                  style: AppTextStyles.bodySmall(color: AppColors.lightGray),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

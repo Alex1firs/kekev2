@@ -4,6 +4,9 @@ import { User, UserRole } from "../models/User";
 import { AuthService } from "../services/auth_service";
 import { EmailService } from "../services/email_service";
 import { DriverProfile } from "../models/DriverProfile";
+import { DeviceToken } from "../models/DeviceToken";
+import { SavedLocation } from "../models/SavedLocation";
+import { Wallet } from "../models/Wallet";
 import { authMiddleware, AuthRequest } from "../middleware/auth_middleware";
 import { redis } from "../config/redis";
 import { errBody, ErrorCode } from "../utils/errors";
@@ -311,10 +314,53 @@ async function handlePasswordResetConfirm(req: Request, res: Response) {
     }
 }
 
+async function handleDeleteAccount(req: AuthRequest, res: Response) {
+    try {
+        if (!req.user) {
+            return res.status(401).json(errBody(ErrorCode.SESSION_EXPIRED, "Your session has expired. Please log in again."));
+        }
+
+        const userId = req.user.userId;
+        const userRepo = AppDataSource.getRepository(User);
+        const user = await userRepo.findOneBy({ id: userId });
+
+        if (!user) {
+            return res.status(404).json(errBody(ErrorCode.USER_NOT_FOUND, "Account not found."));
+        }
+
+        // Delete DriverProfile if they are a driver
+        if (user.role === UserRole.DRIVER) {
+            const profileRepo = AppDataSource.getRepository(DriverProfile);
+            await profileRepo.delete({ userId });
+        }
+
+        // Delete DeviceTokens
+        const deviceTokenRepo = AppDataSource.getRepository(DeviceToken);
+        await deviceTokenRepo.delete({ userId });
+
+        // Delete SavedLocations
+        const savedLocationRepo = AppDataSource.getRepository(SavedLocation);
+        await savedLocationRepo.delete({ userId });
+
+        // Delete Wallet
+        const walletRepo = AppDataSource.getRepository(Wallet);
+        await walletRepo.delete({ userId });
+
+        // Delete User
+        await userRepo.delete({ id: userId });
+
+        return res.json({ message: "Your account and all associated data have been permanently deleted." });
+    } catch (err: any) {
+        console.error('[AUTH] Account deletion error:', err?.message);
+        return res.status(500).json(errBody(ErrorCode.INTERNAL_ERROR, "Failed to delete account. Please try again later."));
+    }
+}
+
 router.post("/email-verification/request", handleEmailVerificationRequest);
 router.post("/email-verification/confirm", handleEmailVerificationConfirm);
 router.post("/reset-password/request", handlePasswordResetRequest);
 router.post("/reset-password/confirm", handlePasswordResetConfirm);
+router.delete("/account", authMiddleware, handleDeleteAccount);
 
 export default router;
 
@@ -326,3 +372,4 @@ driverAuthRouter.post("/email-verification/request", handleEmailVerificationRequ
 driverAuthRouter.post("/email-verification/confirm", handleEmailVerificationConfirm);
 driverAuthRouter.post("/reset-password/request", handlePasswordResetRequest);
 driverAuthRouter.post("/reset-password/confirm", handlePasswordResetConfirm);
+driverAuthRouter.delete("/account", authMiddleware, handleDeleteAccount);

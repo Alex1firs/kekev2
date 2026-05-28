@@ -99,6 +99,14 @@ class AuthRepository {
       throw Exception(e.response?.data?['message']?.toString() ?? 'Password reset failed. Please try again.');
     }
   }
+
+  Future<void> deleteAccount() async {
+    try {
+      await _apiClient.dio.delete('/auth/account');
+    } on DioException catch (e) {
+      throw Exception(e.response?.data?['message']?.toString() ?? 'Could not delete your account. Please try again.');
+    }
+  }
 }
 
 class EmailNotVerifiedException implements Exception {

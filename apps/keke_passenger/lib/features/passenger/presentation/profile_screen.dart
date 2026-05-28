@@ -25,6 +25,60 @@ class _PassengerProfileScreenState
     _loadProfile();
   }
 
+  Future<void> _confirmDeleteAccount(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text('Delete Account',
+            style: AppTextStyles.title(color: AppColors.charcoal)),
+        content: Text(
+          'This will permanently delete your account and all associated data. This action cannot be undone.',
+          style: AppTextStyles.body(color: AppColors.darkGray),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text('Cancel',
+                style: AppTextStyles.body(color: AppColors.midGray)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.error,
+              foregroundColor: AppColors.white,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text('Delete',
+                style: AppTextStyles.body(
+                    color: AppColors.white, weight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    try {
+      await ref.read(authControllerProvider.notifier).deleteAccount();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            e.toString().replaceFirst('Exception: ', ''),
+            style: const TextStyle(color: Colors.white),
+          ),
+          backgroundColor: AppColors.error,
+          behavior: SnackBarBehavior.floating,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+      );
+    }
+  }
+
   Future<void> _loadProfile() async {
     setState(() {
       _isLoading = true;
@@ -181,6 +235,14 @@ class _PassengerProfileScreenState
             style: AppTextStyles.body(color: AppColors.error, weight: FontWeight.w700),
           ),
           onPressed: () => ref.read(authControllerProvider.notifier).logout(),
+        ),
+        const SizedBox(height: 12),
+        TextButton(
+          onPressed: () => _confirmDeleteAccount(context),
+          child: Text(
+            'Delete Account',
+            style: AppTextStyles.bodySmall(color: AppColors.midGray),
+          ),
         ),
       ],
     );

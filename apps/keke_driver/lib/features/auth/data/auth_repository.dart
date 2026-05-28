@@ -42,7 +42,7 @@ class AuthRepository {
       return Map<String, dynamic>.from(response.data);
     } on DioException catch (e) {
       if (e.response?.statusCode == 409) {
-        throw Exception('Email address already registered');
+        throw EmailAlreadyRegisteredException(email: email);
       }
       throw Exception(e.response?.data?['message']?.toString() ?? 'Signup failed');
     }
@@ -115,6 +115,11 @@ class EmailNotVerifiedException implements Exception {
   final String email;
   final String? devOtp;
   const EmailNotVerifiedException({required this.email, this.devOtp});
+}
+
+class EmailAlreadyRegisteredException implements Exception {
+  final String email;
+  const EmailAlreadyRegisteredException({required this.email});
 }
 
 final authRepositoryProvider = Provider<AuthRepository>((ref) {

@@ -3,7 +3,7 @@ import 'package:jwt_decoder/jwt_decoder.dart';
 import '../../../core/storage/secure_storage.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/notification_service.dart';
-import '../data/auth_repository.dart';
+import '../data/auth_repository.dart' show AuthRepository, authRepositoryProvider, EmailNotVerifiedException, EmailAlreadyRegisteredException;
 import '../domain/auth_state.dart';
 
 class AuthController extends StateNotifier<AuthState> {
@@ -63,6 +63,9 @@ class AuthController extends StateNotifier<AuthState> {
       final result = await _authRepository.signup(email, password, firstName, lastName, phone);
       final devOtp = result['otp'] as String?;
       state = AuthState.needsEmailVerification(email, devOtp: devOtp);
+    } on EmailAlreadyRegisteredException {
+      // Driver already has an account — log them in silently with the same credentials
+      await login(email, password);
     } catch (e) {
       state = AuthState.error(e.toString().replaceFirst('Exception: ', ''));
     }

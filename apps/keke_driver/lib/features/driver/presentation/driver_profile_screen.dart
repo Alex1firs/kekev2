@@ -50,24 +50,18 @@ class DriverProfileScreen extends ConsumerWidget {
               padding: const EdgeInsets.fromLTRB(20, 24, 20, 32),
               children: [
                 // Vehicle plate — driver identity, most important tile
-                if (profile.vehiclePlate != null &&
-                    profile.vehiclePlate != 'PENDING') ...[
-                  _VehiclePlate(plate: profile.vehiclePlate!),
-                  const SizedBox(height: 12),
-                ],
+                _VehiclePlateCard(
+                  plate: profile.vehiclePlate,
+                  model: profile.vehicleModel,
+                  onEdit: () => _showEditVehicleSheet(context, ref, profile),
+                ),
+                const SizedBox(height: 12),
 
                 if (phone.isNotEmpty)
                   _InfoTile(
                     icon: Icons.phone_outlined,
                     label: 'Phone',
                     value: phone,
-                  ),
-                if (profile.vehicleModel != null &&
-                    profile.vehicleModel != 'PENDING')
-                  _InfoTile(
-                    icon: Icons.electric_rickshaw,
-                    label: 'Vehicle Model',
-                    value: profile.vehicleModel!,
                   ),
                 _InfoTile(
                   icon: Icons.badge_outlined,
@@ -223,51 +217,90 @@ class _ProfileHeader extends StatelessWidget {
   }
 }
 
-// ─── Vehicle plate (prominent identity tile) ──────────────────────────────────
+// ─── Vehicle plate card (tappable, shows pending state) ──────────────────────
 
-class _VehiclePlate extends StatelessWidget {
-  final String plate;
+class _VehiclePlateCard extends StatelessWidget {
+  final String? plate;
+  final String? model;
+  final VoidCallback onEdit;
 
-  const _VehiclePlate({required this.plate});
+  const _VehiclePlateCard({
+    required this.plate,
+    required this.model,
+    required this.onEdit,
+  });
+
+  bool get _isPending =>
+      plate == null || plate == 'PENDING' || plate!.isEmpty ||
+      model == null || model == 'PENDING' || model!.isEmpty;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-      decoration: BoxDecoration(
-        color: AppColors.darkGray,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.primary.withOpacity(0.4)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: AppColors.primary.withOpacity(0.15),
-              borderRadius: BorderRadius.circular(12),
+    final isPending = _isPending;
+    final borderColor =
+        isPending ? const Color(0xFFFBBF24) : AppColors.primary;
+
+    return GestureDetector(
+      onTap: onEdit,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        decoration: BoxDecoration(
+          color: AppColors.darkGray,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: borderColor.withOpacity(0.5)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: borderColor.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(Icons.electric_rickshaw,
+                  color: borderColor, size: 20),
             ),
-            child: const Icon(Icons.electric_rickshaw,
-                color: AppColors.primary, size: 20),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Keke Plate Number',
-                    style: AppTextStyles.caption(color: AppColors.midGray)),
-                const SizedBox(height: 3),
-                Text(
-                  plate,
-                  style: AppTextStyles.title(
-                      color: AppColors.primary, weight: FontWeight.w800),
-                ),
-              ],
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Vehicle Info',
+                      style: AppTextStyles.caption(color: AppColors.midGray)),
+                  const SizedBox(height: 3),
+                  if (isPending)
+                    Text(
+                      'Tap to add plate & model',
+                      style: AppTextStyles.body(
+                          color: const Color(0xFFFBBF24),
+                          weight: FontWeight.w600),
+                    )
+                  else ...[
+                    Text(
+                      plate!,
+                      style: AppTextStyles.title(
+                          color: AppColors.primary,
+                          weight: FontWeight.w800),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      model!,
+                      style: AppTextStyles.caption(color: AppColors.midGray),
+                    ),
+                  ],
+                ],
+              ),
             ),
-          ),
-        ],
+            Icon(
+              Icons.edit_outlined,
+              color: isPending
+                  ? const Color(0xFFFBBF24)
+                  : AppColors.midGray,
+              size: 18,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -420,6 +453,255 @@ class _StatusBadge extends StatelessWidget {
           style: AppTextStyles.bodySmall(color: fg, weight: FontWeight.w700)),
     );
   }
+}
+
+// ─── Edit Vehicle Info Sheet ─────────────────────────────────────────────────
+
+void _showEditVehicleSheet(
+    BuildContext context, WidgetRef ref, DriverProfile profile) {
+  final plateCtrl = TextEditingController(
+      text: (profile.vehiclePlate == 'PENDING') ? '' : (profile.vehiclePlate ?? ''));
+  final modelCtrl = TextEditingController(
+      text: (profile.vehicleModel == 'PENDING') ? '' : (profile.vehicleModel ?? ''));
+  final formKey = GlobalKey<FormState>();
+
+  showModalBottomSheet(
+    context: context,
+    backgroundColor: AppColors.charcoal,
+    isScrollControlled: true,
+    shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+    builder: (ctx) {
+      return StatefulBuilder(
+        builder: (ctx, setState) {
+          bool isSaving = false;
+          String? errorMsg;
+
+          return Padding(
+            padding: EdgeInsets.fromLTRB(
+                24, 20, 24, MediaQuery.of(ctx).viewInsets.bottom + 32),
+            child: Form(
+              key: formKey,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Handle
+                  Center(
+                    child: Container(
+                      width: 48,
+                      height: 5,
+                      decoration: BoxDecoration(
+                        color: AppColors.darkGray,
+                        borderRadius: BorderRadius.circular(2.5),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  // Header
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: AppColors.primary.withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Icon(Icons.electric_rickshaw,
+                            color: AppColors.primary, size: 26),
+                      ),
+                      const SizedBox(width: 14),
+                      Text('Edit Vehicle Info',
+                          style:
+                              AppTextStyles.headline(color: AppColors.white)),
+                    ],
+                  ),
+                  const SizedBox(height: 24),
+
+                  // Plate field
+                  Text('Plate Number',
+                      style: AppTextStyles.caption(
+                          color: AppColors.midGray,
+                          weight: FontWeight.w600)),
+                  const SizedBox(height: 8),
+                  TextFormField(
+                    controller: plateCtrl,
+                    textCapitalization: TextCapitalization.characters,
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 2),
+                    decoration: InputDecoration(
+                      hintText: 'e.g. ANK-123KW',
+                      prefixIcon:
+                          const Icon(Icons.electric_rickshaw_outlined),
+                      filled: true,
+                      fillColor: AppColors.darkGray,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide.none,
+                      ),
+                    ),
+                    validator: (v) {
+                      final s = v?.trim() ?? '';
+                      if (s.isEmpty) return 'Plate number is required';
+                      if (s.length < 4) return 'Enter a valid plate number';
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Model field
+                  Text('Vehicle Model',
+                      style: AppTextStyles.caption(
+                          color: AppColors.midGray,
+                          weight: FontWeight.w600)),
+                  const SizedBox(height: 8),
+                  TextFormField(
+                    controller: modelCtrl,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      hintText: 'e.g. TVS King Deluxe',
+                      prefixIcon: const Icon(Icons.directions_car_outlined),
+                      filled: true,
+                      fillColor: AppColors.darkGray,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide.none,
+                      ),
+                    ),
+                    validator: (v) {
+                      final s = v?.trim() ?? '';
+                      if (s.isEmpty) return 'Vehicle model is required';
+                      if (s.length < 2) return 'Enter a valid vehicle model';
+                      return null;
+                    },
+                  ),
+
+                  if (errorMsg != null) ...[
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: AppColors.error.withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.error_outline,
+                              color: AppColors.error, size: 16),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(errorMsg!,
+                                style: AppTextStyles.caption(
+                                    color: AppColors.error)),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+
+                  const SizedBox(height: 28),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.white,
+                            side: const BorderSide(color: AppColors.midGray),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12)),
+                            padding:
+                                const EdgeInsets.symmetric(vertical: 14),
+                          ),
+                          onPressed:
+                              isSaving ? null : () => Navigator.pop(ctx),
+                          child: const Text('Cancel'),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            foregroundColor: AppColors.charcoal,
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12)),
+                            padding:
+                                const EdgeInsets.symmetric(vertical: 14),
+                            elevation: 0,
+                          ),
+                          onPressed: isSaving
+                              ? null
+                              : () async {
+                                  if (!formKey.currentState!.validate()) {
+                                    return;
+                                  }
+                                  setState(() {
+                                    isSaving = true;
+                                    errorMsg = null;
+                                  });
+                                  await ref
+                                      .read(driverControllerProvider.notifier)
+                                      .updateVehicleInfo(
+                                        plate: plateCtrl.text,
+                                        model: modelCtrl.text,
+                                      );
+                                  final err = ref
+                                      .read(driverControllerProvider)
+                                      .errorMessage;
+                                  if (err != null) {
+                                    setState(() {
+                                      isSaving = false;
+                                      errorMsg = err;
+                                    });
+                                  } else {
+                                    if (ctx.mounted) Navigator.pop(ctx);
+                                    if (context.mounted) {
+                                      ScaffoldMessenger.of(context)
+                                          .showSnackBar(SnackBar(
+                                        content: const Text(
+                                          'Vehicle info updated successfully.',
+                                          style: TextStyle(
+                                              color: Colors.white,
+                                              fontWeight: FontWeight.w500),
+                                        ),
+                                        backgroundColor:
+                                            const Color(0xFF064E3B),
+                                        behavior: SnackBarBehavior.floating,
+                                        shape: RoundedRectangleBorder(
+                                            borderRadius:
+                                                BorderRadius.circular(12)),
+                                      ));
+                                    }
+                                  }
+                                },
+                          child: isSaving
+                              ? const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2.5,
+                                    color: AppColors.charcoal,
+                                  ),
+                                )
+                              : Text('Save',
+                                  style: AppTextStyles.body(
+                                      color: AppColors.charcoal,
+                                      weight: FontWeight.w700)),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      );
+    },
+  );
 }
 
 // ─── Location Transparency & Disclosure Sheet ────────────────────────────────

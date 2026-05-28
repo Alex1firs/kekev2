@@ -147,6 +147,50 @@ router.get("/status/:userId", authMiddleware, async (req: AuthRequest, res: Resp
     }
 });
 
+/**
+ * PATCH /api/v1/drivers/profile
+ * Update vehicle plate and model for an authenticated driver.
+ */
+router.patch("/profile", authMiddleware, async (req: AuthRequest, res: Response) => {
+    try {
+        const { vehiclePlate, vehicleModel } = req.body ?? {};
+
+        if (!vehiclePlate || !vehicleModel) {
+            return res.status(400).json(errBody(ErrorCode.MISSING_FIELDS, "Vehicle plate and model are required."));
+        }
+        const plate = vehiclePlate.toString().trim().toUpperCase();
+        const model = vehicleModel.toString().trim();
+
+        if (plate.length < 4) {
+            return res.status(400).json(errBody(ErrorCode.VALIDATION_ERROR, "Please enter a valid plate number (at least 4 characters)."));
+        }
+        if (model.length < 2) {
+            return res.status(400).json(errBody(ErrorCode.VALIDATION_ERROR, "Please enter a valid vehicle model."));
+        }
+
+        const userId = req.user!.userId;
+        const repo = AppDataSource.getRepository(DriverProfile);
+        const profile = await repo.findOneBy({ userId });
+
+        if (!profile) {
+            return res.status(404).json(errBody(ErrorCode.PROFILE_NOT_FOUND, "Driver profile not found."));
+        }
+
+        profile.vehiclePlate = plate;
+        profile.vehicleModel = model;
+        await repo.save(profile);
+
+        res.json({
+            message: "Vehicle info updated successfully.",
+            vehiclePlate: profile.vehiclePlate,
+            vehicleModel: profile.vehicleModel,
+        });
+    } catch (err: any) {
+        console.error('[DRIVER] Profile update error:', err?.message);
+        res.status(500).json(errBody(ErrorCode.INTERNAL_ERROR, "Couldn't update your vehicle info. Please try again."));
+    }
+});
+
 // Diagnostic: lets the driver app verify heartbeats are reaching the backend.
 router.get("/availability/check", authMiddleware, async (req: AuthRequest, res: Response) => {
     try {

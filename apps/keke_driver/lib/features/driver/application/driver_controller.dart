@@ -832,6 +832,37 @@ class DriverController extends StateNotifier<DriverState> {
     });
   }
 
+  Future<void> updateVehicleInfo({
+    required String plate,
+    required String model,
+  }) async {
+    if (!mounted) return;
+    state = state.copyWith(isLoading: true, clearErrorMessage: true);
+    try {
+      final response = await _apiClient.dio.patch('/drivers/profile', data: {
+        'vehiclePlate': plate.trim().toUpperCase(),
+        'vehicleModel': model.trim(),
+      });
+      if (!mounted) return;
+      final data = response.data as Map<String, dynamic>;
+      state = state.copyWith(
+        profile: state.profile.copyWith(
+          vehiclePlate: data['vehiclePlate']?.toString() ?? plate,
+          vehicleModel: data['vehicleModel']?.toString() ?? model,
+        ),
+        isLoading: false,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      String msg = 'Could not update vehicle info. Please try again.';
+      if (e is dio.DioException) {
+        final errData = e.response?.data;
+        msg = (errData is Map ? errData['message']?.toString() : null) ?? msg;
+      }
+      state = state.copyWith(isLoading: false, errorMessage: msg);
+    }
+  }
+
   Future<void> refreshDriverStatus() async {
     if (!mounted) return;
     state = state.copyWith(isLoading: true, clearErrorMessage: true);

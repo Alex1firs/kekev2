@@ -7,6 +7,8 @@ import { LedgerEntry } from "../models/LedgerEntry";
 import { authMiddleware, AuthRequest } from "../middleware/auth_middleware";
 import { errBody, ErrorCode } from "../utils/errors";
 import { In } from "typeorm";
+import { SettingService } from "../services/setting_service";
+
 
 const router = Router();
 
@@ -149,6 +151,20 @@ router.get("/:rideId/receipt", authMiddleware, async (req: AuthRequest, res: Res
     } catch (err: any) {
         console.error('[RIDES] Receipt error:', err?.message);
         return res.status(500).json(errBody(ErrorCode.INTERNAL_ERROR, "We couldn't load your receipt. Please try again."));
+    }
+});
+
+/**
+ * GET /api/v1/rides/pricing-config
+ * Returns current dynamic pricing configurations.
+ */
+router.get("/pricing-config", authMiddleware, async (req: AuthRequest, res: Response) => {
+    try {
+        const config = await SettingService.getPricingConfig();
+        return res.status(200).json(config);
+    } catch (err: any) {
+        console.error('[RIDES] Pricing config error:', err?.message);
+        return res.status(500).json(errBody(ErrorCode.INTERNAL_ERROR, "We couldn't load the pricing settings."));
     }
 });
 

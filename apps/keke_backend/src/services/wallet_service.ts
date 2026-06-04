@@ -4,6 +4,8 @@ import { LedgerEntry, BalanceType, TransactionType } from "../models/LedgerEntry
 import { Transaction, TransactionStatus } from "../models/Transaction";
 import { PayoutRecord, PayoutStatus } from "../models/PayoutRecord";
 import { AuditLog } from "../models/AuditLog";
+import { SettingService } from "./setting_service";
+
 
 // Maps BalanceType enum values to actual Wallet entity property names.
 const BALANCE_FIELD: Record<string, string> = {
@@ -240,8 +242,12 @@ export class WalletService {
         totalFare: number;
         isCash: boolean;
     }): Promise<void> {
-        const commissionAmount = Math.round(data.totalFare * 0.10 * 100) / 100;
-        const driverNetAmount  = Math.round((data.totalFare - commissionAmount) * 100) / 100;
+        const pricingConfig = await SettingService.getPricingConfig();
+        const pct = pricingConfig.platformFeePercent;
+        const feeFactor = 1 + (pct / 100);
+
+        const driverNetAmount  = Math.round((data.totalFare / feeFactor) * 100) / 100;
+        const commissionAmount = Math.round((data.totalFare - driverNetAmount) * 100) / 100;
 
         if (data.isCash) {
             await this._postCashRideFinancials(data.rideId, data.driverId, data.totalFare, commissionAmount);
@@ -251,6 +257,7 @@ export class WalletService {
             );
         }
     }
+
 
     private static async _postCashRideFinancials(
         rideId: string,

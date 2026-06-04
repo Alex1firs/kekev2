@@ -6,6 +6,7 @@ import { adminRejectionSchema } from "../services/validation_service";
 import { DriverStatus, DriverProfile } from "../models/DriverProfile";
 import { AppDataSource } from "../config/data_source";
 import { AuditLog } from "../models/AuditLog";
+import { SettingService } from "../services/setting_service";
 import path from "path";
 import fs from "fs";
 
@@ -293,4 +294,50 @@ router.get("/drivers/all", async (req: Request, res: Response) => {
     }
 });
 
+/**
+ * GET /admin/settings
+ */
+router.get("/settings", async (req: Request, res: Response) => {
+    try {
+        const config = await SettingService.getPricingConfig();
+        res.json(config);
+    } catch (err: any) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * POST /admin/settings
+ */
+router.post("/settings", async (req: Request, res: Response) => {
+    try {
+        const { baseFare, perKmRate, platformFeePercent } = req.body;
+        if (baseFare === undefined || perKmRate === undefined || platformFeePercent === undefined) {
+            return res.status(400).json({ error: "Missing configuration fields" });
+        }
+
+        await SettingService.setSetting("baseFare", String(baseFare));
+        await SettingService.setSetting("perKmRate", String(perKmRate));
+        await SettingService.setSetting("platformFeePercent", String(platformFeePercent));
+
+        const adminId = `admin_${(req.headers['x-admin-key'] as string).slice(-8)}`;
+        
+        // Log this action to the AuditLog
+        const auditRepo = AppDataSource.getRepository(AuditLog);
+        const audit = auditRepo.create({
+            adminId,
+            action: "UPDATE_PRICING_SETTINGS",
+            entityType: "SETTING",
+            entityId: "PRICING_CONFIG",
+            details: { baseFare, perKmRate, platformFeePercent }
+        });
+        await auditRepo.save(audit);
+
+        res.json({ message: "Settings updated successfully", config: { baseFare, perKmRate, platformFeePercent } });
+    } catch (err: any) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 export default router;
+

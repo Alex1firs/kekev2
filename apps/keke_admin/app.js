@@ -39,6 +39,7 @@ async function init() {
 
     setupNavigation();
     setupAuthListeners();
+    setupSettingsForm();
 
     refreshOverview().catch(() => {});
     setupSocket();
@@ -84,6 +85,7 @@ function switchSection(id) {
     if (id === 'history')       fetchRideHistory();
     if (id === 'online-drivers')fetchOnlineDrivers();
     if (id === 'audit-log')     fetchAuditLog();
+    if (id === 'settings')      fetchSettings();
 }
 
 // --- Auth ---
@@ -560,6 +562,36 @@ function setupSocket() {
     });
     socket.on('ride:request',  () => { if (currentSection === 'active-rides') fetchActiveRides(); });
     socket.on('ride:assigned', () => { if (currentSection === 'active-rides') fetchActiveRides(); });
+}
+
+async function fetchSettings() {
+    try {
+        const config = await adminFetch('/settings');
+        document.getElementById('setting-base-fare').value = config.baseFare;
+        document.getElementById('setting-per-km').value = config.perKmRate;
+        document.getElementById('setting-platform-fee').value = config.platformFeePercent;
+    } catch (err) {
+        console.error(err);
+    }
+}
+
+function setupSettingsForm() {
+    const form = document.getElementById('settings-form');
+    if (form) {
+        form.onsubmit = async (e) => {
+            e.preventDefault();
+            const baseFare = Number(document.getElementById('setting-base-fare').value);
+            const perKmRate = Number(document.getElementById('setting-per-km').value);
+            const platformFeePercent = Number(document.getElementById('setting-platform-fee').value);
+            
+            try {
+                await adminFetch('/settings', 'POST', { baseFare, perKmRate, platformFeePercent });
+                showToast('Pricing settings saved successfully', 'success');
+            } catch (err) {
+                console.error(err);
+            }
+        };
+    }
 }
 
 document.addEventListener('DOMContentLoaded', () => {

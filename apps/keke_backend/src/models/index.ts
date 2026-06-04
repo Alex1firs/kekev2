@@ -8,3 +8,5 @@ export * from "./AuditLog";
 export * from "./User";
 export * from "./DeviceToken";
 export * from "./SavedLocation";
+export * from "./Setting";
+

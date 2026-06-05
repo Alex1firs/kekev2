@@ -7,6 +7,8 @@ class AuthRepository {
 
   AuthRepository(this._apiClient);
 
+  String? _msg(dynamic data) => (data is Map) ? data['message']?.toString() : null;
+
   Future<Map<String, dynamic>> login(String email, String password) async {
     try {
       final response = await _apiClient.dio.post('/auth/login', data: {
@@ -25,7 +27,7 @@ class AuthRepository {
           devOtp: data['otp'] as String?,
         );
       }
-      throw Exception(e.response?.data?['message']?.toString() ?? 'Incorrect email or password. Please try again.');
+      throw Exception(_msg(e.response?.data) ?? 'Incorrect email or password. Please try again.');
     }
   }
 
@@ -44,7 +46,7 @@ class AuthRepository {
       if (e.response?.statusCode == 409) {
         throw Exception('An account with this email already exists. Please log in.');
       }
-      throw Exception(e.response?.data?['message']?.toString() ?? 'Couldn\'t create your account. Please try again.');
+      throw Exception(_msg(e.response?.data) ?? 'Couldn\'t create your account. Please try again.');
     }
   }
 
@@ -54,9 +56,9 @@ class AuthRepository {
       return Map<String, dynamic>.from(response.data);
     } on DioException catch (e) {
       if (e.response?.statusCode == 429) {
-        throw Exception(e.response?.data?['message']?.toString() ?? 'Please wait before requesting another code.');
+        throw Exception(_msg(e.response?.data) ?? 'Please wait before requesting another code.');
       }
-      throw Exception(e.response?.data?['message']?.toString() ?? 'Couldn\'t send verification code. Please try again.');
+      throw Exception(_msg(e.response?.data) ?? 'Couldn\'t send verification code. Please try again.');
     }
   }
 
@@ -71,7 +73,7 @@ class AuthRepository {
       if (e.response?.statusCode == 429) {
         throw Exception('Too many failed attempts. Please request a new code.');
       }
-      throw Exception(e.response?.data?['message']?.toString() ?? 'That code is incorrect or has expired. Please try again.');
+      throw Exception(_msg(e.response?.data) ?? 'That code is incorrect or has expired. Please try again.');
     }
   }
 
@@ -81,9 +83,9 @@ class AuthRepository {
       return Map<String, dynamic>.from(response.data);
     } on DioException catch (e) {
       if (e.response?.statusCode == 429) {
-        throw Exception(e.response?.data?['message']?.toString() ?? 'Please wait before requesting another code.');
+        throw Exception(_msg(e.response?.data) ?? 'Please wait before requesting another code.');
       }
-      throw Exception(e.response?.data?['message']?.toString() ?? 'Couldn\'t send reset code. Please try again.');
+      throw Exception(_msg(e.response?.data) ?? 'Couldn\'t send reset code. Please try again.');
     }
   }
 
@@ -96,7 +98,7 @@ class AuthRepository {
       });
       return response.data['token'] as String;
     } on DioException catch (e) {
-      throw Exception(e.response?.data?['message']?.toString() ?? 'Password reset failed. Please try again.');
+      throw Exception(_msg(e.response?.data) ?? 'Password reset failed. Please try again.');
     }
   }
 
@@ -104,7 +106,7 @@ class AuthRepository {
     try {
       await _apiClient.dio.delete('/auth/account');
     } on DioException catch (e) {
-      throw Exception(e.response?.data?['message']?.toString() ?? 'Could not delete your account. Please try again.');
+      throw Exception(_msg(e.response?.data) ?? 'Could not delete your account. Please try again.');
     }
   }
 }

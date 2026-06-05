@@ -1,6 +1,15 @@
-const API_BASE = window.location.hostname === 'localhost'
-  ? `http://localhost:4000/api/v1/admin`
-  : 'https://api.kekeride.ng/api/v1/admin';
+const API_BASE = (() => {
+  const host = window.location.hostname;
+  if (host === 'localhost' || host === '127.0.0.1') {
+    return window.location.port === '3000'
+      ? 'http://localhost:3000/api/v1/admin'
+      : 'http://localhost:4000/api/v1/admin';
+  }
+  if (host.includes('staging')) {
+    return 'https://staging.kekeride.ng/api/v1/admin';
+  }
+  return 'https://api.kekeride.ng/api/v1/admin';
+})();
 let ADMIN_KEY = sessionStorage.getItem('KEKE_ADMIN_KEY') || '';
 
 // --- XSS Protection ---
@@ -538,9 +547,18 @@ function updateApiStatus(online) {
 }
 
 function setupSocket() {
-    const WS_BASE = window.location.hostname === 'localhost'
-        ? 'http://localhost:4000'
-        : 'https://api.kekeride.ng';
+    const WS_BASE = (() => {
+      const host = window.location.hostname;
+      if (host === 'localhost' || host === '127.0.0.1') {
+        return window.location.port === '3000'
+          ? 'http://localhost:3000'
+          : 'http://localhost:4000';
+      }
+      if (host.includes('staging')) {
+        return 'https://staging.kekeride.ng';
+      }
+      return 'https://api.kekeride.ng';
+    })();
     const socket = io(WS_BASE);
 
     socket.on('connect', () => {

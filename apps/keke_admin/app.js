@@ -191,7 +191,17 @@ async function adminFetch(endpoint, method = 'GET', body = null) {
             throw new Error('Rate Limited');
         }
 
-        const data = await res.json();
+        let data;
+        try {
+            data = await res.json();
+        } catch {
+            if (!res.ok) {
+                showToast(`Request failed (HTTP ${res.status})`, 'error');
+                throw new Error(`HTTP ${res.status}`);
+            }
+            throw new Error('Invalid JSON response');
+        }
+
         if (!res.ok) {
             showToast(data.error || 'Request failed', 'error');
             throw new Error(data.error);
@@ -624,12 +634,25 @@ function setupSettingsForm() {
             const baseFare = Number(document.getElementById('setting-base-fare').value);
             const perKmRate = Number(document.getElementById('setting-per-km').value);
             const platformFeePercent = Number(document.getElementById('setting-platform-fee').value);
-            
+
+            const btn = form.querySelector('button[type="submit"]');
+            const originalHtml = btn ? btn.innerHTML : null;
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span>Saving...</span>';
+            }
+
             try {
                 await adminFetch('/settings', 'POST', { baseFare, perKmRate, platformFeePercent });
                 showToast('Pricing settings saved successfully', 'success');
             } catch (err) {
                 console.error(err);
+                showToast(err.message && err.message !== 'Rate Limited' ? `Save failed: ${err.message}` : 'Failed to save settings', 'error');
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = originalHtml;
+                }
             }
         };
     }

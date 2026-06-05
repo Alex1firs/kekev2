@@ -475,3 +475,41 @@ body.auth-loading .admin-container { display: none; }
 body.auth-loading .login-container { display: flex; }
 body.authenticated .login-container { display: none; }
 body.authenticated .admin-container { display: flex; }
+
+.input-group select {
+    width: 100%;
+    padding: 16px 16px 16px 48px;
+    background: #0f1115;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    color: white;
+    font-size: 1rem;
+    transition: all 0.3s ease;
+    cursor: pointer;
+    appearance: none;
+    -webkit-appearance: none;
+}
+.input-group select:focus {
+    outline: none;
+    border-color: var(--accent-amber);
+    box-shadow: 0 0 0 4px rgba(255, 204, 0, 0.1);
+}
+
+.env-badge {
+    padding: 4px 8px;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    margin-right: 8px;
+}
+.env-badge.production {
+    background-color: rgba(244, 63, 94, 0.15);
+    color: var(--accent-rose);
+    border: 1px solid rgba(244, 63, 94, 0.3);
+}
+.env-badge.staging {
+    background-color: rgba(85, 153, 255, 0.15);
+    color: #5599ff;
+    border: 1px solid rgba(85, 153, 255, 0.3);
+}

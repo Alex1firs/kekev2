@@ -1,14 +1,15 @@
+let ADMIN_ENV = sessionStorage.getItem('KEKE_ADMIN_ENV') || 'production';
+
 const API_BASE = (() => {
   const host = window.location.hostname;
   if (host === 'localhost' || host === '127.0.0.1') {
-    return window.location.port === '3000'
+    return ADMIN_ENV === 'staging'
       ? 'http://localhost:3000/api/v1/admin'
       : 'http://localhost:4000/api/v1/admin';
   }
-  if (host.includes('staging')) {
-    return 'https://staging.kekeride.ng/api/v1/admin';
-  }
-  return 'https://api.kekeride.ng/api/v1/admin';
+  return ADMIN_ENV === 'staging'
+    ? 'https://staging.kekeride.ng/api/v1/admin'
+    : 'https://api.kekeride.ng/api/v1/admin';
 })();
 let ADMIN_KEY = sessionStorage.getItem('KEKE_ADMIN_KEY') || '';
 
@@ -45,6 +46,13 @@ async function init() {
 
     document.body.classList.remove('auth-loading');
     document.body.classList.add('authenticated');
+
+    // Update the environment badge
+    const badge = document.getElementById('env-badge');
+    if (badge) {
+        badge.innerText = ADMIN_ENV.toUpperCase();
+        badge.className = `env-badge ${ADMIN_ENV}`;
+    }
 
     setupNavigation();
     setupAuthListeners();
@@ -102,24 +110,40 @@ function showLoginScreen() {
     document.body.classList.add('auth-loading');
     document.body.classList.remove('authenticated');
 
+    const envSelect = document.getElementById('admin-env-select');
+    if (envSelect) envSelect.value = ADMIN_ENV;
+
     const form = document.getElementById('login-form');
     form.onsubmit = async (e) => {
         e.preventDefault();
         const keyInput = document.getElementById('admin-key-input');
         const btn = document.getElementById('btn-login');
         const key = keyInput.value.trim();
+        const env = envSelect ? envSelect.value : 'production';
         if (!key) return;
 
         btn.disabled = true;
         btn.querySelector('.btn-spinner').classList.remove('hidden');
 
+        const apiBaseForLogin = (() => {
+            const host = window.location.hostname;
+            if (host === 'localhost' || host === '127.0.0.1') {
+                return env === 'staging'
+                    ? 'http://localhost:3000/api/v1/admin'
+                    : 'http://localhost:4000/api/v1/admin';
+            }
+            return env === 'staging'
+                ? 'https://staging.kekeride.ng/api/v1/admin'
+                : 'https://api.kekeride.ng/api/v1/admin';
+        })();
+
         try {
-            const res = await fetch(`${API_BASE}/overview`, { headers: { 'x-admin-key': key } });
+            const res = await fetch(`${apiBaseForLogin}/overview`, { headers: { 'x-admin-key': key } });
             if (res.ok) {
                 sessionStorage.setItem('KEKE_ADMIN_KEY', key);
-                ADMIN_KEY = key;
+                sessionStorage.setItem('KEKE_ADMIN_ENV', env);
                 showToast('Workstation authorized', 'success');
-                init();
+                location.reload(); // Reload to initialize Socket and API base with selected env
             } else {
                 showToast('Invalid Admin Key', 'error');
             }
@@ -550,14 +574,13 @@ function setupSocket() {
     const WS_BASE = (() => {
       const host = window.location.hostname;
       if (host === 'localhost' || host === '127.0.0.1') {
-        return window.location.port === '3000'
+        return ADMIN_ENV === 'staging'
           ? 'http://localhost:3000'
           : 'http://localhost:4000';
       }
-      if (host.includes('staging')) {
-        return 'https://staging.kekeride.ng';
-      }
-      return 'https://api.kekeride.ng';
+      return ADMIN_ENV === 'staging'
+        ? 'https://staging.kekeride.ng'
+        : 'https://api.kekeride.ng';
     })();
     const socket = io(WS_BASE);
 

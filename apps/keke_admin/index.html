@@ -19,6 +19,13 @@
             <p>Enter your Admin API Key to authorize this workstation.</p>
             <form id="login-form">
                 <div class="input-group">
+                    <i class="fas fa-server"></i>
+                    <select id="admin-env-select" required>
+                        <option value="production">Production Environment</option>
+                        <option value="staging">Staging Environment</option>
+                    </select>
+                </div>
+                <div class="input-group">
                     <i class="fas fa-key"></i>
                     <input type="password" id="admin-key-input" placeholder="Admin API Key" required>
                 </div>
@@ -81,6 +88,7 @@
             <header class="top-bar">
                 <h1 id="section-title">Overview</h1>
                 <div class="admin-profile">
+                    <span id="env-badge" class="env-badge">PRODUCTION</span>
                     <span id="api-status" class="status-indicator online"></span>
                     <span>System Admin</span>
                 </div>

@@ -123,7 +123,7 @@ class MapRepository {
     double platformFeePercent = 10.0;
 
     try {
-      final configResponse = await _dio.get('rides/pricing-config');
+      final configResponse = await _dio.get('/rides/pricing-config');
       if (configResponse.statusCode == 200) {
         final config = configResponse.data;
         baseFare = (config['baseFare'] as num).toDouble();
@@ -131,7 +131,7 @@ class MapRepository {
         platformFeePercent = (config['platformFeePercent'] as num).toDouble();
       }
     } catch (e) {
-      print("Failed to fetch dynamic pricing, using defaults: $e");
+      print("[Pricing] Failed to fetch dynamic pricing, using defaults: $e");
     }
 
     final apiKey = EnvConfig.current.googleMapsApiKey;

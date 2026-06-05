@@ -158,7 +158,7 @@ router.get("/:rideId/receipt", authMiddleware, async (req: AuthRequest, res: Res
  * GET /api/v1/rides/pricing-config
  * Returns current dynamic pricing configurations.
  */
-router.get("/pricing-config", authMiddleware, async (req: AuthRequest, res: Response) => {
+router.get("/pricing-config", async (req: AuthRequest, res: Response) => {
     try {
         const config = await SettingService.getPricingConfig();
         return res.status(200).json(config);

@@ -29,7 +29,7 @@ export class PaystackService {
                 amount: amountInKobo,
                 reference,
                 callback_url: "https://standard.paystack.co/close",
-                metadata: { userId, type: "wallet_topup", role }
+                metadata: { userId, type: "wallet_topup", role, project: "kekev2" }
             },
             {
                 headers: {

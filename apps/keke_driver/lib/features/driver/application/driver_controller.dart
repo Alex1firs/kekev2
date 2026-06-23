@@ -433,6 +433,7 @@ class DriverController extends StateNotifier<DriverState> {
             idCardUrl: data['idCardUrl'],
             vehiclePaperUrl: data['vehiclePaperUrl'],
             debtAmount: (data['commissionDebt'] as num?)?.toDouble() ?? 0.0,
+            ninVerified: data['ninVerified'] == true,
           ),
           isLoading: false,
         );
@@ -621,8 +622,50 @@ class DriverController extends StateNotifier<DriverState> {
     }
   }
 
+  Future<bool> verifyNIN(String nin) async {
+    state = state.copyWith(isLoading: true, errorMessage: null);
+    try {
+      final response = await _apiClient.dio.post('/drivers/verify-nin', data: {
+        'nin': nin,
+      });
+
+      if (!mounted) return false;
+
+      final data = response.data;
+      if (data != null && data['ninVerified'] == true) {
+        state = state.copyWith(
+          profile: state.profile.copyWith(ninVerified: true),
+        );
+        return true;
+      }
+      return false;
+    } catch (e) {
+      if (!mounted) return false;
+      String msg;
+      if (e is dio.DioException) {
+        final errData = e.response?.data;
+        msg = (errData is Map ? errData['message']?.toString() : null)
+            ?? 'NIN verification failed. Please try again.';
+      } else {
+        msg = 'NIN verification failed. Please try again.';
+      }
+      state = state.copyWith(errorMessage: msg);
+      return false;
+    } finally {
+      if (mounted) {
+        state = state.copyWith(isLoading: false);
+      }
+    }
+  }
+
   void toggleOnline() {
     if (state.profile.status != DriverStatus.approved) {
+      return;
+    }
+
+    if (!state.profile.ninVerified) {
+      state = state.copyWith(errorMessage: 'Please verify your NIN before going online.');
+      _scheduleErrorClear();
       return;
     }
 

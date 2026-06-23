@@ -32,6 +32,7 @@ class DriverProfile {
   final String? idCardUrl;
   final String? vehiclePaperUrl;
   final double debtAmount;
+  final bool ninVerified;
 
   const DriverProfile({
     this.id,
@@ -44,6 +45,7 @@ class DriverProfile {
     this.idCardUrl,
     this.vehiclePaperUrl,
     this.debtAmount = 0.0,
+    this.ninVerified = false,
   });
 
   DriverProfile copyWith({
@@ -57,6 +59,7 @@ class DriverProfile {
     String? idCardUrl,
     String? vehiclePaperUrl,
     double? debtAmount,
+    bool? ninVerified,
   }) {
     return DriverProfile(
       id: id ?? this.id,
@@ -69,6 +72,7 @@ class DriverProfile {
       idCardUrl: idCardUrl ?? this.idCardUrl,
       vehiclePaperUrl: vehiclePaperUrl ?? this.vehiclePaperUrl,
       debtAmount: debtAmount ?? this.debtAmount,
+      ninVerified: ninVerified ?? this.ninVerified,
     );
   }
 }

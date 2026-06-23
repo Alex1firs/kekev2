@@ -291,6 +291,7 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
   Widget build(BuildContext context) {
     final driverState = ref.watch(driverControllerProvider);
     final hideHeader = driverState.tripStep != TripStep.none;
+    final needsNin = driverState.profile.status == DriverStatus.approved && !driverState.profile.ninVerified;
 
     ref.listen(driverControllerProvider.select((s) => s.pickupRoute), (prev, next) {
       if (next.isNotEmpty && (prev == null || prev.isEmpty)) {
@@ -349,6 +350,8 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
 
           if (driverState.tripStep != TripStep.none)
             TripOperationHUD(state: driverState),
+
+          if (needsNin) _buildNinVerificationOverlay(driverState),
         ],
       ),
     );
@@ -550,6 +553,33 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
       ),
     );
   }
+
+  Widget _buildNinVerificationOverlay(DriverState state) {
+    return Positioned.fill(
+      child: Container(
+        color: AppColors.charcoal.withOpacity(0.95),
+        child: BackdropFilter(
+          filter: ui.ImageFilter.blur(sigmaX: 5.0, sigmaY: 5.0),
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(24),
+              child: Card(
+                color: AppColors.darkGray,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: _NinForm(
+                    isLoading: state.isLoading,
+                    errorMessage: state.errorMessage,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 // ─── Widgets ─────────────────────────────────────────────────────────────────
@@ -696,6 +726,146 @@ class _ErrorToastState extends State<_ErrorToast> {
           GestureDetector(
             onTap: widget.onDismiss,
             child: const Icon(Icons.close, color: AppColors.lightGray, size: 16),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _NinForm extends ConsumerStatefulWidget {
+  final bool isLoading;
+  final String? errorMessage;
+
+  const _NinForm({
+    required this.isLoading,
+    this.errorMessage,
+  });
+
+  @override
+  ConsumerState<_NinForm> createState() => _NinFormState();
+}
+
+class _NinFormState extends ConsumerState<_NinForm> {
+  final _ninController = TextEditingController();
+  final _formKey = GlobalKey<FormState>();
+
+  @override
+  void dispose() {
+    _ninController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Form(
+      key: _formKey,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 60,
+            height: 60,
+            decoration: BoxDecoration(
+              color: AppColors.primary.withOpacity(0.15),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.verified_user_rounded,
+              color: AppColors.primary,
+              size: 32,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'NIN Verification Required',
+            style: AppTextStyles.title(color: AppColors.white),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Please verify your National Identification Number (NIN) or Virtual NIN (vNIN) to start receiving rides.',
+            style: AppTextStyles.bodySmall(color: AppColors.midGray),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 24),
+          TextFormField(
+            controller: _ninController,
+            keyboardType: TextInputType.text,
+            style: AppTextStyles.body(color: AppColors.white),
+            decoration: InputDecoration(
+              labelText: 'NIN / Virtual NIN',
+              labelStyle: AppTextStyles.bodySmall(color: AppColors.midGray),
+              hintText: 'e.g. 12345678901',
+              hintStyle: AppTextStyles.bodySmall(color: AppColors.darkGray),
+              enabledBorder: const UnderlineInputBorder(
+                borderSide: BorderSide(color: AppColors.charcoal),
+              ),
+              focusedBorder: const UnderlineInputBorder(
+                borderSide: BorderSide(color: AppColors.primary, width: 2),
+              ),
+            ),
+            validator: (value) {
+              if (value == null || value.trim().isEmpty) {
+                return 'Please enter your NIN or vNIN';
+              }
+              final val = value.trim();
+              if (val.length != 11 && val.length != 16) {
+                return 'NIN must be 11 digits, vNIN must be 16 chars';
+              }
+              return null;
+            },
+          ),
+          const SizedBox(height: 16),
+          if (widget.errorMessage != null)
+            Text(
+              widget.errorMessage!,
+              style: AppTextStyles.bodySmall(color: AppColors.error),
+              textAlign: TextAlign.center,
+            ),
+          const SizedBox(height: 24),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: AppColors.charcoal,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+              ),
+              onPressed: widget.isLoading
+                  ? null
+                  : () async {
+                      if (_formKey.currentState?.validate() ?? false) {
+                        final success = await ref
+                            .read(driverControllerProvider.notifier)
+                            .verifyNIN(_ninController.text.trim());
+                        if (success && context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('NIN verified successfully! You are now online.', style: AppTextStyles.body(color: AppColors.white)),
+                              backgroundColor: AppColors.success,
+                            ),
+                          );
+                        }
+                      }
+                    },
+              child: widget.isLoading
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.5,
+                        color: AppColors.charcoal,
+                      ),
+                    )
+                  : Text('Verify & Go Online', style: AppTextStyles.body(weight: FontWeight.w700)),
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextButton(
+            onPressed: () => ref.read(authControllerProvider.notifier).logout(),
+            child: Text('Logout', style: AppTextStyles.body(color: AppColors.error)),
           ),
         ],
       ),

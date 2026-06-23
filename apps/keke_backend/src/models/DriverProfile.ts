@@ -42,6 +42,12 @@ export class DriverProfile {
     @Column({ nullable: true })
     vehiclePaperUrl!: string;
 
+    @Column({ type: 'varchar', length: 50, nullable: true, default: null })
+    nin!: string | null;
+
+    @Column({ default: false })
+    ninVerified!: boolean;
+
     @CreateDateColumn()
     createdAt!: Date;
 

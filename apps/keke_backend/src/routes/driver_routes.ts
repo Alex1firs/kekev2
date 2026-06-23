@@ -12,6 +12,7 @@ import path from "path";
 import fs from "fs";
 import sharp from "sharp";
 import { DispatchService } from "../services/dispatch_service";
+import { SmileIdService } from "../services/smile_id_service";
 
 const router = Router();
 
@@ -140,6 +141,7 @@ router.get("/status/:userId", authMiddleware, async (req: AuthRequest, res: Resp
             firstName: profile.firstName,
             lastName: profile.lastName,
             commissionDebt,
+            ninVerified: profile.ninVerified,
         });
     } catch (err: any) {
         console.error('[DRIVER] Status fetch error:', err?.message);
@@ -188,6 +190,57 @@ router.patch("/profile", authMiddleware, async (req: AuthRequest, res: Response)
     } catch (err: any) {
         console.error('[DRIVER] Profile update error:', err?.message);
         res.status(500).json(errBody(ErrorCode.INTERNAL_ERROR, "Couldn't update your vehicle info. Please try again."));
+    }
+});
+
+/**
+ * POST /api/v1/drivers/verify-nin
+ * Submit and automatically verify driver's NIN via Smile ID.
+ */
+router.post("/verify-nin", authMiddleware, async (req: AuthRequest, res: Response) => {
+    try {
+        const { nin } = req.body ?? {};
+        if (!nin || (nin.toString().length !== 11 && nin.toString().length !== 16)) {
+            return res.status(400).json(errBody(ErrorCode.VALIDATION_ERROR, "A valid 11-digit NIN or 16-character Virtual NIN is required."));
+        }
+
+        const userId = req.user!.userId;
+        const repo = AppDataSource.getRepository(DriverProfile);
+        const profile = await repo.findOneBy({ userId });
+
+        if (!profile) {
+            return res.status(404).json(errBody(ErrorCode.PROFILE_NOT_FOUND, "Driver profile not found. Please complete onboarding first."));
+        }
+
+        if (profile.ninVerified) {
+            return res.json({ message: "NIN is already verified.", ninVerified: true });
+        }
+
+        // Call verification service
+        const verification = await SmileIdService.verifyNIN(
+            userId,
+            nin.toString().trim(),
+            profile.firstName,
+            profile.lastName
+        );
+
+        if (!verification.success) {
+            return res.status(400).json(errBody(ErrorCode.VALIDATION_ERROR, verification.reason || "NIN verification failed."));
+        }
+
+        // Save verification state
+        profile.nin = nin.toString().trim();
+        profile.ninVerified = true;
+
+        await repo.save(profile);
+
+        res.json({
+            message: "NIN verified successfully.",
+            ninVerified: true,
+        });
+    } catch (err: any) {
+        console.error('[DRIVER] NIN Verification error:', err?.message);
+        res.status(500).json(errBody(ErrorCode.INTERNAL_ERROR, "Failed to verify NIN. Please try again."));
     }
 });
 

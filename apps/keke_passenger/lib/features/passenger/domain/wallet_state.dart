@@ -34,6 +34,7 @@ class WalletTransaction {
   final String description;
   final DateTime date;
   final double balanceAfter;
+  final Map<String, dynamic>? metadata;
 
   WalletTransaction({
     required this.id,
@@ -42,6 +43,7 @@ class WalletTransaction {
     required this.description,
     required this.date,
     required this.balanceAfter,
+    this.metadata,
   });
 
   factory WalletTransaction.fromJson(Map<String, dynamic> json) {
@@ -49,6 +51,9 @@ class WalletTransaction {
     final type   = json['transactionType']?.toString() ?? '';
     final description = json['metadata']?['description']?.toString() ??
         _descriptionForType(type, amount);
+    final metadataMap = json['metadata'] is Map<String, dynamic>
+        ? json['metadata'] as Map<String, dynamic>
+        : null;
     return WalletTransaction(
       id: json['id']?.toString() ?? '',
       amount: amount,
@@ -56,6 +61,7 @@ class WalletTransaction {
       description: description,
       date: DateTime.tryParse(json['createdAt']?.toString() ?? '') ?? DateTime.now(),
       balanceAfter: double.tryParse(json['balanceAfter']?.toString() ?? '') ?? 0.0,
+      metadata: metadataMap,
     );
   }
 

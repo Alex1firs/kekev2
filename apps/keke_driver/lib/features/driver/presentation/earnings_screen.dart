@@ -361,14 +361,16 @@ class _EarningsScreenState extends ConsumerState<EarningsScreen> {
           final entry = state.history[index];
           final isCredit = entry.amount > 0;
 
-          return Container(
-            margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            decoration: BoxDecoration(
-              color: AppColors.darkGray,
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Row(
+          return GestureDetector(
+            onTap: () => _showReceiptDialog(context, entry),
+            child: Container(
+              margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                color: AppColors.darkGray,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Row(
               children: [
                 Container(
                   width: 40,
@@ -411,11 +413,11 @@ class _EarningsScreenState extends ConsumerState<EarningsScreen> {
                     color: isCredit ? AppColors.success : AppColors.error,
                     weight: FontWeight.w700,
                   ),
-                ),
               ],
             ),
-          );
-        },
+          ),
+        );
+      },
         childCount: state.history.length,
       ),
     );
@@ -706,18 +708,30 @@ class _EarningsScreenState extends ConsumerState<EarningsScreen> {
         .read(driverFinanceControllerProvider.notifier)
         .verifyTopup(reference);
 
-    messenger.showSnackBar(
-      SnackBar(
-        backgroundColor: verified ? AppColors.success : AppColors.primary,
-        content: Text(
-          verified
-              ? 'Top-up successful! Balance updated.'
-              : 'Payment received — balance updating shortly.',
-          style: AppTextStyles.body(
-              color: verified ? AppColors.white : AppColors.charcoal),
+    if (verified && mounted) {
+      final tempEntry = DriverHistoryEntry(
+        id: reference,
+        amount: amount,
+        type: 'topup',
+        description: 'Wallet Top-up',
+        date: DateTime.now(),
+        metadata: {'reference': reference},
+      );
+      _showReceiptDialog(context, tempEntry);
+    } else {
+      messenger.showSnackBar(
+        SnackBar(
+          backgroundColor: verified ? AppColors.success : AppColors.primary,
+          content: Text(
+            verified
+                ? 'Top-up successful! Balance updated.'
+                : 'Payment received — balance updating shortly.',
+            style: AppTextStyles.body(
+                color: verified ? AppColors.white : AppColors.charcoal),
+          ),
         ),
-      ),
-    );
+      );
+    }
   }
 
   Widget _buildDarkDialog({
@@ -750,6 +764,147 @@ class _EarningsScreenState extends ConsumerState<EarningsScreen> {
           onPressed: () => Navigator.pop(ctx, true),
           child: Text(confirmLabel,
               style: AppTextStyles.body(weight: FontWeight.w700)),
+        ),
+      ],
+    );
+  }
+
+  void _showReceiptDialog(BuildContext context, DriverHistoryEntry tx) {
+    final isCredit = tx.amount > 0;
+    final formattedDate = "${tx.date.year}-${tx.date.month.toString().padLeft(2, '0')}-${tx.date.day.toString().padLeft(2, '0')} ${tx.date.hour.toString().padLeft(2, '0')}:${tx.date.minute.toString().padLeft(2, '0')}";
+    final reference = tx.metadata?['reference'] ?? tx.metadata?['rideId'] ?? tx.id;
+    final amountText = '${isCredit ? "+" : "-"}₦${tx.amount.abs().toStringAsFixed(2)}';
+
+    showDialog(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: AppColors.darkGray,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 60,
+                height: 60,
+                decoration: BoxDecoration(
+                  color: isCredit ? AppColors.success.withOpacity(0.15) : AppColors.white.withOpacity(0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  isCredit ? Icons.check_circle_rounded : Icons.receipt_long_rounded,
+                  color: isCredit ? AppColors.success : AppColors.white,
+                  size: 36,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Transaction Receipt',
+                style: AppTextStyles.title(color: AppColors.white),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                tx.description,
+                style: AppTextStyles.bodySmall(color: AppColors.midGray),
+              ),
+              const SizedBox(height: 24),
+              Container(
+                height: 1,
+                width: double.infinity,
+                color: AppColors.charcoal,
+              ),
+              const SizedBox(height: 16),
+              _buildReceiptRow('Status', 'Successful', valueColor: AppColors.success, isBoldValue: true),
+              const SizedBox(height: 12),
+              _buildReceiptRow('Date & Time', formattedDate),
+              const SizedBox(height: 12),
+              _buildReceiptRow('Reference', reference, isSelectable: true),
+              const SizedBox(height: 12),
+              _buildReceiptRow('Amount', amountText, valueColor: isCredit ? AppColors.success : AppColors.error, isBoldValue: true),
+              const SizedBox(height: 16),
+              Container(
+                height: 1,
+                width: double.infinity,
+                color: AppColors.charcoal,
+              ),
+              const SizedBox(height: 20),
+              Text(
+                '⚡ Keke Ride',
+                style: AppTextStyles.caption(color: AppColors.midGray, weight: FontWeight.w700),
+              ),
+              const SizedBox(height: 24),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.white,
+                        side: const BorderSide(color: AppColors.charcoal),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                      onPressed: () {
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                          content: Text('Screenshot this card to save your receipt!'),
+                          behavior: SnackBarBehavior.floating,
+                        ));
+                      },
+                      child: Text('Save', style: AppTextStyles.body(color: AppColors.white, weight: FontWeight.w600)),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primary,
+                        foregroundColor: AppColors.charcoal,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                      onPressed: () => Navigator.pop(ctx),
+                      child: Text('Close', style: AppTextStyles.body(weight: FontWeight.w700)),
+                    ),
+                  ),
+                ],
+              )
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildReceiptRow(String label, String value, {Color? valueColor, bool isBoldValue = false, bool isSelectable = false}) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: AppTextStyles.bodySmall(color: AppColors.midGray),
+        ),
+        const Spacer(),
+        Expanded(
+          flex: 2,
+          child: isSelectable 
+            ? SelectableText(
+                value,
+                textAlign: TextAlign.right,
+                style: AppTextStyles.bodySmall(
+                  color: valueColor ?? AppColors.white,
+                  weight: isBoldValue ? FontWeight.w700 : FontWeight.w500,
+                ),
+              )
+            : Text(
+                value,
+                textAlign: TextAlign.right,
+                style: AppTextStyles.bodySmall(
+                  color: valueColor ?? AppColors.white,
+                  weight: isBoldValue ? FontWeight.w700 : FontWeight.w500,
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
         ),
       ],
     );

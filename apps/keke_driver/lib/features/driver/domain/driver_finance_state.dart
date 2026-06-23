@@ -50,6 +50,7 @@ class DriverHistoryEntry {
   final String type;
   final String description;
   final DateTime date;
+  final Map<String, dynamic>? metadata;
 
   DriverHistoryEntry({
     required this.id,
@@ -57,6 +58,7 @@ class DriverHistoryEntry {
     required this.type,
     required this.description,
     required this.date,
+    this.metadata,
   });
 
   factory DriverHistoryEntry.fromJson(Map<String, dynamic> json) {
@@ -64,12 +66,16 @@ class DriverHistoryEntry {
     final amount = double.tryParse(json['amount']?.toString() ?? '') ?? 0.0;
     final description = json['metadata']?['description'] as String? ?? _descriptionForType(type, amount);
     final date = DateTime.tryParse(json['createdAt']?.toString() ?? '') ?? DateTime.now();
+    final metadataMap = json['metadata'] is Map<String, dynamic>
+        ? json['metadata'] as Map<String, dynamic>
+        : null;
     return DriverHistoryEntry(
       id: json['id']?.toString() ?? '',
       amount: amount,
       type: type,
       description: description,
       date: date,
+      metadata: metadataMap,
     );
   }
 

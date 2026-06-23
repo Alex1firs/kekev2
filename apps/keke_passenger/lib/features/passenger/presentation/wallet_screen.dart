@@ -194,63 +194,66 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
           final tx = state.history[index];
           final isCredit = tx.amount > 0;
 
-          return Container(
-            margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-            decoration: BoxDecoration(
-              color: AppColors.white,
-              borderRadius: BorderRadius.circular(14),
-              boxShadow: const [
-                BoxShadow(color: Color(0x08000000), blurRadius: 6, offset: Offset(0, 2)),
-              ],
-            ),
-            child: Row(
-              children: [
-                Container(
-                  width: 42,
-                  height: 42,
-                  decoration: BoxDecoration(
-                    color: isCredit
-                        ? const Color(0xFFD1FAE5)
-                        : const Color(0xFFFEE2E2),
-                    shape: BoxShape.circle,
+          return GestureDetector(
+            onTap: () => _showReceiptDialog(context, tx),
+            child: Container(
+              margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              decoration: BoxDecoration(
+                color: AppColors.white,
+                borderRadius: BorderRadius.circular(14),
+                boxShadow: const [
+                  BoxShadow(color: Color(0x08000000), blurRadius: 6, offset: Offset(0, 2)),
+                ],
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 42,
+                    height: 42,
+                    decoration: BoxDecoration(
+                      color: isCredit
+                          ? const Color(0xFFD1FAE5)
+                          : const Color(0xFFFEE2E2),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      isCredit ? Icons.add_rounded : Icons.remove_rounded,
+                      color: isCredit ? AppColors.success : AppColors.error,
+                      size: 20,
+                    ),
                   ),
-                  child: Icon(
-                    isCredit ? Icons.add_rounded : Icons.remove_rounded,
-                    color: isCredit ? AppColors.success : AppColors.error,
-                    size: 20,
-                  ),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        tx.description,
-                        style: AppTextStyles.body(
-                          color: AppColors.charcoal,
-                          weight: FontWeight.w600,
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          tx.description,
+                          style: AppTextStyles.body(
+                            color: AppColors.charcoal,
+                            weight: FontWeight.w600,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        DateFormat('MMM dd, yyyy • HH:mm').format(tx.date),
-                        style: AppTextStyles.caption(color: AppColors.midGray),
-                      ),
-                    ],
+                        const SizedBox(height: 2),
+                        Text(
+                          DateFormat('MMM dd, yyyy • HH:mm').format(tx.date),
+                          style: AppTextStyles.caption(color: AppColors.midGray),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                Text(
-                  '${isCredit ? "+" : ""}₦${tx.amount.abs().toStringAsFixed(0)}',
-                  style: AppTextStyles.body(
-                    color: isCredit ? AppColors.success : AppColors.error,
-                    weight: FontWeight.w700,
+                  Text(
+                    '${isCredit ? "+" : ""}₦${tx.amount.abs().toStringAsFixed(0)}',
+                    style: AppTextStyles.body(
+                      color: isCredit ? AppColors.success : AppColors.error,
+                      weight: FontWeight.w700,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           );
         },
@@ -347,13 +350,26 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                       .read(walletControllerProvider.notifier)
                       .verifyTopup(reference);
 
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                    backgroundColor: verified ? AppColors.success : AppColors.primary,
-                    content: Text(
-                      verified ? 'Top-up successful! Balance updated.' : 'Payment received — balance updating shortly.',
-                      style: AppTextStyles.body(color: verified ? AppColors.white : AppColors.charcoal),
-                    ),
-                  ));
+                  if (verified && context.mounted) {
+                    final tempTx = WalletTransaction(
+                      id: reference,
+                      amount: amount,
+                      type: 'topup',
+                      description: 'Wallet Top-up',
+                      date: DateTime.now(),
+                      balanceAfter: state.balance + amount,
+                      metadata: {'reference': reference},
+                    );
+                    _showReceiptDialog(context, tempTx);
+                  } else {
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                      backgroundColor: verified ? AppColors.success : AppColors.primary,
+                      content: Text(
+                        verified ? 'Top-up successful! Balance updated.' : 'Payment received — balance updating shortly.',
+                        style: AppTextStyles.body(color: verified ? AppColors.white : AppColors.charcoal),
+                      ),
+                    ));
+                  }
                 }
               } else if (topup == null && context.mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -367,6 +383,147 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  void _showReceiptDialog(BuildContext context, WalletTransaction tx) {
+    final isCredit = tx.amount > 0;
+    final formattedDate = DateFormat('MMMM dd, yyyy • HH:mm').format(tx.date);
+    final reference = tx.metadata?['reference'] ?? tx.metadata?['rideId'] ?? tx.id;
+    final amountText = '${isCredit ? "+" : "-"}₦${tx.amount.abs().toStringAsFixed(2)}';
+
+    showDialog(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: AppColors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 60,
+                height: 60,
+                decoration: BoxDecoration(
+                  color: isCredit ? const Color(0xFFD1FAE5) : const Color(0xFFF3F4F6),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  isCredit ? Icons.check_circle_rounded : Icons.receipt_long_rounded,
+                  color: isCredit ? AppColors.success : AppColors.charcoal,
+                  size: 36,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Transaction Receipt',
+                style: AppTextStyles.title(color: AppColors.charcoal),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                tx.description,
+                style: AppTextStyles.bodySmall(color: AppColors.midGray),
+              ),
+              const SizedBox(height: 24),
+              Container(
+                height: 1,
+                width: double.infinity,
+                color: AppColors.border,
+              ),
+              const SizedBox(height: 16),
+              _buildReceiptRow('Status', 'Successful', valueColor: AppColors.success, isBoldValue: true),
+              const SizedBox(height: 12),
+              _buildReceiptRow('Date & Time', formattedDate),
+              const SizedBox(height: 12),
+              _buildReceiptRow('Reference', reference, isSelectable: true),
+              const SizedBox(height: 12),
+              _buildReceiptRow('Amount', amountText, valueColor: isCredit ? AppColors.success : AppColors.error, isBoldValue: true),
+              const SizedBox(height: 16),
+              Container(
+                height: 1,
+                width: double.infinity,
+                color: AppColors.border,
+              ),
+              const SizedBox(height: 20),
+              Text(
+                '⚡ Keke Ride',
+                style: AppTextStyles.caption(color: AppColors.lightGray, weight: FontWeight.w700),
+              ),
+              const SizedBox(height: 24),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.charcoal,
+                        side: const BorderSide(color: AppColors.border),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                      onPressed: () {
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                          content: Text('Screenshot this card to save your receipt!'),
+                          behavior: SnackBarBehavior.floating,
+                        ));
+                      },
+                      child: Text('Save', style: AppTextStyles.body(weight: FontWeight.w600)),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primary,
+                        foregroundColor: AppColors.charcoal,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                      onPressed: () => Navigator.pop(ctx),
+                      child: Text('Close', style: AppTextStyles.body(weight: FontWeight.w700)),
+                    ),
+                  ),
+                ],
+              )
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildReceiptRow(String label, String value, {Color? valueColor, bool isBoldValue = false, bool isSelectable = false}) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: AppTextStyles.bodySmall(color: AppColors.midGray),
+        ),
+        const Spacer(),
+        Expanded(
+          flex: 2,
+          child: isSelectable 
+            ? SelectableText(
+                value,
+                textAlign: TextAlign.right,
+                style: AppTextStyles.bodySmall(
+                  color: valueColor ?? AppColors.charcoal,
+                  weight: isBoldValue ? FontWeight.w700 : FontWeight.w500,
+                ),
+              )
+            : Text(
+                value,
+                textAlign: TextAlign.right,
+                style: AppTextStyles.bodySmall(
+                  color: valueColor ?? AppColors.charcoal,
+                  weight: isBoldValue ? FontWeight.w700 : FontWeight.w500,
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+        ),
+      ],
     );
   }
 }

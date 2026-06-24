@@ -413,6 +413,7 @@ class _EarningsScreenState extends ConsumerState<EarningsScreen> {
                     color: isCredit ? AppColors.success : AppColors.error,
                     weight: FontWeight.w700,
                   ),
+                ),
               ],
             ),
           ),

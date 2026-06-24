@@ -357,7 +357,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                       type: 'topup',
                       description: 'Wallet Top-up',
                       date: DateTime.now(),
-                      balanceAfter: state.balance + amount,
+                      balanceAfter: ref.read(walletControllerProvider).balance + amount,
                       metadata: {'reference': reference},
                     );
                     _showReceiptDialog(context, tempTx);

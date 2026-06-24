@@ -19,9 +19,10 @@ export class SmileIdService {
      * Generate security signature for Smile ID requests
      */
     static generateSignature(timestamp: string): string {
+        const message = `${timestamp}${PARTNER_ID}sid_request`;
         return crypto
             .createHmac("sha256", API_KEY)
-            .update(timestamp)
+            .update(message)
             .digest("base64");
     }
 
@@ -135,9 +136,10 @@ export class SmileIdService {
 
         } catch (error: any) {
             console.error("[SMILE_ID] Verification API Error:", error?.response?.data || error?.message);
+            const errMsg = error?.response?.data?.error || error?.response?.data?.message || error?.message;
             return {
                 success: false,
-                reason: error?.response?.data?.message || "Identity verification server is currently unreachable. Please try again."
+                reason: errMsg || "Identity verification server is currently unreachable. Please try again."
             };
         }
     }

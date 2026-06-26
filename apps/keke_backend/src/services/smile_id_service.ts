@@ -49,7 +49,7 @@ export class SmileIdService {
 
         // Determine correct base URL (sandbox/preprod vs production)
         const baseUrl = USE_SANDBOX
-            ? "https://api.preprod.smileidentity.com/v1"
+            ? "https://testapi.smileidentity.com/v1"
             : "https://api.usesmileid.com/v1";
 
         const jobId = `NIN-${userId}-${Date.now()}`;

@@ -56,6 +56,8 @@ services:
       interval: 20s
       timeout: 10s
       retries: 3
+    volumes:
+      - uploads_data:/app/uploads
 
   api_staging:
     build: .
@@ -87,6 +89,8 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+    volumes:
+      - uploads_data:/app/uploads
 
   nginx_gateway:
     image: nginx:alpine
@@ -117,3 +121,4 @@ services:
 
 volumes:
   pgdata:
+  uploads_data:

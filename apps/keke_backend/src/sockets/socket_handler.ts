@@ -10,6 +10,7 @@ import { DriverProfile } from '../models/DriverProfile';
 import { redis } from '../config/redis';
 import { WalletService, DEBT_CASH_BLOCK, DEBT_HARD_BLOCK } from '../services/wallet_service';
 import { In } from 'typeorm';
+import { SosAlert, SosAlertStatus } from '../models/SosAlert';
 
 const _jwtSecret = process.env.JWT_SECRET;
 if (!_jwtSecret) {
@@ -71,6 +72,15 @@ const Schemas = {
         driverId:        id(),
         totalFare:       z.number().min(100).max(50000).optional(),
         waitTimeSeconds: z.number().int().min(0).optional(),
+    }),
+    sosAlert: z.object({
+        rideId: id(),
+        initiatorId: id(),
+        initiatorRole: z.enum(['passenger', 'driver']),
+        reason: z.string().optional(),
+        description: z.string().optional(),
+        lat: lat().optional(),
+        lng: lng().optional(),
     }),
 };
 
@@ -490,6 +500,72 @@ export class SocketHandler {
                 } catch (err) {
                     log.error('Ride completion lifecycle failed:', err);
                     socket.emit('ride:error', { code: 'INTERNAL_ERROR', message: 'Could not complete the ride right now. Please try again.' });
+                }
+            });
+
+            // --- SOS Alert ---
+            socket.on('ride:sos', async (raw) => {
+                const data = validate(Schemas.sosAlert, raw, socket);
+                if (!data) return;
+
+                try {
+                    const rideRepo = AppDataSource.getRepository(Ride);
+                    const ride = await rideRepo.findOne({ where: { rideId: data.rideId } });
+                    if (!ride) return socket.emit('ride:error', { message: 'Ride not found' });
+
+                    const sosRepo = AppDataSource.getRepository(SosAlert);
+                    const alert = sosRepo.create({
+                        rideId: data.rideId,
+                        initiatorId: data.initiatorId,
+                        initiatorRole: data.initiatorRole as any,
+                        reason: data.reason,
+                        description: data.description,
+                        lat: data.lat,
+                        lng: data.lng,
+                        status: SosAlertStatus.ACTIVE
+                    });
+                    await sosRepo.save(alert);
+
+                    // Fetch names for context
+                    let passengerName = "Passenger";
+                    let driverName = "Driver";
+                    let passengerPhone = "";
+                    let driverPhone = "";
+
+                    const pUser = await AppDataSource.getRepository(User).findOne({ where: { id: ride.passengerId } });
+                    if (pUser) {
+                        passengerName = `${pUser.firstName} ${pUser.lastName}`;
+                        passengerPhone = pUser.phone || "";
+                    }
+
+                    if (ride.driverId) {
+                        const dProfile = await AppDataSource.getRepository(DriverProfile).findOne({ where: { userId: ride.driverId } });
+                        if (dProfile) driverName = `${dProfile.firstName} ${dProfile.lastName}`;
+                        const dUser = await AppDataSource.getRepository(User).findOne({ where: { id: ride.driverId } });
+                        if (dUser) driverPhone = dUser.phone || "";
+                    }
+
+                    // Alert admins immediately
+                    this.io.to('admin').emit('admin:sos_alert', {
+                        id: alert.id,
+                        rideId: ride.rideId,
+                        initiatorRole: alert.initiatorRole,
+                        reason: alert.reason || "Emergency Triggered",
+                        description: alert.description || "",
+                        lat: alert.lat,
+                        lng: alert.lng,
+                        passengerName,
+                        passengerPhone,
+                        driverName,
+                        driverPhone,
+                        timestamp: alert.createdAt
+                    });
+
+                    // Acknowledge back to the sender discreetly
+                    socket.emit('ride:sos_received', { message: 'Help is on the way.' });
+                    log.error(`[CRITICAL] SOS Alert triggered for ride ${ride.rideId} by ${alert.initiatorRole}`);
+                } catch (err) {
+                    log.error('Failed to handle SOS alert:', err);
                 }
             });
         });

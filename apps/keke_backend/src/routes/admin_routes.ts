@@ -7,6 +7,9 @@ import { DriverStatus, DriverProfile } from "../models/DriverProfile";
 import { AppDataSource } from "../config/data_source";
 import { AuditLog } from "../models/AuditLog";
 import { SettingService } from "../services/setting_service";
+import { SosAlert, SosAlertStatus } from "../models/SosAlert";
+import { Ride } from "../models/Ride";
+import { User } from "../models/User";
 import path from "path";
 import fs from "fs";
 
@@ -334,6 +337,89 @@ router.post("/settings", async (req: Request, res: Response) => {
         await auditRepo.save(audit);
 
         res.json({ message: "Settings updated successfully", config: { baseFare, perKmRate, platformFeePercent } });
+    } catch (err: any) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * GET /admin/sos/active
+ */
+router.get("/sos/active", async (req: Request, res: Response) => {
+    try {
+        const alerts = await AppDataSource.getRepository(SosAlert).find({
+            where: { status: SosAlertStatus.ACTIVE },
+            order: { createdAt: "DESC" },
+        });
+
+        // Enrich alerts with driver and passenger names/phones
+        const enrichedAlerts = await Promise.all(alerts.map(async (alert) => {
+            let driverName = "Unknown";
+            let driverPhone = "Unknown";
+            let passengerName = "Unknown";
+            let passengerPhone = "Unknown";
+
+            const ride = await AppDataSource.getRepository(Ride).findOne({ where: { rideId: alert.rideId } });
+            if (ride) {
+                if (ride.driverId) {
+                    const driverProfile = await AppDataSource.getRepository(DriverProfile).findOne({ where: { userId: ride.driverId } });
+                    if (driverProfile) {
+                        driverName = `${driverProfile.firstName} ${driverProfile.lastName}`;
+                    }
+                    const driverUser = await AppDataSource.getRepository(User).findOne({ where: { id: ride.driverId } });
+                    if (driverUser) {
+                        driverPhone = driverUser.phone || "Unknown";
+                    }
+                }
+                if (ride.passengerId) {
+                    const passengerUser = await AppDataSource.getRepository(User).findOne({ where: { id: ride.passengerId } });
+                    if (passengerUser) {
+                        passengerName = `${passengerUser.firstName} ${passengerUser.lastName}`;
+                        passengerPhone = passengerUser.phone || "Unknown";
+                    }
+                }
+            }
+
+            return {
+                ...alert,
+                driverName,
+                driverPhone,
+                passengerName,
+                passengerPhone
+            };
+        }));
+
+        res.json(enrichedAlerts);
+    } catch (err: any) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * POST /admin/sos/:id/resolve
+ */
+router.post("/sos/:id/resolve", async (req: Request, res: Response) => {
+    try {
+        const adminId = `admin_${(req.headers['x-admin-key'] as string).slice(-8)}`;
+        const repo = AppDataSource.getRepository(SosAlert);
+        const alert = await repo.findOne({ where: { id: req.params.id } });
+        if (!alert) return res.status(404).json({ error: "Alert not found" });
+
+        alert.status = SosAlertStatus.RESOLVED;
+        alert.resolvedAt = new Date();
+        await repo.save(alert);
+
+        const auditRepo = AppDataSource.getRepository(AuditLog);
+        const audit = auditRepo.create({
+            adminId,
+            action: "RESOLVED_SOS_ALERT",
+            entityType: "SOS_ALERT",
+            entityId: alert.id,
+            details: { rideId: alert.rideId }
+        });
+        await auditRepo.save(audit);
+
+        res.json(alert);
     } catch (err: any) {
         res.status(500).json({ error: err.message });
     }

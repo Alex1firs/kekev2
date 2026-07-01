@@ -58,6 +58,10 @@ async function init() {
     setupAuthListeners();
     setupSettingsForm();
 
+    document.getElementById('btn-view-sos')?.addEventListener('click', () => {
+        switchSection('sos-alerts');
+    });
+
     refreshOverview().catch(() => {});
     setupSocket();
 
@@ -68,6 +72,7 @@ async function init() {
     fetchRideHistory().catch(() => {});
     fetchOnlineDrivers().catch(() => {});
     fetchPayouts().catch(() => {});
+    fetchSosAlerts().catch(() => {});
 
     setInterval(refreshOverview, 30000);
 }
@@ -101,6 +106,7 @@ function switchSection(id) {
     if (id === 'payouts')       fetchPayouts();
     if (id === 'history')       fetchRideHistory();
     if (id === 'online-drivers')fetchOnlineDrivers();
+    if (id === 'sos-alerts')    fetchSosAlerts();
     if (id === 'audit-log')     fetchAuditLog();
     if (id === 'settings')      fetchSettings();
 }
@@ -364,6 +370,109 @@ window.payoutAction = async function(id, action) {
     } catch {}
 };
 
+const addressCache = {};
+async function getHumanReadableAddress(lat, lng) {
+    const key = `${lat},${lng}`;
+    if (addressCache[key]) return addressCache[key];
+    try {
+        const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`);
+        const data = await res.json();
+        addressCache[key] = data.display_name || 'Address not found';
+        return addressCache[key];
+    } catch {
+        return `${lat}, ${lng}`;
+    }
+}
+
+let activeTrackingMap = null;
+let activeTrackingMarker = null;
+
+async function fetchSosAlerts() {
+    const alerts = await adminFetch('/sos/active');
+    const list = document.getElementById('sos-alerts-list');
+    if (!list) return;
+
+    list.innerHTML = alerts.map(a => `
+        <tr style="background-color: #330000;">
+            <td style="color: #ff4d4d; font-weight: bold;">${new Date(a.createdAt).toLocaleString()}</td>
+            <td>${escapeHtml(a.rideId)}</td>
+            <td>
+                <strong>${escapeHtml(a.initiatorRole).toUpperCase()}</strong><br>
+                <div style="font-size: 11px; margin-top: 5px;">
+                    <strong>Driver:</strong> ${escapeHtml(a.driverName)} (${escapeHtml(a.driverPhone)})<br>
+                    <strong>Pass:</strong> ${escapeHtml(a.passengerName)} (${escapeHtml(a.passengerPhone)})
+                </div>
+            </td>
+            <td><strong>${escapeHtml(a.reason || 'Emergency')}</strong></td>
+            <td>
+                <span id="address-${a.id}">Loading address...</span>
+                <div style="font-size: 10px; color: #aaa;">(${escapeHtml(a.lat)}, ${escapeHtml(a.lng)})</div>
+            </td>
+            <td>
+                <button class="btn-primary" onclick="trackLiveSOS('${escapeHtml(a.rideId)}', ${a.lat}, ${a.lng})" style="margin-bottom: 5px; width: 100%;">Track Live</button><br>
+                <button class="btn-resolve" onclick="resolveSosAlert('${escapeHtml(a.id)}')">Resolve</button>
+            </td>
+        </tr>
+    `).join('');
+    
+    if (!alerts.length) list.innerHTML = '<tr class="empty-state"><td colspan="6">No active SOS alerts.</td></tr>';
+
+    alerts.forEach(a => {
+        getHumanReadableAddress(a.lat, a.lng).then(address => {
+            const el = document.getElementById(`address-${a.id}`);
+            if (el) el.innerText = address;
+        });
+    });
+
+    const banner = document.getElementById('global-sos-banner');
+    const siren = document.getElementById('sos-siren');
+    if (alerts.length > 0) {
+        if (banner) banner.classList.remove('hidden');
+        if (siren) siren.play().catch(() => {});
+    } else {
+        if (banner) banner.classList.add('hidden');
+        if (siren) {
+            siren.pause();
+            siren.currentTime = 0;
+        }
+    }
+}
+
+window.trackLiveSOS = function(rideId, lat, lng) {
+    const modal = document.getElementById('live-tracking-modal');
+    modal.classList.remove('hidden');
+
+    if (activeTrackingMap) {
+        activeTrackingMap.remove();
+    }
+
+    activeTrackingMap = L.map('tracking-map').setView([lat, lng], 16);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(activeTrackingMap);
+
+    const driverIcon = L.divIcon({
+        className: 'driver-marker',
+        html: '<div style="background-color: #ff4d4d; width: 20px; height: 20px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 10px #ff4d4d; animation: pulse 1s infinite;"></div>',
+        iconSize: [26, 26],
+        iconAnchor: [13, 13]
+    });
+
+    activeTrackingMarker = L.marker([lat, lng], { icon: driverIcon }).addTo(activeTrackingMap);
+    
+    // Join ride room to get real-time location updates
+    socket.emit('join', { role: 'ride', userId: rideId });
+};
+
+window.resolveSosAlert = async function(id) {
+    if (!confirm('Mark this emergency as resolved?')) return;
+    try {
+        await adminFetch(`/sos/${id}/resolve`, 'POST');
+        showToast('SOS resolved successfully', 'success');
+        fetchSosAlerts();
+    } catch {}
+};
+
 async function fetchAuditLog() {
     const logs = await adminFetch('/audit-log');
     const list = document.getElementById('audit-log-list');
@@ -613,6 +722,23 @@ function setupSocket() {
     });
     socket.on('ride:request',  () => { if (currentSection === 'active-rides') fetchActiveRides(); });
     socket.on('ride:assigned', () => { if (currentSection === 'active-rides') fetchActiveRides(); });
+
+    socket.on('driver:location_update', (data) => {
+        if (activeTrackingMarker && activeTrackingMap) {
+            const newLatLng = [data.lat, data.lng];
+            activeTrackingMarker.setLatLng(newLatLng);
+            activeTrackingMap.setView(newLatLng);
+        }
+    });
+
+    socket.on('admin:sos_alert', (data) => {
+        showToast(`🚨 CRITICAL: SOS ALERT from Ride ${data.rideId}`, 'error');
+        const banner = document.getElementById('global-sos-banner');
+        if (banner) banner.classList.remove('hidden');
+        const siren = document.getElementById('sos-siren');
+        if (siren) siren.play().catch(() => {});
+        if (currentSection === 'sos-alerts') fetchSosAlerts();
+    });
 }
 
 async function fetchSettings() {
@@ -660,5 +786,17 @@ function setupSettingsForm() {
 
 document.addEventListener('DOMContentLoaded', () => {
     captureElements();
+
+    const closeTrackingBtn = document.getElementById('close-tracking-modal');
+    if (closeTrackingBtn) {
+        closeTrackingBtn.onclick = () => {
+            document.getElementById('live-tracking-modal').classList.add('hidden');
+            if (activeTrackingMap) {
+                activeTrackingMap.remove();
+                activeTrackingMap = null;
+                activeTrackingMarker = null;
+            }
+        };
+    }
     init();
 });

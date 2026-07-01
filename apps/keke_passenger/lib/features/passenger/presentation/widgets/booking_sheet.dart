@@ -12,6 +12,7 @@ import '../destination_search_screen.dart';
 import '../wallet_screen.dart';
 import 'ride_chat_panel.dart';
 import 'ride_receipt_sheet.dart';
+import 'sos_sheet.dart';
 import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/rendering.dart' show ScrollDirection;
@@ -2271,6 +2272,30 @@ class _OnTripCard extends StatelessWidget {
                   onTap: () => _call(parentContext, driver),
                 ),
               ],
+            ),
+          ),
+
+          // SOS Button
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+            child: GestureDetector(
+              onTap: () => SosSheet.show(parentContext),
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                decoration: BoxDecoration(
+                  color: AppColors.errorLight,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: AppColors.error.withOpacity(0.3)),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.emergency_share_rounded, color: AppColors.error, size: 20),
+                    const SizedBox(width: 8),
+                    Text('Emergency SOS', style: AppTextStyles.button(color: AppColors.error)),
+                  ],
+                ),
+              ),
             ),
           ),
         ],

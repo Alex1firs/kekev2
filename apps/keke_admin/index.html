@@ -6,6 +6,7 @@
     <title>Keke Admin | Dashboard</title>
     <link rel="stylesheet" href="styles.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 </head>
 <body class="dark-theme auth-loading">
     <!-- Login Screen -->
@@ -69,6 +70,9 @@
                 <li data-section="online-drivers">
                     <i class="fas fa-toggle-on"></i> <span>Online Drivers</span>
                 </li>
+                <li data-section="sos-alerts" class="danger-nav">
+                    <i class="fas fa-exclamation-triangle" style="color: #ff4d4d;"></i> <span style="color: #ff4d4d;">SOS Alerts</span>
+                </li>
                 <li data-section="audit-log">
                     <i class="fas fa-clipboard-list"></i> <span>Audit Log</span>
                 </li>
@@ -95,6 +99,12 @@
             </header>
 
             <!-- Sections Container -->
+            <div id="global-sos-banner" class="global-sos-banner hidden">
+                <i class="fas fa-siren-on" style="animation: pulse 1s infinite;"></i>
+                <span id="sos-banner-text">CRITICAL: Active SOS Alert Received!</span>
+                <button id="btn-view-sos" class="btn-danger-sm">View Details</button>
+            </div>
+            
             <div id="content-area">
                 <!-- Overview Section -->
                 <section id="overview" class="content-section">
@@ -258,6 +268,28 @@
                     </div>
                 </section>
 
+                <!-- SOS Alerts Section -->
+                <section id="sos-alerts" class="content-section hidden">
+                    <h2 style="color: #ff4d4d;"><i class="fas fa-exclamation-circle"></i> Active Emergency Alerts</h2>
+                    <div class="table-container" style="border: 1px solid #ff4d4d; box-shadow: 0 0 15px rgba(255, 77, 77, 0.2);">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Time</th>
+                                    <th>Ride ID</th>
+                                    <th>Initiator</th>
+                                    <th>Reason</th>
+                                    <th>Location</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="sos-alerts-list">
+                                <tr class="empty-state"><td colspan="6">No active SOS alerts.</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
                 <!-- Audit Log Section -->
                 <section id="audit-log" class="content-section hidden">
                     <h2>Admin Action Log</h2>
@@ -322,10 +354,24 @@
         </main>
     </div>
 
+    <!-- Live Tracking Modal -->
+    <div id="live-tracking-modal" class="modal hidden">
+        <div class="modal-content" style="width: 80%; max-width: 800px; padding: 20px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                <h2 style="color: #ff4d4d; margin: 0;"><i class="fas fa-satellite-dish"></i> Live Emergency Tracking</h2>
+                <button id="close-tracking-modal" class="btn-danger-sm"><i class="fas fa-times"></i> Close</button>
+            </div>
+            <div id="tracking-map" style="height: 500px; width: 100%; border-radius: 8px; border: 2px solid #ff4d4d;"></div>
+        </div>
+    </div>
+
     <!-- Toast Notifications -->
     <div id="toast-container" class="toast-container"></div>
 
+    <audio id="sos-siren" loop src="https://actions.google.com/sounds/v1/alarms/alarm_clock.ogg" preload="auto"></audio>
+
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
-    <script src="app.js?v=3.1"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="app.js?v=3.2"></script>
 </body>
 </html>

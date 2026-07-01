@@ -847,6 +847,18 @@ class DriverController extends StateNotifier<DriverState> {
     });
   }
 
+  void triggerSos(String reason) {
+    if (_socketService == null || state.activeRequest == null) return;
+    _socketService!.emit('ride:sos', {
+      'rideId': state.activeRequest!.id,
+      'initiatorId': _userId,
+      'initiatorRole': 'driver',
+      'reason': reason,
+      'lat': state.driverCurrentPosition?.latitude ?? 0.0,
+      'lng': state.driverCurrentPosition?.longitude ?? 0.0,
+    });
+  }
+
   void finishAndGoAvailable() {
     _socketService?.updateActiveRide(null);
     state = state.copyWith(

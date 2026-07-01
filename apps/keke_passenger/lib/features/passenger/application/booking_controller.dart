@@ -639,6 +639,19 @@ class BookingController extends StateNotifier<BookingState> {
     });
   }
 
+  Future<void> triggerSos(String reason) async {
+    if (_socketService == null || state.rideId == null) return;
+    final loc = await _mapRepo.getCurrentLocation();
+    _socketService!.emit('ride:sos', {
+      'rideId': state.rideId,
+      'initiatorId': passengerId,
+      'initiatorRole': 'passenger',
+      'reason': reason,
+      'lat': loc?.latitude ?? state.pickupLocation?.latitude ?? 0.0,
+      'lng': loc?.longitude ?? state.pickupLocation?.longitude ?? 0.0,
+    });
+  }
+
   void cancelBooking() {
     // Trip already in progress — cancellation not allowed
     if (state.step == BookingStep.started) return;

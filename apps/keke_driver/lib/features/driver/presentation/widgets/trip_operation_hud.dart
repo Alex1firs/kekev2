@@ -6,6 +6,7 @@ import '../../application/driver_controller.dart';
 import '../../domain/driver_profile.dart';
 import '../../domain/driver_state.dart';
 import 'ride_chat_panel.dart';
+import 'sos_sheet.dart';
 
 class TripOperationHUD extends ConsumerWidget {
   final DriverState state;
@@ -82,6 +83,11 @@ class TripOperationHUD extends ConsumerWidget {
 
                     const SizedBox(height: 14),
                     _buildPassengerRow(context),
+
+                    if (state.tripStep != TripStep.completed) ...[
+                      const SizedBox(height: 14),
+                      _buildSosButton(context),
+                    ],
                   ],
                 ),
               ),
@@ -559,6 +565,28 @@ class TripOperationHUD extends ConsumerWidget {
                     color: AppColors.white, weight: FontWeight.w700)),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildSosButton(BuildContext context) {
+    return GestureDetector(
+      onTap: () => SosSheet.show(context),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 14),
+        decoration: BoxDecoration(
+          color: AppColors.error.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppColors.error.withOpacity(0.3)),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.emergency_share_rounded, color: AppColors.error, size: 20),
+            const SizedBox(width: 8),
+            Text('Emergency SOS', style: AppTextStyles.button(color: AppColors.error)),
+          ],
+        ),
       ),
     );
   }

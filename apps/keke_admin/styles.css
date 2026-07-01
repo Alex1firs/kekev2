@@ -513,3 +513,54 @@ body.authenticated .admin-container { display: flex; }
     color: #5599ff;
     border: 1px solid rgba(85, 153, 255, 0.3);
 }
+
+/* SOS Feature Styles */
+.global-sos-banner {
+    position: sticky;
+    top: 0;
+    z-index: 1000;
+    background-color: #ff4d4d;
+    color: white;
+    padding: 12px 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-weight: bold;
+    box-shadow: 0 4px 12px rgba(255, 77, 77, 0.4);
+    margin: -32px -32px 24px -32px; /* Pull it out to edge of main-content */
+}
+
+.btn-danger-sm {
+    background-color: white;
+    color: #ff4d4d;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 4px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.btn-danger-sm:hover {
+    background-color: #ffe6e6;
+}
+
+.btn-resolve {
+    background-color: #4CAF50;
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.btn-resolve:hover {
+    background-color: #45a049;
+}
+
+@keyframes pulse {
+    0% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.2); opacity: 0.8; }
+    100% { transform: scale(1); opacity: 1; }
+}

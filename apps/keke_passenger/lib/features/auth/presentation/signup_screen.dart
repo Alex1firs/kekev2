@@ -298,6 +298,7 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
           ),
           onSubmitted: (_) => _next(),
           decoration: InputDecoration(
+            filled: false,
             hintText: hint,
             hintStyle: GoogleFonts.plusJakartaSans(
               fontSize: 22,

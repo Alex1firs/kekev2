@@ -232,6 +232,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           ),
           onSubmitted: onSubmitted,
           decoration: InputDecoration(
+            filled: false,
             hintText: hint,
             hintStyle: GoogleFonts.plusJakartaSans(
               fontSize: 22,

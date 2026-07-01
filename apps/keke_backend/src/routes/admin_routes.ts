@@ -402,7 +402,7 @@ router.post("/sos/:id/resolve", async (req: Request, res: Response) => {
     try {
         const adminId = `admin_${(req.headers['x-admin-key'] as string).slice(-8)}`;
         const repo = AppDataSource.getRepository(SosAlert);
-        const alert = await repo.findOne({ where: { id: req.params.id } });
+        const alert = await repo.findOne({ where: { id: req.params.id as string } });
         if (!alert) return res.status(404).json({ error: "Alert not found" });
 
         alert.status = SosAlertStatus.RESOLVED;

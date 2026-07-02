@@ -65,6 +65,7 @@ class AuthController extends StateNotifier<AuthState> {
       state = AuthState.needsEmailVerification(email, devOtp: devOtp);
     } on EmailAlreadyRegisteredException {
       // Driver already has an account — log them in silently with the same credentials
+      state = AuthState.unauthenticated();
       await login(email, password);
     } catch (e) {
       state = AuthState.error(e.toString().replaceFirst('Exception: ', ''));

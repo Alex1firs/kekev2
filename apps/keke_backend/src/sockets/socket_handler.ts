@@ -379,6 +379,7 @@ export class SocketHandler {
                         plate: profile.vehiclePlate,
                         model: profile.vehicleModel,
                         phone: driverUser?.phone ?? null,
+                        photoUrl: profile.photoUrl ?? null,
                     };
 
                     this.broadcastToRide(data.rideId, 'ride:assigned', {

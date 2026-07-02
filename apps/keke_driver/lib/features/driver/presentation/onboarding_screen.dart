@@ -17,6 +17,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   final _lastNameController = TextEditingController();
   final _plateController = TextEditingController();
   final _modelController = TextEditingController();
+  final _ninController = TextEditingController();
   int _currentStep = 0;
 
   @override
@@ -39,6 +40,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     _lastNameController.dispose();
     _plateController.dispose();
     _modelController.dispose();
+    _ninController.dispose();
     super.dispose();
   }
 
@@ -56,6 +58,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       lastName: _lastNameController.text,
       plate: _plateController.text,
       model: _modelController.text,
+      nin: _ninController.text,
     );
   }
 
@@ -66,7 +69,8 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
     final bool allDocsUploaded = profile.licenseUrl != null &&
         profile.idCardUrl != null &&
-        profile.vehiclePaperUrl != null;
+        profile.vehiclePaperUrl != null &&
+        profile.photoUrl != null;
 
     return Scaffold(
       backgroundColor: AppColors.snow,
@@ -149,6 +153,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                               final ln = _lastNameController.text.trim();
                               final pl = _plateController.text.trim().toUpperCase();
                               final mo = _modelController.text.trim();
+                              final ni = _ninController.text.trim();
 
                               String? error;
                               if (fn.isEmpty || ln.isEmpty) {
@@ -157,6 +162,8 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                                 error = 'Please enter a valid keke plate number (e.g. ANK-123KW).';
                               } else if (mo.isEmpty || mo.toUpperCase() == 'PENDING' || mo.length < 2) {
                                 error = 'Please enter a valid vehicle model (e.g. TVS King Deluxe).';
+                              } else if (ni.isEmpty || ni.length < 11) {
+                                error = 'Please enter a valid 11-digit NIN or 16-character Virtual NIN.';
                               }
 
                               if (error != null) {
@@ -183,7 +190,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                                   shape: RoundedRectangleBorder(
                                       borderRadius: BorderRadius.circular(12)),
                                   content: Text(
-                                    'Please upload all 3 required documents.',
+                                    'Please upload all 4 required documents.',
                                     style: AppTextStyles.body(color: AppColors.white),
                                   ),
                                 ),
@@ -289,6 +296,20 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
             hintText: 'e.g. TVS King Deluxe',
             prefixIcon: Icon(Icons.electric_rickshaw),
           ),
+          textInputAction: TextInputAction.next,
+        ),
+        const SizedBox(height: 20),
+        Text('National Identity Number (NIN)',
+            style: AppTextStyles.label(
+                color: AppColors.darkGray, weight: FontWeight.w600)),
+        const SizedBox(height: 6),
+        TextFormField(
+          controller: _ninController,
+          decoration: const InputDecoration(
+            hintText: 'Enter your 11-digit NIN',
+            prefixIcon: Icon(Icons.badge_outlined),
+          ),
+          keyboardType: TextInputType.number,
           textInputAction: TextInputAction.done,
         ),
       ],
@@ -330,6 +351,15 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
           icon: Icons.credit_card_outlined,
           type: 'id_card',
           isUploaded: profile.idCardUrl != null,
+          isLoading: driverState.isLoading,
+          onUpload: _pickAndUpload,
+        ),
+        const SizedBox(height: 12),
+        _DocTile(
+          title: 'Driver Selfie',
+          icon: Icons.face_rounded,
+          type: 'photo',
+          isUploaded: profile.photoUrl != null,
           isLoading: driverState.isLoading,
           onUpload: _pickAndUpload,
         ),

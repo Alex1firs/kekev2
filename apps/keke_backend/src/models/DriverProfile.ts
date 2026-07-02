@@ -42,6 +42,9 @@ export class DriverProfile {
     @Column({ nullable: true })
     vehiclePaperUrl!: string;
 
+    @Column({ nullable: true })
+    photoUrl!: string;
+
     @Column({ type: 'varchar', length: 50, nullable: true, default: null })
     nin!: string | null;
 

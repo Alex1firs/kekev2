@@ -13,6 +13,7 @@ import '../wallet_screen.dart';
 import 'ride_chat_panel.dart';
 import 'ride_receipt_sheet.dart';
 import 'sos_sheet.dart';
+import '../../../../core/config/env_config.dart';
 import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/rendering.dart' show ScrollDirection;
@@ -1490,6 +1491,10 @@ class _LiveApproachCard extends StatelessWidget {
     final name = driver['name'] as String? ?? 'Driver';
     final plate = driver['plate'] as String? ?? '—';
     final model = driver['model'] as String? ?? 'Keke';
+    
+    final photoUrl = driver['photoUrl'] as String?;
+    final baseUrl = EnvConfig.current.apiBaseUrl.replaceAll('/api/v1', '');
+    final fullPhotoUrl = photoUrl != null ? '$baseUrl/uploads/$photoUrl' : null;
 
     String etaStr = '—';
     String distStr = '—';
@@ -1614,14 +1619,28 @@ class _LiveApproachCard extends StatelessWidget {
                     color: AppColors.primary,
                     shape: BoxShape.circle,
                   ),
-                  child: Center(
-                    child: Text(
-                      name.isNotEmpty ? name[0].toUpperCase() : 'D',
-                      style: AppTextStyles.title(
-                          color: AppColors.charcoal,
-                          weight: FontWeight.w800),
-                    ),
-                  ),
+                  clipBehavior: Clip.hardEdge,
+                  child: fullPhotoUrl != null
+                      ? Image.network(
+                          fullPhotoUrl,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) => Center(
+                            child: Text(
+                              name.isNotEmpty ? name[0].toUpperCase() : 'D',
+                              style: AppTextStyles.title(
+                                  color: AppColors.charcoal,
+                                  weight: FontWeight.w800),
+                            ),
+                          ),
+                        )
+                      : Center(
+                          child: Text(
+                            name.isNotEmpty ? name[0].toUpperCase() : 'D',
+                            style: AppTextStyles.title(
+                                color: AppColors.charcoal,
+                                weight: FontWeight.w800),
+                          ),
+                        ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -1774,6 +1793,10 @@ class _ArrivalCardState extends State<_ArrivalCard>
     final model = widget.driver['model']?.toString() ??
         widget.driver['vehicleModel']?.toString() ?? '';
     final code = widget.pickupCode;
+    
+    final photoUrl = widget.driver['photoUrl'] as String?;
+    final baseUrl = EnvConfig.current.apiBaseUrl.replaceAll('/api/v1', '');
+    final fullPhotoUrl = photoUrl != null ? '$baseUrl/uploads/$photoUrl' : null;
 
     return Container(
       decoration: BoxDecoration(
@@ -1899,14 +1922,28 @@ class _ArrivalCardState extends State<_ArrivalCard>
                         decoration: const BoxDecoration(
                             color: AppColors.primary,
                             shape: BoxShape.circle),
-                        child: Center(
-                          child: Text(
-                            name[0].toUpperCase(),
-                            style: AppTextStyles.label(
-                                color: AppColors.charcoal,
-                                weight: FontWeight.w800),
-                          ),
-                        ),
+                        clipBehavior: Clip.hardEdge,
+                        child: fullPhotoUrl != null
+                            ? Image.network(
+                                fullPhotoUrl,
+                                fit: BoxFit.cover,
+                                errorBuilder: (context, error, stackTrace) => Center(
+                                  child: Text(
+                                    name[0].toUpperCase(),
+                                    style: AppTextStyles.label(
+                                        color: AppColors.charcoal,
+                                        weight: FontWeight.w800),
+                                  ),
+                                ),
+                              )
+                            : Center(
+                                child: Text(
+                                  name[0].toUpperCase(),
+                                  style: AppTextStyles.label(
+                                      color: AppColors.charcoal,
+                                      weight: FontWeight.w800),
+                                ),
+                              ),
                       ),
                       const SizedBox(width: 10),
                       Expanded(
@@ -2093,6 +2130,10 @@ class _OnTripCard extends StatelessWidget {
     final name = driver['name'] as String? ?? 'Driver';
     final plate = driver['plate'] as String? ?? '—';
     final dest = state.destinationAddress;
+    
+    final photoUrl = driver['photoUrl'] as String?;
+    final baseUrl = EnvConfig.current.apiBaseUrl.replaceAll('/api/v1', '');
+    final fullPhotoUrl = photoUrl != null ? '$baseUrl/uploads/$photoUrl' : null;
 
     return Container(
       decoration: BoxDecoration(
@@ -2207,14 +2248,28 @@ class _OnTripCard extends StatelessWidget {
                     color: AppColors.primary,
                     shape: BoxShape.circle,
                   ),
-                  child: Center(
-                    child: Text(
-                      name.isNotEmpty ? name[0].toUpperCase() : 'D',
-                      style: AppTextStyles.title(
-                          color: AppColors.charcoal,
-                          weight: FontWeight.w800),
-                    ),
-                  ),
+                  clipBehavior: Clip.hardEdge,
+                  child: fullPhotoUrl != null
+                      ? Image.network(
+                          fullPhotoUrl,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) => Center(
+                            child: Text(
+                              name.isNotEmpty ? name[0].toUpperCase() : 'D',
+                              style: AppTextStyles.title(
+                                  color: AppColors.charcoal,
+                                  weight: FontWeight.w800),
+                            ),
+                          ),
+                        )
+                      : Center(
+                          child: Text(
+                            name.isNotEmpty ? name[0].toUpperCase() : 'D',
+                            style: AppTextStyles.title(
+                                color: AppColors.charcoal,
+                                weight: FontWeight.w800),
+                          ),
+                        ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(

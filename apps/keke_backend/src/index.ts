@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
+import path from 'path';
 import cors from 'cors';
 import helmet from 'helmet';
 import dotenv from 'dotenv';
@@ -58,6 +59,7 @@ app.post('/api/v1/finance/webhook', express.raw({ type: 'application/json' }), a
 });
 
 app.use(express.json({ limit: '1mb' }));
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 app.use((req, res, next) => {
   const start = Date.now();

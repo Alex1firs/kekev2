@@ -31,6 +31,7 @@ class DriverProfile {
   final String? licenseUrl;
   final String? idCardUrl;
   final String? vehiclePaperUrl;
+  final String? photoUrl;
   final double debtAmount;
   final bool ninVerified;
 
@@ -44,6 +45,7 @@ class DriverProfile {
     this.licenseUrl,
     this.idCardUrl,
     this.vehiclePaperUrl,
+    this.photoUrl,
     this.debtAmount = 0.0,
     this.ninVerified = false,
   });
@@ -58,6 +60,7 @@ class DriverProfile {
     String? licenseUrl,
     String? idCardUrl,
     String? vehiclePaperUrl,
+    String? photoUrl,
     double? debtAmount,
     bool? ninVerified,
   }) {
@@ -71,6 +74,7 @@ class DriverProfile {
       licenseUrl: licenseUrl ?? this.licenseUrl,
       idCardUrl: idCardUrl ?? this.idCardUrl,
       vehiclePaperUrl: vehiclePaperUrl ?? this.vehiclePaperUrl,
+      photoUrl: photoUrl ?? this.photoUrl,
       debtAmount: debtAmount ?? this.debtAmount,
       ninVerified: ninVerified ?? this.ninVerified,
     );

@@ -514,6 +514,7 @@ class DriverController extends StateNotifier<DriverState> {
     required String lastName,
     required String plate,
     required String model,
+    required String nin,
   }) async {
     state = state.copyWith(isLoading: true, errorMessage: null);
     try {
@@ -523,6 +524,7 @@ class DriverController extends StateNotifier<DriverState> {
         'lastName': lastName,
         'vehiclePlate': plate,
         'vehicleModel': model,
+        'nin': nin,
       });
 
       if (!mounted) return;
@@ -598,6 +600,7 @@ class DriverController extends StateNotifier<DriverState> {
           licenseUrl: docType == 'license' ? filename : state.profile.licenseUrl,
           idCardUrl: docType == 'id_card' ? filename : state.profile.idCardUrl,
           vehiclePaperUrl: docType == 'vehicle_paper' ? filename : state.profile.vehiclePaperUrl,
+          photoUrl: docType == 'photo' ? filename : state.profile.photoUrl,
         ),
       );
     } catch (e) {

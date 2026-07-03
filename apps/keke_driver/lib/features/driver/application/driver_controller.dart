@@ -591,17 +591,28 @@ class DriverController extends StateNotifier<DriverState> {
 
       final Map<String, dynamic> responseBody = Map<String, dynamic>.from(rawData);
       final newStatusStr = responseBody['status']?.toString() ?? 'pending_documents';
-      final newStatus = _mapStatus(newStatusStr);
+      DriverStatus newStatus = _mapStatus(newStatusStr);
       final filename = responseBody['filename']?.toString() ?? 'uploaded';
 
-      state = state.copyWith(
-        profile: state.profile.copyWith(
+      final newProfile = state.profile.copyWith(
           status: newStatus,
           licenseUrl: docType == 'license' ? filename : state.profile.licenseUrl,
           idCardUrl: docType == 'id_card' ? filename : state.profile.idCardUrl,
           vehiclePaperUrl: docType == 'vehicle_paper' ? filename : state.profile.vehiclePaperUrl,
           photoUrl: docType == 'photo' ? filename : state.profile.photoUrl,
-        ),
+      );
+
+      if (newProfile.licenseUrl == null || 
+          newProfile.idCardUrl == null || 
+          newProfile.vehiclePaperUrl == null || 
+          newProfile.photoUrl == null) {
+          newStatus = DriverStatus.pendingDocuments;
+      } else {
+          newStatus = newProfile.status;
+      }
+
+      state = state.copyWith(
+        profile: newProfile.copyWith(status: newStatus),
       );
     } catch (e) {
       if (!mounted) return;

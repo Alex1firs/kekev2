@@ -44,22 +44,21 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     super.dispose();
   }
 
-  void _nextStep() {
+  Future<void> _nextStep() async {
     if (_currentStep < 1) {
-      setState(() => _currentStep++);
+      await ref.read(driverControllerProvider.notifier).submitOnboarding(
+        firstName: _firstNameController.text.trim(),
+        lastName: _lastNameController.text.trim(),
+        plate: _plateController.text.trim().toUpperCase(),
+        model: _modelController.text.trim(),
+        nin: _ninController.text.trim(),
+      );
+      if (mounted && ref.read(driverControllerProvider).errorMessage == null) {
+        setState(() => _currentStep++);
+      }
     } else {
-      _finishOnboarding();
+      ref.read(driverControllerProvider.notifier).syncStatus();
     }
-  }
-
-  void _finishOnboarding() {
-    ref.read(driverControllerProvider.notifier).submitOnboarding(
-      firstName: _firstNameController.text,
-      lastName: _lastNameController.text,
-      plate: _plateController.text,
-      model: _modelController.text,
-      nin: _ninController.text,
-    );
   }
 
   @override

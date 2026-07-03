@@ -291,7 +291,8 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
   Widget build(BuildContext context) {
     final driverState = ref.watch(driverControllerProvider);
     final hideHeader = driverState.tripStep != TripStep.none;
-    final needsNin = driverState.profile.status == DriverStatus.approved && !driverState.profile.ninVerified;
+    // Temporary: Disable NIN verification overlay
+    final needsNin = false; // driverState.profile.status == DriverStatus.approved && !driverState.profile.ninVerified;
 
     ref.listen(driverControllerProvider.select((s) => s.pickupRoute), (prev, next) {
       if (next.isNotEmpty && (prev == null || prev.isEmpty)) {

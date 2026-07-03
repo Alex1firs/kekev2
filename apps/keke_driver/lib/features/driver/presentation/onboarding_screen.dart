@@ -102,7 +102,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                     ),
                     TextButton.icon(
                       onPressed: () {
-                        ref.read(authControllerProvider.notifier).signOut();
+                        ref.read(authControllerProvider.notifier).logout();
                       },
                       icon: const Icon(Icons.logout, color: AppColors.white, size: 20),
                       label: Text('Sign Out', style: AppTextStyles.body(color: AppColors.white)),

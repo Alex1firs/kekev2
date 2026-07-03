@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../auth/application/auth_controller.dart';
 import '../application/driver_controller.dart';
 import '../domain/driver_profile.dart';
 
@@ -87,14 +88,26 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
-                  child: Image.asset(
-                    'assets/images/app_logo.png',
-                    width: 44,
-                    height: 44,
-                    fit: BoxFit.cover,
-                  ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(10),
+                      child: Image.asset(
+                        'assets/images/app_logo.png',
+                        width: 44,
+                        height: 44,
+                        fit: BoxFit.cover,
+                      ),
+                    ),
+                    TextButton.icon(
+                      onPressed: () {
+                        ref.read(authControllerProvider.notifier).signOut();
+                      },
+                      icon: const Icon(Icons.logout, color: AppColors.white, size: 20),
+                      label: Text('Sign Out', style: AppTextStyles.body(color: AppColors.white)),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 20),
                 Text(

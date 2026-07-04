@@ -32,5 +32,9 @@ COPY --from=builder /app/dist ./dist
 # Expose the API port
 EXPOSE 4000
 
-# Start the application
-CMD ["node", "dist/index.js"]
+# Run any pending DB migrations before starting the API. TypeORM records applied
+# migrations, so this is idempotent and safe to run on every container start. It
+# prevents "column does not exist" 5xx errors when code is deployed ahead of its
+# schema (e.g. the driver status endpoint failing after the NIN columns were
+# added but the migration hadn't been run).
+CMD ["sh", "-c", "npm run migration:run && node dist/index.js"]

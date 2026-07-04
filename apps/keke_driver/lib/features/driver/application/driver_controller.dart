@@ -408,6 +408,9 @@ class DriverController extends StateNotifier<DriverState> {
     );
   }
 
+  int _profileRetries = 0;
+  Timer? _profileRetryTimer;
+
   Future<void> _initDriver() async {
     // Small delay ensures Riverpod state finishes spreading before we hit the network
     await Future.delayed(const Duration(milliseconds: 200));
@@ -419,7 +422,13 @@ class DriverController extends StateNotifier<DriverState> {
       if (!mounted) return;
 
       final data = response.data;
-      
+      print('[DRIVER_INIT] Status fetch for $_userId -> ${data is Map ? data['status'] : data.runtimeType}');
+
+      // Successful server response — the status is now authoritative, whatever
+      // it is. Reset the retry counter and mark the profile as loaded so the
+      // auth guard can route confidently.
+      _profileRetries = 0;
+
       if (data != null && data['status'] != 'unregistered') {
         state = state.copyWith(
           profile: DriverProfile(
@@ -436,6 +445,7 @@ class DriverController extends StateNotifier<DriverState> {
             ninVerified: data['ninVerified'] == true,
           ),
           isLoading: false,
+          profileLoaded: true,
         );
 
         // Phase 2: Active Ride Recovery
@@ -486,12 +496,48 @@ class DriverController extends StateNotifier<DriverState> {
           }
         }
       } else {
-        state = state.copyWith(isLoading: false);
+        // Server confirms this account has no driver profile yet — a genuinely
+        // new driver. Safe to route to onboarding.
+        state = state.copyWith(isLoading: false, profileLoaded: true);
       }
     } catch (e) {
       if (!mounted) return;
-      state = state.copyWith(isLoading: false, errorMessage: 'Couldn\'t load your driver profile. Please check your connection.');
+      print('[DRIVER_INIT] Status fetch FAILED for $_userId: $e');
+      // Do NOT drop profileLoaded here. Leaving an authenticated driver
+      // classified as `unregistered` after a failed fetch would misroute an
+      // already-onboarded driver to /onboarding. Retry with backoff; the auth
+      // guard holds on /splash while profileLoaded is still false.
+      _scheduleProfileRetry();
     }
+  }
+
+  /// Manual retry entry point (e.g. from the splash "Try Again" button) after
+  /// the automatic retries have been exhausted.
+  void retryProfileLoad() {
+    _profileRetries = 0;
+    _profileRetryTimer?.cancel();
+    _initDriver();
+  }
+
+  void _scheduleProfileRetry() {
+    _profileRetryTimer?.cancel();
+    if (_profileRetries >= 5) {
+      // Give up after several attempts, but stay unloaded so the guard keeps us
+      // on /splash (with an error) rather than wrongly showing onboarding.
+      if (mounted) {
+        state = state.copyWith(
+          isLoading: false,
+          errorMessage: 'Couldn\'t load your driver profile. Please check your connection and try again.',
+        );
+      }
+      return;
+    }
+    _profileRetries++;
+    final delay = Duration(seconds: 2 * _profileRetries);
+    print('[DRIVER_INIT] Retrying profile fetch (#$_profileRetries) in ${delay.inSeconds}s');
+    _profileRetryTimer = Timer(delay, () {
+      if (mounted) _initDriver();
+    });
   }
 
   DriverStatus _mapStatus(String status) {
@@ -951,6 +997,7 @@ class DriverController extends StateNotifier<DriverState> {
             debtAmount: (data['commissionDebt'] as num?)?.toDouble() ?? state.profile.debtAmount,
           ),
           isLoading: false,
+          profileLoaded: true,
         );
       } else {
         state = state.copyWith(isLoading: false);
@@ -1028,6 +1075,7 @@ class DriverController extends StateNotifier<DriverState> {
     _heartbeatTimer?.cancel();
     _watchdogTimer?.cancel();
     _errorClearTimer?.cancel();
+    _profileRetryTimer?.cancel();
     _socketSubscription?.cancel();
     _notificationSubscription?.cancel();
     super.dispose();

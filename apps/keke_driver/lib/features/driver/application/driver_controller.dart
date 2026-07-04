@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -421,7 +422,13 @@ class DriverController extends StateNotifier<DriverState> {
       final response = await _apiClient.dio.get('/drivers/status/$_userId');
       if (!mounted) return;
 
-      final data = response.data;
+      // Defensive: dio normally decodes application/json to a Map, but if the
+      // response arrives as a raw String, indexing it with a key would throw
+      // and be misread as a load failure. Decode it here.
+      var data = response.data;
+      if (data is String && data.isNotEmpty) {
+        data = jsonDecode(data);
+      }
       print('[DRIVER_INIT] Status fetch for $_userId -> ${data is Map ? data['status'] : data.runtimeType}');
 
       // Successful server response — the status is now authoritative, whatever
@@ -502,13 +509,43 @@ class DriverController extends StateNotifier<DriverState> {
       }
     } catch (e) {
       if (!mounted) return;
-      print('[DRIVER_INIT] Status fetch FAILED for $_userId: $e');
+      final detail = _describeFetchError(e);
+      print('[DRIVER_INIT] Status fetch FAILED for $_userId: $detail');
+      _lastFetchError = detail;
       // Do NOT drop profileLoaded here. Leaving an authenticated driver
       // classified as `unregistered` after a failed fetch would misroute an
       // already-onboarded driver to /onboarding. Retry with backoff; the auth
       // guard holds on /splash while profileLoaded is still false.
       _scheduleProfileRetry();
     }
+  }
+
+  String? _lastFetchError;
+
+  /// Builds a human-readable description of a status-fetch failure. Surfaced on
+  /// the splash "Try Again" screen so field failures can be diagnosed without a
+  /// device log.
+  String _describeFetchError(Object e) {
+    if (e is dio.DioException) {
+      switch (e.type) {
+        case dio.DioExceptionType.connectionTimeout:
+        case dio.DioExceptionType.sendTimeout:
+        case dio.DioExceptionType.receiveTimeout:
+          return 'Network timed out. Please check your connection.';
+        case dio.DioExceptionType.connectionError:
+          return 'Couldn\'t reach the server. Please check your connection.';
+        case dio.DioExceptionType.badResponse:
+          final code = e.response?.statusCode;
+          final body = e.response?.data;
+          final serverMsg = body is Map
+              ? (body['message']?.toString() ?? body['error']?.toString())
+              : null;
+          return 'Server error ($code)${serverMsg != null ? ': $serverMsg' : ''}';
+        default:
+          return 'Couldn\'t load your profile (${e.type.name}).';
+      }
+    }
+    return 'Couldn\'t load your profile: $e';
   }
 
   /// Manual retry entry point (e.g. from the splash "Try Again" button) after
@@ -527,7 +564,8 @@ class DriverController extends StateNotifier<DriverState> {
       if (mounted) {
         state = state.copyWith(
           isLoading: false,
-          errorMessage: 'Couldn\'t load your driver profile. Please check your connection and try again.',
+          errorMessage: _lastFetchError ??
+              'Couldn\'t load your driver profile. Please check your connection and try again.',
         );
       }
       return;

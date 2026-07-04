@@ -10,6 +10,11 @@ class DriverState {
   final TripRequest? activeRequest;
   final int? countdown;
   final bool isLoading;
+  /// True once the driver's profile status has been confirmed by the server at
+  /// least once. Until this is true we must NOT treat an `unregistered` status
+  /// as "new driver" — the fetch may still be in flight or have failed, and
+  /// misclassifying an onboarded driver here misroutes them to /onboarding.
+  final bool profileLoaded;
   final String? errorMessage;
   final int waitTimeSeconds;
   final List<ChatMessage> chatMessages;
@@ -30,6 +35,7 @@ class DriverState {
     this.activeRequest,
     this.countdown,
     this.isLoading = false,
+    this.profileLoaded = false,
     this.errorMessage,
     this.waitTimeSeconds = 0,
     this.chatMessages = const [],
@@ -47,6 +53,7 @@ class DriverState {
     TripRequest? activeRequest,
     int? countdown,
     bool? isLoading,
+    bool? profileLoaded,
     String? errorMessage,
     bool clearActiveRequest = false,
     bool clearCountdown = false,
@@ -70,6 +77,7 @@ class DriverState {
       activeRequest: clearActiveRequest ? null : (activeRequest ?? this.activeRequest),
       countdown: clearCountdown ? null : (countdown ?? this.countdown),
       isLoading: isLoading ?? this.isLoading,
+      profileLoaded: profileLoaded ?? this.profileLoaded,
       errorMessage: clearErrorMessage ? null : (errorMessage ?? this.errorMessage),
       waitTimeSeconds: waitTimeSeconds ?? this.waitTimeSeconds,
       chatMessages: chatMessages ?? this.chatMessages,

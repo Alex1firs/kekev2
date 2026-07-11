@@ -238,7 +238,7 @@ td {
 /* Document Gallery */
 .doc-gallery {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
     gap: 16px;
     margin-top: 20px;
     padding: 16px;
@@ -301,6 +301,48 @@ td {
 
 .modal-content {
     max-width: 800px; /* Wider for gallery */
+}
+
+/* --- Review modal: keep it inside the viewport with a scrollable body,
+   a fixed header and a pinned action footer that's always reachable. --- */
+#review-modal .modal-content {
+    display: flex;
+    flex-direction: column;
+    max-height: 90vh;
+    padding: 0;            /* children own their padding so the body can scroll */
+    overflow: hidden;      /* clip to rounded corners; #modal-body handles scroll */
+}
+#review-modal .modal-content > h2 {
+    flex: 0 0 auto;
+    margin: 0;
+    padding: 24px 32px 14px;
+    border-bottom: 1px solid #333;
+    background: var(--card-bg);
+}
+#review-modal #modal-body {
+    flex: 1 1 auto;
+    min-height: 0;         /* critical: lets the flex child shrink and scroll */
+    overflow-y: auto;
+    padding: 0 32px;
+}
+#review-modal .modal-actions {
+    flex: 0 0 auto;
+    margin: 0;
+    padding: 16px 32px;
+    border-top: 1px solid #333;
+    background: var(--card-bg);
+    flex-wrap: wrap;       /* buttons wrap instead of overflowing on small screens */
+}
+
+/* Lock the page behind any open modal so it can't scroll underneath. */
+body.modal-open {
+    overflow: hidden;
+}
+
+@media (max-width: 600px) {
+    #review-modal .modal-content > h2 { padding: 18px 18px 12px; }
+    #review-modal #modal-body { padding: 0 18px; }
+    #review-modal .modal-actions { padding: 12px 18px; }
 }
 
 /* Loading Overlay */

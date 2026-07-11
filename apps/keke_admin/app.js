@@ -582,6 +582,7 @@ window.reviewDriver = async function(userId) {
     `;
 
     modal.classList.remove('hidden');
+    document.body.classList.add('modal-open'); // stop the page behind from scrolling
 
     if (driver.licenseUrl)      loadDocThumbnail(userId, 'license',       'thumb-license');
     else document.getElementById('thumb-license').innerHTML = '<div class="doc-thumb missing"><i class="fas fa-minus"></i></div>';
@@ -694,6 +695,15 @@ function createReviewModal() {
         };
 
         document.getElementById('btn-close').onclick = closeModal;
+
+        // Escape closes the enlarged image first (if open), otherwise the modal.
+        document.addEventListener('keydown', (e) => {
+            if (e.key !== 'Escape') return;
+            const lb = document.getElementById('kyc-lightbox');
+            if (lb && lb.style.display !== 'none') { lb.style.display = 'none'; return; }
+            const m = document.getElementById('review-modal');
+            if (m && !m.classList.contains('hidden')) closeModal();
+        });
     }
     return modal;
 }
@@ -701,6 +711,9 @@ function createReviewModal() {
 function closeModal() {
     const modal = document.getElementById('review-modal');
     if (modal) modal.classList.add('hidden');
+    document.body.classList.remove('modal-open'); // re-enable page scroll
+    const lb = document.getElementById('kyc-lightbox');
+    if (lb) lb.style.display = 'none';
     selectedDriverId = null;
     activeDocUrls.forEach(url => URL.revokeObjectURL(url));
     activeDocUrls = [];

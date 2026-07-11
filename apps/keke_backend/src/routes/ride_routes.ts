@@ -37,6 +37,11 @@ router.get("/active/passenger", authMiddleware, async (req: AuthRequest, res: Re
                     plate: driver.vehiclePlate,
                     model: driver.vehicleModel,
                     phone: driverUser?.phone ?? null,
+                    // Include the verified KYC selfie so the passenger still sees
+                    // the driver photo after a reconnect / app resume (the live
+                    // `ride:assigned` socket event already sends this; this REST
+                    // fallback previously omitted it, so the photo vanished).
+                    photoUrl: driver.photoUrl ?? null,
                 };
             }
         }

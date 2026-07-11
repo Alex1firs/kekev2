@@ -11,6 +11,14 @@ import { redis } from '../config/redis';
 import { WalletService, DEBT_CASH_BLOCK, DEBT_HARD_BLOCK } from '../services/wallet_service';
 import { In } from 'typeorm';
 import { SosAlert, SosAlertStatus } from '../models/SosAlert';
+import {
+    RideIntegrityConfig,
+    getDriverLiveLocation,
+    evaluateProximityGate,
+    evaluateCompletion,
+    mergeReasons,
+    LatLng,
+} from '../services/ride_integrity_service';
 
 const _jwtSecret = process.env.JWT_SECRET;
 if (!_jwtSecret) {
@@ -372,6 +380,19 @@ export class SocketHandler {
 
                     this.driverRideMap.set(data.driverId, data.rideId);
 
+                    // Anti-fraud evidence: record where the driver was when they
+                    // accepted (no gate here — accepting while stationary is normal).
+                    try {
+                        const acceptLoc = await getDriverLiveLocation(data.driverId);
+                        await rideRepo.update(data.rideId, {
+                            acceptedAt: new Date(),
+                            acceptLat: acceptLoc?.lat ?? null,
+                            acceptLng: acceptLoc?.lng ?? null,
+                        } as any);
+                    } catch (e: any) {
+                        log.warn(`[INTEGRITY] accept evidence capture failed for ${data.rideId}: ${e?.message}`);
+                    }
+
                     const driverUser = await AppDataSource.getRepository(User).findOne({ where: { id: data.driverId } });
 
                     const driverDetails = {
@@ -416,7 +437,26 @@ export class SocketHandler {
                 try {
                     const ride = await this.validateRideState(data.rideId, ['accepted']);
                     if (!ride) return;
-                    await AppDataSource.getRepository(Ride).update(data.rideId, { status: 'arrived' as any });
+
+                    // Geofence: driver must be at the pickup to mark arrived.
+                    const live = await getDriverLiveLocation(data.driverId);
+                    const pickup: LatLng | null = (ride.pickupLat != null && ride.pickupLng != null)
+                        ? { lat: Number(ride.pickupLat), lng: Number(ride.pickupLng) } : null;
+                    const gate = evaluateProximityGate(live, pickup, RideIntegrityConfig.pickupArrivalRadiusM);
+                    log.info(JSON.stringify({ event: 'ride_arrived_geocheck', rideId: data.rideId, driverId: data.driverId, distanceM: gate.distanceM, radiusM: RideIntegrityConfig.pickupArrivalRadiusM, block: gate.block, flagged: gate.flagged, outcome: gate.outcome, fresh: live?.fresh ?? false }));
+                    if (gate.block) {
+                        socket.emit('ride:error', { code: 'TOO_FAR_FROM_PICKUP', message: `You must be at the pickup point to mark arrived — you appear to be about ${Math.round(gate.distanceM || 0)}m away.` });
+                        return;
+                    }
+
+                    await AppDataSource.getRepository(Ride).update(data.rideId, {
+                        status: 'arrived' as any,
+                        arrivedAt: new Date(),
+                        arrivedLat: gate.driverLoc?.lat ?? null,
+                        arrivedLng: gate.driverLoc?.lng ?? null,
+                        arrivedPickupDistanceM: gate.distanceM,
+                        ...(gate.flagged ? { suspicious: true, suspiciousReason: mergeReasons(ride.suspiciousReason, [`arrived:${gate.outcome}`]) } : {}),
+                    } as any);
                     this.broadcastToRide(data.rideId, 'ride:status_update', { rideId: data.rideId, status: 'arrived' });
                     NotificationService.sendToUser(ride.passengerId, UserRole.PASSENGER, 'Driver Arrived!', 'Your driver has reached the pickup location.', {
                         type: 'RIDE_ARRIVED', rideId: data.rideId, intent: 'active',
@@ -435,7 +475,26 @@ export class SocketHandler {
                 try {
                     const ride = await this.validateRideState(data.rideId, ['arrived', 'accepted']);
                     if (!ride) return;
-                    await AppDataSource.getRepository(Ride).update(data.rideId, { status: 'in_progress' as any });
+
+                    // Geofence: the trip may only start from the pickup point.
+                    const live = await getDriverLiveLocation(data.driverId);
+                    const pickup: LatLng | null = (ride.pickupLat != null && ride.pickupLng != null)
+                        ? { lat: Number(ride.pickupLat), lng: Number(ride.pickupLng) } : null;
+                    const gate = evaluateProximityGate(live, pickup, RideIntegrityConfig.pickupArrivalRadiusM);
+                    log.info(JSON.stringify({ event: 'ride_start_geocheck', rideId: data.rideId, driverId: data.driverId, distanceM: gate.distanceM, radiusM: RideIntegrityConfig.pickupArrivalRadiusM, block: gate.block, flagged: gate.flagged, outcome: gate.outcome, fresh: live?.fresh ?? false }));
+                    if (gate.block) {
+                        socket.emit('ride:error', { code: 'TOO_FAR_FROM_PICKUP', message: `You must be at the passenger's pickup point to start the trip — you appear to be about ${Math.round(gate.distanceM || 0)}m away.` });
+                        return;
+                    }
+
+                    await AppDataSource.getRepository(Ride).update(data.rideId, {
+                        status: 'in_progress' as any,
+                        startedAt: new Date(),
+                        startLat: gate.driverLoc?.lat ?? null,
+                        startLng: gate.driverLoc?.lng ?? null,
+                        startPickupDistanceM: gate.distanceM,
+                        ...(gate.flagged ? { suspicious: true, suspiciousReason: mergeReasons(ride.suspiciousReason, [`start:${gate.outcome}`]) } : {}),
+                    } as any);
                     // Send 'started' to match the passenger UI's expected status string
                     this.broadcastToRide(data.rideId, 'ride:status_update', { rideId: data.rideId, status: 'started' });
                     NotificationService.sendToUser(ride.passengerId, UserRole.PASSENGER, 'Trip Started', 'You are now on your trip.', {
@@ -458,41 +517,96 @@ export class SocketHandler {
 
                     this.driverRideMap.delete(data.driverId);
 
-                    // Use driver-supplied fare if it's ≥ original (covers wait surcharge);
-                    // fall back to the stored fare if driver sends nothing or less.
-                    const baseFare = Number(ride.fare);
-                    const fareToCharge = (data.totalFare && data.totalFare >= baseFare) ? data.totalFare : baseFare;
                     const isCashPayment = ride.paymentMode === 'cash';
+                    const rideRepo = AppDataSource.getRepository(Ride);
 
-                    log.info(`Processing financials for completed ride ${data.rideId} — fare: ${fareToCharge}`);
+                    // SERVER-AUTHORITATIVE FARE: never trust the client-supplied
+                    // amount for charging. Charge the stored quoted fare; the
+                    // client value is recorded only as audit evidence.
+                    const baseFare = Number(ride.fare);
+                    const finalFare = baseFare;
+                    const clientSuppliedFare = (typeof data.totalFare === 'number') ? data.totalFare : null;
+                    const fareDifference = clientSuppliedFare != null ? clientSuppliedFare - finalFare : null;
+
+                    // ANTI-FRAUD: validate real movement using the driver's live GPS.
+                    const endLive = await getDriverLiveLocation(data.driverId);
+                    const startLoc: LatLng | null = (ride.startLat != null && ride.startLng != null)
+                        ? { lat: Number(ride.startLat), lng: Number(ride.startLng) } : null;
+                    const destination: LatLng | null = (ride.destinationLat != null && ride.destinationLng != null)
+                        ? { lat: Number(ride.destinationLat), lng: Number(ride.destinationLng) } : null;
+                    const integrity = evaluateCompletion({
+                        startLoc,
+                        endLive,
+                        destination,
+                        startedAt: ride.startedAt ? new Date(ride.startedAt) : null,
+                        now: new Date(),
+                    });
+
+                    // If the client tried to inflate the fare, that is itself a flag.
+                    const reasons = [...integrity.reasons];
+                    if (fareDifference != null && fareDifference > 0) reasons.push('client_fare_above_quote');
+                    const suspicious = reasons.length > 0;
+                    const holdPayment = integrity.holdPayment; // only HARD anomalies hold money
+
+                    log.info(JSON.stringify({
+                        event: 'ride_complete_integrity', rideId: data.rideId, driverId: data.driverId,
+                        paymentMode: ride.paymentMode, finalFare, clientSuppliedFare, fareDifference,
+                        endDestinationDistanceM: integrity.endDestinationDistanceM,
+                        movementDistanceM: integrity.movementDistanceM, tripDurationSec: integrity.durationSec,
+                        endFresh: endLive?.fresh ?? false, suspicious, holdPayment, reasons,
+                    }));
+
+                    // Persist all evidence up front (regardless of the money decision).
+                    await rideRepo.update(data.rideId, {
+                        endLat: integrity.endLoc?.lat ?? null,
+                        endLng: integrity.endLoc?.lng ?? null,
+                        endDestinationDistanceM: integrity.endDestinationDistanceM,
+                        movementDistanceM: integrity.movementDistanceM,
+                        tripDurationSec: integrity.durationSec,
+                        clientSuppliedFare,
+                        finalFare,
+                        suspicious: suspicious || undefined,
+                        suspiciousReason: suspicious ? mergeReasons(ride.suspiciousReason, reasons) : ride.suspiciousReason,
+                    } as any);
 
                     let paymentSucceeded = false;
-                    try {
-                        await WalletService.postRideFinancials({
-                            rideId: data.rideId,
-                            passengerId: ride.passengerId,
-                            driverId: ride.driverId,
-                            totalFare: fareToCharge,
-                            isCash: isCashPayment,
-                        });
-                        paymentSucceeded = true;
-                    } catch (e: any) {
-                        log.error(JSON.stringify({ level: 'error', event: 'payment_failed', rideId: data.rideId, error: e.message }));
-                        await AppDataSource.getRepository(Ride).update(data.rideId, { paymentFailed: true } as any);
-                        // Notify admin for manual resolution; driver/passenger still see ride as done
-                        this.io.to('admin').emit('ride:payment_failed', { rideId: data.rideId, error: e.message });
-                        socket.emit('ride:payment_error', {
-                            rideId: data.rideId,
-                            message: 'Payment processing failed. Our team will resolve this shortly.',
-                        });
+                    let held = false;
+
+                    if (holdPayment) {
+                        // HOLD: do NOT debit the passenger / settle commission. Mark
+                        // for admin review; ride still completes so nobody is stuck.
+                        held = true;
+                        await rideRepo.update(data.rideId, { paymentHeld: true, suspicious: true } as any);
+                        log.warn(JSON.stringify({ level: 'warn', event: 'payment_held_for_review', rideId: data.rideId, reasons }));
+                        this.io.to('admin').emit('ride:held_for_review', { rideId: data.rideId, reasons, finalFare, paymentMode: ride.paymentMode });
+                    } else {
+                        // Normal settlement using the server-authoritative fare.
+                        log.info(`Processing financials for completed ride ${data.rideId} — fare: ${finalFare}`);
+                        try {
+                            await WalletService.postRideFinancials({
+                                rideId: data.rideId,
+                                passengerId: ride.passengerId,
+                                driverId: ride.driverId,
+                                totalFare: finalFare,
+                                isCash: isCashPayment,
+                            });
+                            paymentSucceeded = true;
+                        } catch (e: any) {
+                            log.error(JSON.stringify({ level: 'error', event: 'payment_failed', rideId: data.rideId, error: e.message }));
+                            await rideRepo.update(data.rideId, { paymentFailed: true } as any);
+                            this.io.to('admin').emit('ride:payment_failed', { rideId: data.rideId, error: e.message });
+                            socket.emit('ride:payment_error', {
+                                rideId: data.rideId,
+                                message: 'Payment processing failed. Our team will resolve this shortly.',
+                            });
+                        }
                     }
 
                     // Always mark the ride completed so driver and passenger are never stuck.
-                    // paymentFailed=true is the signal for admin to reconcile manually.
-                    const rideRepo = AppDataSource.getRepository(Ride);
                     await rideRepo.update(data.rideId, { status: 'completed' as any, completedAt: new Date() });
 
-                    this.io.to('admin').emit('ride:status_update', { rideId: data.rideId, status: paymentSucceeded ? 'completed' : 'completed_payment_failed' });
+                    const adminStatus = held ? 'completed_held_for_review' : (paymentSucceeded ? 'completed' : 'completed_payment_failed');
+                    this.io.to('admin').emit('ride:status_update', { rideId: data.rideId, status: adminStatus });
                     this.broadcastToRide(data.rideId, 'ride:finished', { rideId: data.rideId });
 
                     NotificationService.sendToUser(data.passengerId, UserRole.PASSENGER, 'Trip Completed', 'Hope you enjoyed the ride!', {

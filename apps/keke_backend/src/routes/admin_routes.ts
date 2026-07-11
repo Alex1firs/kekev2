@@ -10,6 +10,7 @@ import { SettingService } from "../services/setting_service";
 import { SosAlert, SosAlertStatus } from "../models/SosAlert";
 import { Ride } from "../models/Ride";
 import { User } from "../models/User";
+import { WalletService } from "../services/wallet_service";
 import path from "path";
 import fs from "fs";
 
@@ -93,6 +94,7 @@ router.get("/drivers/:userId/documents/:docType", async (req: Request, res: Resp
         if (docType === "license") filename = profile.licenseUrl;
         else if (docType === "id_card") filename = profile.idCardUrl;
         else if (docType === "vehicle_paper") filename = profile.vehiclePaperUrl;
+        else if (docType === "photo") filename = profile.photoUrl;
 
         if (!filename) return res.status(404).json({ error: "Document not uploaded" });
 
@@ -420,6 +422,82 @@ router.post("/sos/:id/resolve", async (req: Request, res: Response) => {
         await auditRepo.save(audit);
 
         res.json(alert);
+    } catch (err: any) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * GET /admin/rides/flagged
+ * Rides flagged as suspicious or with payment held for review.
+ */
+router.get("/rides/flagged", async (req: Request, res: Response) => {
+    try {
+        const rideRepo = AppDataSource.getRepository(Ride);
+        const rides = await rideRepo.find({
+            where: [{ suspicious: true }, { paymentHeld: true }],
+            order: { updatedAt: "DESC" },
+            take: 200,
+        });
+        res.json(rides);
+    } catch (err: any) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * POST /admin/rides/:rideId/release
+ * Release a held ride's payment — runs the (previously withheld) settlement
+ * using the backend-authoritative finalFare, then clears the hold.
+ */
+router.post("/rides/:rideId/release", async (req: Request, res: Response) => {
+    try {
+        const rideId = req.params.rideId as string;
+        const rideRepo = AppDataSource.getRepository(Ride);
+        const ride = await rideRepo.findOne({ where: { rideId } });
+        if (!ride) return res.status(404).json({ error: "Ride not found" });
+        if (!ride.paymentHeld) return res.status(400).json({ error: "Ride payment is not held" });
+
+        const amount = Number(ride.finalFare ?? ride.fare);
+        await WalletService.postRideFinancials({
+            rideId,
+            passengerId: ride.passengerId,
+            driverId: ride.driverId,
+            totalFare: amount,
+            isCash: ride.paymentMode === "cash",
+        });
+        await rideRepo.update(rideId, { paymentHeld: false } as any);
+
+        const adminId = `admin_${(req.headers['x-admin-key'] as string).slice(-8)}`;
+        await AppDataSource.getRepository(AuditLog).save(AppDataSource.getRepository(AuditLog).create({
+            adminId, action: "RELEASED_HELD_RIDE_PAYMENT", entityType: "RIDE", entityId: rideId,
+            details: { amount, paymentMode: ride.paymentMode },
+        }));
+        res.json({ message: "Payment released.", rideId, amount });
+    } catch (err: any) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * POST /admin/rides/:rideId/void
+ * Dismiss a held ride without charging (e.g. confirmed fraud / no valid trip).
+ */
+router.post("/rides/:rideId/void", async (req: Request, res: Response) => {
+    try {
+        const rideId = req.params.rideId as string;
+        const rideRepo = AppDataSource.getRepository(Ride);
+        const ride = await rideRepo.findOne({ where: { rideId } });
+        if (!ride) return res.status(404).json({ error: "Ride not found" });
+
+        await rideRepo.update(rideId, { paymentHeld: false, paymentFailed: true } as any);
+
+        const adminId = `admin_${(req.headers['x-admin-key'] as string).slice(-8)}`;
+        await AppDataSource.getRepository(AuditLog).save(AppDataSource.getRepository(AuditLog).create({
+            adminId, action: "VOIDED_HELD_RIDE_PAYMENT", entityType: "RIDE", entityId: rideId,
+            details: { reason: (req.body?.reason ?? null), suspiciousReason: ride.suspiciousReason },
+        }));
+        res.json({ message: "Held payment voided — passenger not charged.", rideId });
     } catch (err: any) {
         res.status(500).json({ error: err.message });
     }

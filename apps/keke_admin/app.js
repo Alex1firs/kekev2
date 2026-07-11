@@ -560,6 +560,10 @@ window.reviewDriver = async function(userId) {
                     <div class="doc-thumb loading" id="thumb-vehicle"></div>
                     <span>Vehicle Paper ${driver.vehiclePaperUrl ? '✅' : '❌'}</span>
                 </div>
+                <div class="doc-item">
+                    <div class="doc-thumb loading" id="thumb-photo"></div>
+                    <span>Driver Selfie ${driver.photoUrl ? '✅' : '❌'}</span>
+                </div>
             </div>
 
             ${!isPendingReview && !isApproved && !isSuspended ? `
@@ -583,6 +587,8 @@ window.reviewDriver = async function(userId) {
     else document.getElementById('thumb-id').innerHTML = '<div class="doc-thumb missing"><i class="fas fa-minus"></i></div>';
     if (driver.vehiclePaperUrl) loadDocThumbnail(userId, 'vehicle_paper', 'thumb-vehicle');
     else document.getElementById('thumb-vehicle').innerHTML = '<div class="doc-thumb missing"><i class="fas fa-minus"></i></div>';
+    if (driver.photoUrl)        loadDocThumbnail(userId, 'photo',         'thumb-photo');
+    else document.getElementById('thumb-photo').innerHTML = '<div class="doc-thumb missing"><i class="fas fa-minus"></i></div>';
 
     // Enable/disable action buttons based on current status
     document.getElementById('btn-approve').disabled   = !isPendingReview;

@@ -144,6 +144,13 @@ router.get("/status/:userId", authMiddleware, async (req: AuthRequest, res: Resp
             lastName: profile.lastName,
             commissionDebt,
             ninVerified: profile.ninVerified,
+            // Document presence lets the app rehydrate which KYC docs are already
+            // uploaded (incl. the selfie) after a restart, so a returning driver
+            // isn't asked to re-capture them.
+            licenseUrl: profile.licenseUrl ?? null,
+            idCardUrl: profile.idCardUrl ?? null,
+            vehiclePaperUrl: profile.vehiclePaperUrl ?? null,
+            photoUrl: profile.photoUrl ?? null,
         });
     } catch (err: any) {
         console.error('[DRIVER] Status fetch error:', err?.message);

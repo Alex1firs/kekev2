@@ -6,6 +6,34 @@ import '../../auth/application/auth_controller.dart';
 import '../application/driver_controller.dart';
 import '../domain/driver_profile.dart';
 
+/// Single source of truth for whether a driver may submit their documents for
+/// review, and — when they may not — the exact reason to show them.
+///
+/// Returns `null` when ALL required KYC documents (license, ID card, vehicle
+/// paper AND the driver selfie) are present, meaning submission can proceed.
+/// Otherwise returns a human-readable message. The selfie is called out
+/// explicitly because it is the step most often missed, and submission must
+/// never advance to "Document Under Review" while `photoUrl` is null.
+String? onboardingDocsBlockReason(DriverProfile p) {
+  final bool allDocsUploaded = p.licenseUrl != null &&
+      p.idCardUrl != null &&
+      p.vehiclePaperUrl != null &&
+      p.photoUrl != null;
+  if (allDocsUploaded) return null;
+
+  final bool onlySelfieMissing = p.licenseUrl != null &&
+      p.idCardUrl != null &&
+      p.vehiclePaperUrl != null &&
+      p.photoUrl == null;
+  if (onlySelfieMissing) {
+    return 'Please take a selfie to complete your verification.';
+  }
+  if (p.photoUrl == null) {
+    return 'Please upload all documents and take a selfie to complete your verification.';
+  }
+  return 'Please upload all required documents before submitting.';
+}
+
 class OnboardingScreen extends ConsumerStatefulWidget {
   const OnboardingScreen({super.key});
 
@@ -67,10 +95,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     final driverState = ref.watch(driverControllerProvider);
     final profile = driverState.profile;
 
-    final bool allDocsUploaded = profile.licenseUrl != null &&
-        profile.idCardUrl != null &&
-        profile.vehiclePaperUrl != null &&
-        profile.photoUrl != null;
+    final bool allDocsUploaded = onboardingDocsBlockReason(profile) == null;
 
     return Scaffold(
       backgroundColor: AppColors.snow,
@@ -156,8 +181,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                       ),
                       elevation: 0,
                     ),
-                    onPressed: driverState.isLoading ||
-                            (_currentStep == 1 && !allDocsUploaded)
+                    onPressed: driverState.isLoading
                         ? null
                         : () {
                             if (_currentStep == 0) {
@@ -194,7 +218,14 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                                 return;
                               }
                             }
-                            if (_currentStep == 1 && !allDocsUploaded) {
+                            final String? blockReason =
+                                onboardingDocsBlockReason(profile);
+                            if (_currentStep == 1 && blockReason != null) {
+                              // Give the driver a specific reason instead of a
+                              // silently-disabled button. The selfie is the most
+                              // commonly missed step, so it is called out
+                              // explicitly by onboardingDocsBlockReason().
+                              final String message = blockReason;
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
                                   backgroundColor: AppColors.error,
@@ -202,7 +233,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                                   shape: RoundedRectangleBorder(
                                       borderRadius: BorderRadius.circular(12)),
                                   content: Text(
-                                    'Please upload all 4 required documents.',
+                                    message,
                                     style: AppTextStyles.body(color: AppColors.white),
                                   ),
                                 ),
@@ -221,9 +252,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                             ),
                           )
                         : Text(
-                            _currentStep == 1 && allDocsUploaded
-                                ? 'Submit for Review'
-                                : 'Continue',
+                            _currentStep == 1 ? 'Submit for Review' : 'Continue',
                             style: AppTextStyles.body(
                               color: AppColors.charcoal,
                               weight: FontWeight.w700,
@@ -350,15 +379,6 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         ),
         const SizedBox(height: 12),
         _DocTile(
-          title: 'Vehicle Papers',
-          icon: Icons.description_outlined,
-          type: 'vehicle_paper',
-          isUploaded: profile.vehiclePaperUrl != null,
-          isLoading: driverState.isLoading,
-          onUpload: _pickAndUpload,
-        ),
-        const SizedBox(height: 12),
-        _DocTile(
           title: 'NIN / ID Card',
           icon: Icons.credit_card_outlined,
           type: 'id_card',
@@ -368,11 +388,22 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         ),
         const SizedBox(height: 12),
         _DocTile(
+          title: 'Vehicle Papers',
+          icon: Icons.description_outlined,
+          type: 'vehicle_paper',
+          isUploaded: profile.vehiclePaperUrl != null,
+          isLoading: driverState.isLoading,
+          onUpload: _pickAndUpload,
+        ),
+        const SizedBox(height: 12),
+        _DocTile(
           title: 'Driver Selfie',
+          subtitle: 'Required — take a clear selfie of your face',
           icon: Icons.face_rounded,
           type: 'photo',
           isUploaded: profile.photoUrl != null,
           isLoading: driverState.isLoading,
+          highlight: true,
           onUpload: _pickAndUpload,
         ),
         const SizedBox(height: 16),
@@ -455,18 +486,22 @@ class _StepProgress extends StatelessWidget {
 
 class _DocTile extends StatelessWidget {
   final String title;
+  final String? subtitle;
   final IconData icon;
   final String type;
   final bool isUploaded;
   final bool isLoading;
+  final bool highlight;
   final Future<void> Function(String) onUpload;
 
   const _DocTile({
     required this.title,
+    this.subtitle,
     required this.icon,
     required this.type,
     required this.isUploaded,
     required this.isLoading,
+    this.highlight = false,
     required this.onUpload,
   });
 
@@ -480,7 +515,10 @@ class _DocTile extends StatelessWidget {
           color: AppColors.white,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: isUploaded ? AppColors.success.withOpacity(0.4) : AppColors.border,
+            color: isUploaded
+                ? AppColors.success.withOpacity(0.4)
+                : (highlight ? AppColors.primary : AppColors.border),
+            width: (!isUploaded && highlight) ? 1.6 : 1,
           ),
           boxShadow: const [
             BoxShadow(color: Color(0x08000000), blurRadius: 6, offset: Offset(0, 2)),
@@ -517,9 +555,13 @@ class _DocTile extends StatelessWidget {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    isUploaded ? 'Uploaded — tap to retake' : 'Tap to capture photo',
+                    isUploaded
+                        ? 'Uploaded — tap to retake'
+                        : (subtitle ?? 'Tap to capture photo'),
                     style: AppTextStyles.caption(
-                      color: isUploaded ? AppColors.success : AppColors.midGray,
+                      color: isUploaded
+                          ? AppColors.success
+                          : (highlight ? AppColors.primary : AppColors.midGray),
                     ),
                   ),
                 ],

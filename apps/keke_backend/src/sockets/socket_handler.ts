@@ -255,6 +255,12 @@ export class SocketHandler {
                         try {
                             await AppDataSource.getRepository(Ride).update(rideId, { status: 'failed' as any });
                             this.io.to(`ride:${rideId}`).emit('ride:failed', { message: 'No drivers available nearby' });
+                            if (passengerId) {
+                                NotificationService.sendToUser(passengerId, UserRole.PASSENGER, 'No Driver Found',
+                                    "We couldn't find a nearby driver. Please try again.", {
+                                    type: 'NO_DRIVER', rideId, intent: 'retry',
+                                });
+                            }
                         } catch (_) {}
                         this.rideExclusions.delete(rideId);
                         this.activeDispatches.delete(rideId);
@@ -612,6 +618,20 @@ export class SocketHandler {
                     NotificationService.sendToUser(data.passengerId, UserRole.PASSENGER, 'Trip Completed', 'Hope you enjoyed the ride!', {
                         type: 'TRIP_COMPLETED', rideId: data.rideId, intent: 'receipt',
                     });
+
+                    // Payment held for review — tell both parties so nobody thinks they were charged/paid.
+                    if (held) {
+                        NotificationService.sendToUser(data.passengerId, UserRole.PASSENGER, 'Payment Under Review',
+                            "Your payment for this trip is being reviewed. You won't be charged until it's cleared.", {
+                            type: 'PAYMENT_HELD', rideId: data.rideId, intent: 'receipt',
+                        });
+                        if (ride.driverId) {
+                            NotificationService.sendToUser(ride.driverId, UserRole.DRIVER, 'Ride Under Review',
+                                'This ride was completed but payment is held for review.', {
+                                type: 'PAYMENT_HELD', rideId: data.rideId, intent: 'receipt',
+                            });
+                        }
+                    }
                 } catch (err) {
                     log.error('Ride completion lifecycle failed:', err);
                     socket.emit('ride:error', { code: 'INTERNAL_ERROR', message: 'Could not complete the ride right now. Please try again.' });
@@ -760,6 +780,12 @@ export class SocketHandler {
         if (finalRide && finalRide.status !== 'canceled' as any && !await this.isRideAssigned(rideId)) {
             await finalRepo.update(rideId, { status: 'failed' as any });
             this.io.to(`ride:${rideId}`).emit('ride:failed', { message: 'No drivers available nearby' });
+            if (finalRide.passengerId) {
+                NotificationService.sendToUser(finalRide.passengerId, UserRole.PASSENGER, 'No Driver Found',
+                    "We couldn't find a nearby driver. Please try again.", {
+                    type: 'NO_DRIVER', rideId, intent: 'retry',
+                });
+            }
             this.rideExclusions.delete(rideId);
             this.activeDispatches.delete(rideId);
         }

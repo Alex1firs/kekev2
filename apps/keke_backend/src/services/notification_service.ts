@@ -21,6 +21,7 @@ export class NotificationService {
                 );
                 admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
                 this.initialized = true;
+                console.log(`[NOTIFICATION_SERVICE] Firebase initialized from env var (project: ${serviceAccount.project_id}). Push ENABLED.`);
                 return;
             } catch (e) {
                 console.error('[NOTIFICATION_SERVICE] Failed to parse FIREBASE_SERVICE_ACCOUNT_JSON env var');
@@ -33,8 +34,9 @@ export class NotificationService {
             const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, 'utf8'));
             admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
             this.initialized = true;
+            console.log(`[NOTIFICATION_SERVICE] Firebase initialized from file (project: ${serviceAccount.project_id}). Push ENABLED.`);
         } else {
-            console.warn('[NOTIFICATION_SERVICE] No Firebase credentials found. Push notifications disabled.');
+            console.warn('[NOTIFICATION_SERVICE] No Firebase credentials found. Push notifications DISABLED.');
         }
     }
 

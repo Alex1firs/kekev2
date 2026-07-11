@@ -46,6 +46,8 @@ services:
       SMILE_ID_PARTNER_ID: ${SMILE_ID_PARTNER_ID}
       SMILE_ID_API_KEY: ${SMILE_ID_API_KEY}
       SMILE_ID_USE_SANDBOX: ${SMILE_ID_USE_SANDBOX}
+      # Base64-encoded Firebase service-account JSON. Without this, push is disabled.
+      FIREBASE_SERVICE_ACCOUNT_JSON: ${FIREBASE_SERVICE_ACCOUNT_JSON}
     depends_on:
       postgres_shared:
         condition: service_healthy
@@ -79,6 +81,7 @@ services:
       SMILE_ID_PARTNER_ID: ${SMILE_ID_PARTNER_ID}
       SMILE_ID_API_KEY: ${SMILE_ID_API_KEY}
       SMILE_ID_USE_SANDBOX: ${SMILE_ID_USE_SANDBOX}
+      FIREBASE_SERVICE_ACCOUNT_JSON: ${FIREBASE_SERVICE_ACCOUNT_JSON}
     depends_on:
       postgres_shared:
         condition: service_healthy

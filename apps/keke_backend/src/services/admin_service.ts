@@ -5,7 +5,8 @@ import { Wallet } from "../models/Wallet";
 import { LedgerEntry, BalanceType, TransactionType } from "../models/LedgerEntry";
 import { PayoutRecord, PayoutStatus } from "../models/PayoutRecord";
 import { AuditLog } from "../models/AuditLog";
-import { User } from "../models/User";
+import { User, UserRole } from "../models/User";
+import { NotificationService } from "./notification_service";
 import { redis } from "../config/redis";
 
 export class AdminService {
@@ -119,6 +120,26 @@ export class AdminService {
           });
         } catch (err) {
           console.error("Audit logging failed (Operation Succeeded):", err);
+        }
+
+        // --- Push notification to the driver about their KYC/account decision ---
+        // Fire-and-forget: never let a notification failure affect the status change.
+        try {
+          if (status === DriverStatus.APPROVED) {
+            NotificationService.sendToUser(userId, UserRole.DRIVER, 'Account Approved',
+              'Your driver account has been approved. You can now receive rides.',
+              { type: 'DRIVER_APPROVED', intent: 'status' });
+          } else if (status === DriverStatus.REJECTED) {
+            NotificationService.sendToUser(userId, UserRole.DRIVER, 'KYC Review Update',
+              'Your driver application needs attention. Open the app to view details.',
+              { type: 'DRIVER_REJECTED', intent: 'status' });
+          } else if (status === DriverStatus.SUSPENDED) {
+            NotificationService.sendToUser(userId, UserRole.DRIVER, 'Account Suspended',
+              'Your driver account has been suspended. Please contact support for details.',
+              { type: 'DRIVER_SUSPENDED', intent: 'status' });
+          }
+        } catch (err) {
+          console.error("Driver status notification failed (Operation Succeeded):", err);
         }
 
         return saved;

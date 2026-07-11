@@ -85,6 +85,10 @@ export class AdminService {
             if (!allDocsPresent) {
                 throw new Error("Cannot approve driver without all required documents (Selfie, License, ID, Vehicle Papers)");
             }
+            // No external NIMC API yet: admin approval IS the NIN manual review.
+            // Mark it reviewed so the driver app (which gates going online on
+            // ninVerified) unblocks. Admin has seen the NIN + ID + selfie in review.
+            profile.ninVerified = true;
         }
 
         const oldStatus = profile.status;

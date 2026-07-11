@@ -758,34 +758,54 @@ class DriverController extends StateNotifier<DriverState> {
   }
 
   void toggleOnline() {
-    if (state.profile.status != DriverStatus.approved) {
-      return;
-    }
+    final p = state.profile;
 
-    if (!state.profile.ninVerified) {
-      state = state.copyWith(errorMessage: 'Please verify your NIN before going online.');
-      _scheduleErrorClear();
-      return;
-    }
-
-    if (state.profile.debtAmount >= 5000 && state.operationStatus == OperationStatus.offline) {
-      state = state.copyWith(errorMessage: 'Account blocked — visit Finance to clear your debt and go online.');
-      _scheduleErrorClear();
-      return;
-    }
-
-    if (state.operationStatus == OperationStatus.offline) {
-      state = state.copyWith(operationStatus: OperationStatus.available);
-      _startHeartbeat();
-      _startLocationForegroundService();
-    } else {
+    // Going OFFLINE is always allowed when currently online.
+    if (state.operationStatus != OperationStatus.offline) {
       state = state.copyWith(operationStatus: OperationStatus.offline);
       _heartbeatTimer?.cancel();
       _stopLocationForegroundService();
       if (_socketService != null) {
         _socketService!.emit('driver:offline', {'driverId': _userId});
       }
+      return;
     }
+
+    // Going ONLINE — check eligibility and surface the ACCURATE reason.
+    // Admin approval is the source of truth. Since there is no external NIMC
+    // API yet, admin approval already covers manual NIN review, so we do NOT
+    // gate on ninVerified separately.
+    switch (p.status) {
+      case DriverStatus.approved:
+        break; // eligible
+      case DriverStatus.pendingApproval:
+        state = state.copyWith(errorMessage: 'Your account is still pending admin approval.');
+        _scheduleErrorClear();
+        return;
+      case DriverStatus.rejected:
+        state = state.copyWith(errorMessage: 'Your application needs attention. Open your profile to view details.');
+        _scheduleErrorClear();
+        return;
+      case DriverStatus.suspended:
+        state = state.copyWith(errorMessage: 'Your account is suspended. Please contact support.');
+        _scheduleErrorClear();
+        return;
+      default: // pendingDocuments / unregistered
+        state = state.copyWith(errorMessage: 'Please complete your KYC documents before going online.');
+        _scheduleErrorClear();
+        return;
+    }
+
+    if (p.debtAmount >= 5000) {
+      state = state.copyWith(errorMessage: 'Account blocked — visit Finance to clear your debt and go online.');
+      _scheduleErrorClear();
+      return;
+    }
+
+    // Approved and clear — go online.
+    state = state.copyWith(operationStatus: OperationStatus.available);
+    _startHeartbeat();
+    _startLocationForegroundService();
   }
 
   void _startLocationForegroundService() {

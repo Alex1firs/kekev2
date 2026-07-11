@@ -536,6 +536,8 @@ window.reviewDriver = async function(userId) {
             <div style="display:flex;justify-content:space-between;align-items:flex-start;">
                 <div>
                     <p><strong>Name:</strong> ${escapeHtml(driver.firstName)} ${escapeHtml(driver.lastName)}</p>
+                    <p><strong>Email:</strong> ${driver.email ? escapeHtml(driver.email) : '<em style="color:#888;">N/A</em>'}</p>
+                    <p><strong>Phone:</strong> ${driver.phone ? escapeHtml(driver.phone) : '<em style="color:#888;">N/A</em>'}</p>
                     <p><strong>Vehicle:</strong> ${escapeHtml(driver.vehicleModel)} (${escapeHtml(driver.vehiclePlate)})</p>
                     <p><strong>NIN:</strong> ${driver.nin ? escapeHtml(driver.nin) : '<em style="color:#888;">Not Provided</em>'} ${driver.ninVerified ? '<span style="color:#00e676;font-size:0.85em;margin-left:6px;"><i class="fas fa-check-circle"></i> Verified</span>' : '<span style="color:#ff4d4d;font-size:0.85em;margin-left:6px;"><i class="fas fa-times-circle"></i> Unverified</span>'}</p>
                     <p><strong>Status:</strong> <span class="status-indicator ${isPendingReview || isApproved ? 'online' : 'offline'}"></span>
@@ -600,6 +602,21 @@ window.reviewDriver = async function(userId) {
     document.getElementById('btn-activate').style.display = isSuspended ? 'inline-block' : 'none';
 };
 
+// Full-screen click-to-enlarge for KYC document/selfie thumbnails.
+// Uses an in-page overlay (not window.open) so popup blockers can't hide it.
+window.openKycLightbox = function(url) {
+    let lb = document.getElementById('kyc-lightbox');
+    if (!lb) {
+        lb = document.createElement('div');
+        lb.id = 'kyc-lightbox';
+        lb.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.92);display:flex;align-items:center;justify-content:center;z-index:99999;cursor:zoom-out;';
+        lb.onclick = () => { lb.style.display = 'none'; };
+        document.body.appendChild(lb);
+    }
+    lb.innerHTML = `<img src="${url}" style="max-width:92vw;max-height:92vh;border-radius:8px;box-shadow:0 0 40px rgba(0,0,0,0.85);">`;
+    lb.style.display = 'flex';
+};
+
 async function loadDocThumbnail(userId, docType, containerId) {
     const container = document.getElementById(containerId);
     try {
@@ -610,7 +627,7 @@ async function loadDocThumbnail(userId, docType, containerId) {
         const blob = await res.blob();
         const url = URL.createObjectURL(blob);
         activeDocUrls.push(url);
-        container.innerHTML = `<img src="${url}" class="doc-thumb" onclick="window.open('${url}')">`;
+        container.innerHTML = `<img src="${url}" class="doc-thumb" style="cursor:zoom-in;" title="Click to enlarge" onclick="openKycLightbox('${url}')">`;
         container.classList.remove('loading');
     } catch {
         container.innerHTML = '<div class="doc-thumb missing"><i class="fas fa-times"></i></div>';

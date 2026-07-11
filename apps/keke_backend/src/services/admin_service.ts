@@ -5,6 +5,7 @@ import { Wallet } from "../models/Wallet";
 import { LedgerEntry, BalanceType, TransactionType } from "../models/LedgerEntry";
 import { PayoutRecord, PayoutStatus } from "../models/PayoutRecord";
 import { AuditLog } from "../models/AuditLog";
+import { User } from "../models/User";
 import { redis } from "../config/redis";
 
 export class AdminService {
@@ -42,10 +43,21 @@ export class AdminService {
     }
 
     /**
-     * Get specific driver details
+     * Get specific driver details, enriched with the linked user's contact info
+     * (email + phone) so admins can fully verify identity before approval.
      */
     static async getDriverProfile(userId: string) {
-        return await AppDataSource.getRepository(DriverProfile).findOneBy({ userId });
+        const profile = await AppDataSource.getRepository(DriverProfile).findOneBy({ userId });
+        if (!profile) return null;
+        const user = await AppDataSource.getRepository(User).findOne({
+            where: { id: userId },
+            select: ["email", "phone"],
+        });
+        return {
+            ...profile,
+            email: user?.email ?? null,
+            phone: user?.phone ?? null,
+        };
     }
 
     /**
@@ -68,9 +80,9 @@ export class AdminService {
         if (!profile) throw new Error("Driver profile not found");
 
         if (status === DriverStatus.APPROVED) {
-            const allDocsPresent = profile.licenseUrl && profile.idCardUrl && profile.vehiclePaperUrl;
+            const allDocsPresent = profile.licenseUrl && profile.idCardUrl && profile.vehiclePaperUrl && profile.photoUrl;
             if (!allDocsPresent) {
-                throw new Error("Cannot approve driver without all required documents (License, ID, Vehicle Papers)");
+                throw new Error("Cannot approve driver without all required documents (Selfie, License, ID, Vehicle Papers)");
             }
         }
 

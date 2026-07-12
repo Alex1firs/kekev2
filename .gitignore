@@ -24,4 +24,8 @@ build/
 firebase-admin.json
 google-services.json
 GoogleService-Info.plist
+# Exception: the iOS Firebase client config is NOT secret (ships inside the
+# public app) and is required by Codemagic at build time — track these two.
+!apps/keke_driver/ios/Runner/GoogleService-Info.plist
+!apps/keke_passenger/ios/Runner/GoogleService-Info.plist
 *.p8

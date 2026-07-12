@@ -243,7 +243,7 @@ export class SocketHandler {
                 log.info(`Starting dispatch for ride ${rideId}`);
                 this.io.to('admin').emit('ride:status_update', { rideId, status: 'searching' });
 
-                const DISPATCH_TIMEOUT_MS = 40_000;
+                const DISPATCH_TIMEOUT_MS = Number(process.env.DISPATCH_TIMEOUT_MS) || 55_000;
                 Promise.race([
                     this.startDispatchLoop(rideId, pickupLat, pickupLng, request),
                     new Promise<void>((_, reject) =>
@@ -360,6 +360,16 @@ export class SocketHandler {
                             });
                             return;
                         }
+                    }
+
+                    // Prevent double-assignment: a driver already on an active ride
+                    // cannot accept another until they finish/cancel the current one.
+                    const activeForDriver = await AppDataSource.getRepository(Ride).findOne({
+                        where: { driverId: data.driverId, status: In(['accepted', 'arrived', 'in_progress'] as any[]) },
+                    });
+                    if (activeForDriver && activeForDriver.rideId !== data.rideId) {
+                        socket.emit('ride:error', { code: 'ALREADY_ON_RIDE', message: 'Finish your current ride before accepting a new one.' });
+                        return;
                     }
 
                     // Atomic UPDATE: claims the ride only if still 'searching'.
@@ -707,7 +717,9 @@ export class SocketHandler {
     }
 
     private async startDispatchLoop(rideId: string, lat: number, lng: number, payload: any) {
-        const radiuses = [3, 5];
+        // Gradual expansion, nearest tier first. Env-tunable, e.g. "2,3.5,5".
+        const radiuses = (process.env.DISPATCH_RADIUS_TIERS_KM || '2,3.5,5')
+            .split(',').map(s => parseFloat(s.trim())).filter(n => Number.isFinite(n) && n > 0);
         const isCash = payload.isCash === true;
         this.activeDispatches.set(rideId, new Set());
 
@@ -752,7 +764,23 @@ export class SocketHandler {
                 log.info(`[DISPATCH] Cash ride ${rideId}: ${eligible.length} eligible after debt filter at ${radius}km`);
             }
 
-            const targetDrivers = eligible;
+            // Exclude drivers already on an active ride (busy). A busy driver must
+            // not receive new requests and must never be double-assigned.
+            if (eligible.length > 0) {
+                const busy = await AppDataSource.getRepository(Ride).find({
+                    where: { driverId: In(eligible), status: In(['accepted', 'arrived', 'in_progress'] as any[]) },
+                });
+                if (busy.length > 0) {
+                    const busyIds = new Set(busy.map(r => r.driverId));
+                    eligible = eligible.filter(id => !busyIds.has(id));
+                    log.info(`[DISPATCH] Filtered ${busyIds.size} busy drivers for ride ${rideId}`);
+                }
+            }
+
+            // Only notify drivers not already pinged for THIS ride, so expanding the
+            // radius reaches NEW nearby drivers instead of re-pinging the same ones.
+            const alreadyNotified = this.activeDispatches.get(rideId) || new Set();
+            const targetDrivers = eligible.filter(id => !alreadyNotified.has(id));
 
             if (targetDrivers.length > 0) {
                 const notifiedSet = this.activeDispatches.get(rideId) || new Set();

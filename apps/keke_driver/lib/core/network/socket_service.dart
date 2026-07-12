@@ -71,6 +71,20 @@ class SocketService {
 
   bool get isConnected => _socket?.connected ?? false;
 
+  /// Force a fresh reconnect. Call when the app returns to the foreground:
+  /// iOS/Android suspend the socket while backgrounded, and the built-in
+  /// auto-reconnect can lag or get stuck on "Connecting…". Dialing a clean
+  /// connection here makes the driver rejoin (and the server re-deliver any
+  /// ride offer they missed) within ~1s instead of waiting on the retry timer.
+  void reconnect() {
+    final s = _socket;
+    if (s == null) return;
+    if (s.connected) return;
+    print('[SOCKET] Forcing reconnect on resume...');
+    s.disconnect(); // clear any stuck "connecting" state
+    s.connect();
+  }
+
   void emit(String event, dynamic data) {
     _socket?.emit(event, data);
   }

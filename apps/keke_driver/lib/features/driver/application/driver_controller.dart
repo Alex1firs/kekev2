@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:dio/dio.dart' as dio;
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
@@ -23,7 +24,7 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import '../../../core/services/sound_service.dart';
 import '../../../core/config/env_config.dart';
 
-class DriverController extends StateNotifier<DriverState> {
+class DriverController extends StateNotifier<DriverState> with WidgetsBindingObserver {
   SocketService? _socketService;
   final ApiClient _apiClient;
   final String _userId;
@@ -55,6 +56,30 @@ class DriverController extends StateNotifier<DriverState> {
     if (_socketService != null) _listenToSocket();
     _startHeartbeat();
     _listenToNotifications();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState lifecycleState) {
+    if (lifecycleState == AppLifecycleState.resumed) {
+      onAppResumed();
+    }
+  }
+
+  /// Called when the app returns to the foreground (e.g. the driver taps a
+  /// "New Ride Request" push on the lock screen). iOS/Android drop the socket
+  /// while backgrounded, so we force a reconnect immediately. On reconnect the
+  /// socket re-emits `join`, which makes the server re-deliver any ride offer
+  /// that was missed while we were disconnected; syncStatus() heals any
+  /// already-accepted ride, and a heartbeat re-asserts presence for dispatch.
+  void onAppResumed() {
+    if (!mounted) return;
+    print('[LIFECYCLE] App resumed — forcing socket reconnect + sync.');
+    _socketService?.reconnect();
+    syncStatus();
+    if (state.operationStatus == OperationStatus.available) {
+      _sendHeartbeat();
+    }
   }
 
   void _listenToNotifications() {
@@ -1133,6 +1158,7 @@ class DriverController extends StateNotifier<DriverState> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _waitTimer?.cancel();
     _countdownTimer?.cancel();
     _heartbeatTimer?.cancel();

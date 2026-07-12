@@ -105,7 +105,17 @@ export class SocketHandler {
     private io: Server;
     private rideExclusions:   Map<string, Set<string>> = new Map();
     private activeDispatches: Map<string, Set<string>> = new Map();
+    // Last ride:request payload per active dispatch, so a driver whose socket
+    // was disconnected (e.g. phone locked) can have the offer re-delivered on
+    // reconnect instead of silently missing it.
+    private dispatchPayloads: Map<string, any> = new Map();
     private driverRideMap:    Map<string, string>       = new Map();
+
+    /** Clear all in-memory dispatch state for a ride (offer targets + payload). */
+    private clearDispatch(rideId: string) {
+        this.activeDispatches.delete(rideId);
+        this.dispatchPayloads.delete(rideId);
+    }
 
     private broadcastToRide(rideId: string, event: string, data: any) {
         log.info(`[BROADCAST] Ride:${rideId} Event:${event}`);
@@ -157,6 +167,27 @@ export class SocketHandler {
                 socket.join(room);
                 if (data.role === 'admin') socket.join('admin');
                 log.info(`${room} joined`);
+
+                // DISPATCH RECOVERY: if this driver was offered a ride while their
+                // socket was down (backgrounded/locked phone), the ride:request
+                // event was lost. Re-deliver any still-open offer now that they're
+                // back so they can accept it instead of the passenger timing out.
+                if (data.role === 'driver') {
+                    for (const [rideId, notified] of this.activeDispatches.entries()) {
+                        if (!notified.has(data.userId)) continue;
+                        const payload = this.dispatchPayloads.get(rideId);
+                        if (!payload) continue;
+                        try {
+                            const ride = await AppDataSource.getRepository(Ride).findOne({ where: { rideId } });
+                            if (ride && (ride.status as any) === 'searching') {
+                                this.io.to(`driver:${data.userId}`).emit('ride:request', payload);
+                                log.info(`[DISPATCH_RECOVERY] Re-sent ride:request ${rideId} to reconnected driver ${data.userId}`);
+                            }
+                        } catch (err) {
+                            log.error('Dispatch recovery re-emit failed:', err);
+                        }
+                    }
+                }
             });
 
             // --- Driver Heartbeat & Location ---
@@ -263,7 +294,7 @@ export class SocketHandler {
                             }
                         } catch (_) {}
                         this.rideExclusions.delete(rideId);
-                        this.activeDispatches.delete(rideId);
+                        this.clearDispatch(rideId);
                     }
                 });
             });
@@ -328,7 +359,7 @@ export class SocketHandler {
                     });
 
                     this.rideExclusions.delete(data.rideId);
-                    this.activeDispatches.delete(data.rideId);
+                    this.clearDispatch(data.rideId);
                     log.info(`Ride ${data.rideId} canceled by passenger ${data.passengerId}`);
                 } catch (err) {
                     log.error('Failed to cancel ride:', err);
@@ -432,7 +463,7 @@ export class SocketHandler {
                     this.io.to('admin').emit('ride:status_update', { rideId: data.rideId, status: 'accepted' });
 
                     this.rideExclusions.delete(data.rideId);
-                    this.activeDispatches.delete(data.rideId);
+                    this.clearDispatch(data.rideId);
                 } catch (err) {
                     log.error('ride:accept failed:', err);
                     socket.emit('ride:error', { code: 'INTERNAL_ERROR', message: 'Could not accept the ride right now. Please try again.' });
@@ -727,11 +758,11 @@ export class SocketHandler {
             const rideRepo = AppDataSource.getRepository(Ride);
             const dbRide = await rideRepo.findOne({ where: { rideId } });
             if (!dbRide || dbRide.status === 'canceled' as any) {
-                this.activeDispatches.delete(rideId);
+                this.clearDispatch(rideId);
                 return;
             }
             if (await this.isRideAssigned(rideId)) {
-                this.activeDispatches.delete(rideId);
+                this.clearDispatch(rideId);
                 return;
             }
 
@@ -788,6 +819,9 @@ export class SocketHandler {
                 const passengerUser = await AppDataSource.getRepository(User).findOne({ where: { id: payload.passengerId } });
                 const rideRecord = await AppDataSource.getRepository(Ride).findOne({ where: { rideId } });
                 const enrichedPayload = { ...payload, passengerPhone: passengerUser?.phone ?? null, pickupCode: rideRecord?.pickupCode ?? null };
+                // Remember the payload so a driver who reconnects mid-dispatch can
+                // have this exact offer re-delivered (see the 'join' handler).
+                this.dispatchPayloads.set(rideId, enrichedPayload);
                 for (const driverId of targetDrivers) {
                     notifiedSet.add(driverId);
                     this.io.to(`driver:${driverId}`).emit('ride:request', enrichedPayload);
@@ -815,7 +849,7 @@ export class SocketHandler {
                 });
             }
             this.rideExclusions.delete(rideId);
-            this.activeDispatches.delete(rideId);
+            this.clearDispatch(rideId);
         }
     }
 

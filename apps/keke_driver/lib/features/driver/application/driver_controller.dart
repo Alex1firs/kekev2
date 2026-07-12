@@ -1124,11 +1124,19 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
           state = state.copyWith(tripStep: targetStep);
         }
       } else if (data == null || data['rideId'] == null) {
-         // Server says no active ride, but we think we have one? 
-         // Force reset to available.
-         print('[DRIVER_SYNC] Server says no active ride. Force resetting.');
-         _stopWatchdog();
-         finishAndGoAvailable();
+         // Server reports no ACTIVE (accepted) ride. Only force-reset if we
+         // believed we were on an accepted trip. A pending, not-yet-accepted
+         // OFFER is still 'searching' server-side and is INVISIBLE to
+         // /rides/active/driver — so a null here must NOT wipe it. Otherwise a
+         // sync racing a freshly-recovered ride:request clears the request
+         // screen (driver hears the sound but no screen appears).
+         if (state.tripStep != TripStep.none) {
+           print('[DRIVER_SYNC] Server says no active ride. Force resetting.');
+           _stopWatchdog();
+           finishAndGoAvailable();
+         } else {
+           print('[DRIVER_SYNC] No accepted ride server-side; keeping any pending offer intact.');
+         }
       }
     } catch (e) {
       print('Status sync failed: $e');

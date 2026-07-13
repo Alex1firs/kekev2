@@ -51,6 +51,17 @@ export class DriverProfile {
     @Column({ default: false })
     ninVerified!: boolean;
 
+    /**
+     * Denormalized passenger-rating aggregates. Average = ratingSum / ratingCount
+     * (0 when ratingCount is 0). Stored as sum+count rather than a float average
+     * so each new review is an exact, race-safe increment.
+     */
+    @Column({ type: "int", default: 0 })
+    ratingSum!: number;
+
+    @Column({ type: "int", default: 0 })
+    ratingCount!: number;
+
     @CreateDateColumn()
     createdAt!: Date;
 

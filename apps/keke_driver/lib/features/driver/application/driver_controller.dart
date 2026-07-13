@@ -492,6 +492,8 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
             photoUrl: data['photoUrl'],
             debtAmount: (data['commissionDebt'] as num?)?.toDouble() ?? 0.0,
             ninVerified: data['ninVerified'] == true,
+            rating: (data['rating'] as num?)?.toDouble() ?? 0.0,
+            ratingCount: (data['ratingCount'] as num?)?.toInt() ?? 0,
           ),
           isLoading: false,
           profileLoaded: true,

@@ -602,6 +602,7 @@ window.reviewDriver = async function(userId) {
                     <p><strong>Email:</strong> ${driver.email ? escapeHtml(driver.email) : '<em style="color:#888;">N/A</em>'}</p>
                     <p><strong>Phone:</strong> ${driver.phone ? escapeHtml(driver.phone) : '<em style="color:#888;">N/A</em>'}</p>
                     <p><strong>Vehicle:</strong> ${escapeHtml(driver.vehicleModel)} (${escapeHtml(driver.vehiclePlate)})</p>
+                    <p><strong>Rating:</strong> ${(driver.ratingCount || 0) > 0 ? `<span style="color:#f5a623;"><i class="fas fa-star"></i> ${(driver.ratingSum / driver.ratingCount).toFixed(2)}</span> <span style="color:#888;">(${driver.ratingCount} review${driver.ratingCount === 1 ? '' : 's'})</span>` : '<em style="color:#888;">No ratings yet</em>'}</p>
                     <p><strong>NIN:</strong> ${driver.nin ? escapeHtml(driver.nin) : '<em style="color:#888;">Not Provided</em>'} ${driver.ninVerified ? '<span style="color:#00e676;font-size:0.85em;margin-left:6px;"><i class="fas fa-check-circle"></i> Verified</span>' : '<span style="color:#ff4d4d;font-size:0.85em;margin-left:6px;"><i class="fas fa-times-circle"></i> Unverified</span>'}</p>
                     <p><strong>Status:</strong> <span class="status-indicator ${isPendingReview || isApproved ? 'online' : 'offline'}"></span>
                         ${escapeHtml(driver.status).toUpperCase().replace(/_/g, ' ')}</p>

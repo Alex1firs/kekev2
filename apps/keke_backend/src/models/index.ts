@@ -10,3 +10,4 @@ export * from "./DeviceToken";
 export * from "./SavedLocation";
 export * from "./Setting";
 export * from "./SosAlert";
+export * from "./RideReview";

@@ -613,6 +613,9 @@ class BookingController extends StateNotifier<BookingState> {
       receiptDistance: state.estimatedDistance,
       receiptCompletedAt: DateTime.now(),
       chatMessages: [],
+      // Prompt the passenger to rate this driver (only if we still know the
+      // driver — held-for-review or driverless rides can't be rated).
+      pendingReviewRideId: state.receiptDriver != null || state.assignedDriver != null ? state.rideId : null,
     );
   }
 
@@ -685,6 +688,32 @@ class BookingController extends StateNotifier<BookingState> {
       'rideId': state.rideId,
       'passengerId': passengerId,
     });
+  }
+
+  /// Passenger submits a star rating (+ optional tags/comment) for the driver
+  /// of the just-completed ride. Returns true on success. Clears the pending
+  /// review either way on success so the receipt stops prompting.
+  Future<bool> submitReview({required int stars, List<String> tags = const [], String? comment}) async {
+    final rideId = state.pendingReviewRideId;
+    if (_apiClient == null || rideId == null) return false;
+    try {
+      await _apiClient!.dio.post('/rides/$rideId/review', data: {
+        'stars': stars,
+        'tags': tags,
+        if (comment != null && comment.trim().isNotEmpty) 'comment': comment.trim(),
+      });
+      state = state.copyWith(clearPendingReview: true);
+      return true;
+    } catch (e) {
+      print('[REVIEW] submit failed: $e');
+      return false;
+    }
+  }
+
+  /// Passenger dismisses the rating prompt without rating.
+  void skipReview() {
+    if (state.pendingReviewRideId == null) return;
+    state = state.copyWith(clearPendingReview: true);
   }
 
   void cancelBooking() {

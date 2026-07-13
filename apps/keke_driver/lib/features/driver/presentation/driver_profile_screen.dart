@@ -68,6 +68,13 @@ class DriverProfileScreen extends ConsumerWidget {
                   label: 'Account Type',
                   value: 'Driver',
                 ),
+                _InfoTile(
+                  icon: Icons.star_rounded,
+                  label: 'Passenger Rating',
+                  value: profile.ratingCount > 0
+                      ? '${profile.rating.toStringAsFixed(1)} ★  (${profile.ratingCount})'
+                      : 'No ratings yet',
+                ),
 
                 if (profile.debtAmount > 0) ...[
                   const SizedBox(height: 4),

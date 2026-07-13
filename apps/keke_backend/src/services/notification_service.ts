@@ -86,8 +86,13 @@ export class NotificationService {
                 click_action: 'FLUTTER_NOTIFICATION_CLICK',
             },
             android: {
+                priority: 'high',
                 notification: {
-                    sound: sound.replace('.wav', ''), // Android uses filename without extension
+                    sound: sound.replace('.wav', ''), // Android <8 uses this; 8+ takes the sound from the channel
+                    // Route new ride requests to the driver app's high-importance
+                    // "Ride Requests" channel so the custom ring actually plays on
+                    // Android 8+ (channel-owned sound). Other types use the default.
+                    channelId: type === 'NEW_REQUEST' ? 'keke_ride_requests' : undefined,
                 }
             },
             apns: {

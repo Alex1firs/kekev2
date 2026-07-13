@@ -12,6 +12,10 @@
         android:label="keke_driver"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+        <!-- Default FCM channel for notification-type messages (custom ride ring). -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="keke_ride_requests" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

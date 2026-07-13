@@ -853,6 +853,10 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
   void acceptRequest() {
     if (_socketService == null || state.activeRequest == null) return;
 
+    // Stop the ringing immediately on tap (reject/timeout/cancel stop via
+    // _resetToAvailable); acceptance is confirmed asynchronously by the server.
+    _soundService.stop();
+
     _socketService!.emit('ride:accept', {
       'rideId': state.activeRequest!.id,
       'driverId': _userId,

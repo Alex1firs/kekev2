@@ -27,9 +27,14 @@ class BookingSheet extends ConsumerWidget {
     final state = ref.watch(bookingControllerProvider);
 
     // Driver asked the passenger to confirm an early drop-off → pop the dialog.
+    // Trip just finished with a known driver → slide up the rating sheet.
     ref.listen<BookingState>(bookingControllerProvider, (prev, next) {
       if (next.earlyEndRequested && !(prev?.earlyEndRequested ?? false)) {
         showDriverEarlyEndDialog(context, ref);
+      }
+      if (next.pendingReviewRideId != null &&
+          next.pendingReviewRideId != prev?.pendingReviewRideId) {
+        showDriverRatingSheet(context, ref);
       }
     });
 
@@ -1993,6 +1998,10 @@ class _ArrivalCardState extends State<_ArrivalCard>
                           ],
                         ),
                       ),
+                      _DriverRatingBadge(
+                        rating: (widget.driver['rating'] as num?)?.toDouble() ?? 0.0,
+                        count: (widget.driver['ratingCount'] as num?)?.toInt() ?? 0,
+                      ),
                     ],
                   ),
                 ],
@@ -2707,4 +2716,261 @@ Future<void> showDriverEarlyEndDialog(BuildContext context, WidgetRef ref) async
       ],
     ),
   );
+}
+
+/// Compact "4.8 ★" badge shown on the assigned-driver card. Shows "New" when
+/// the driver has no ratings yet.
+class _DriverRatingBadge extends StatelessWidget {
+  final double rating;
+  final int count;
+  const _DriverRatingBadge({required this.rating, required this.count});
+
+  @override
+  Widget build(BuildContext context) {
+    final label = count > 0 ? rating.toStringAsFixed(1) : 'New';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: AppColors.primary.withOpacity(0.18),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.star_rounded, size: 15, color: AppColors.primary),
+          const SizedBox(width: 3),
+          Text(
+            label,
+            style: AppTextStyles.caption(
+                color: AppColors.white, weight: FontWeight.w700),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Rate your driver ───────────────────────────────────────────────────────
+
+/// Low-rating (≤3★) quick-reason chips. Value is the backend tag; label is
+/// what the passenger sees.
+const List<MapEntry<String, String>> _kLowRatingTags = [
+  MapEntry('reckless_driving', 'Reckless driving'),
+  MapEntry('rude_behavior', 'Rude behavior'),
+  MapEntry('unclean_vehicle', 'Unclean vehicle'),
+  MapEntry('unsafe_vehicle', 'Unsafe vehicle'),
+  MapEntry('long_wait', 'Long wait'),
+  MapEntry('overcharged', 'Overcharged'),
+];
+
+/// Slide-up sheet asking the passenger to rate the driver of the just-finished
+/// ride. Dismissing without submitting counts as "skip".
+Future<void> showDriverRatingSheet(BuildContext context, WidgetRef ref) async {
+  final driver = ref.read(bookingControllerProvider).receiptDriver;
+  final driverName = (driver?['name'] as String?)?.trim();
+
+  final submitted = await showModalBottomSheet<bool>(
+    context: context,
+    isScrollControlled: true,
+    isDismissible: true,
+    backgroundColor: Colors.transparent,
+    builder: (ctx) => Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+      child: _DriverRatingSheet(ref: ref, driverName: driverName),
+    ),
+  );
+
+  // Dismissed by tapping the scrim / back → treat as a skip.
+  if (submitted != true) {
+    ref.read(bookingControllerProvider.notifier).skipReview();
+  }
+}
+
+class _DriverRatingSheet extends StatefulWidget {
+  final WidgetRef ref;
+  final String? driverName;
+  const _DriverRatingSheet({required this.ref, this.driverName});
+
+  @override
+  State<_DriverRatingSheet> createState() => _DriverRatingSheetState();
+}
+
+class _DriverRatingSheetState extends State<_DriverRatingSheet> {
+  int _stars = 0;
+  final Set<String> _tags = {};
+  final TextEditingController _comment = TextEditingController();
+  bool _submitting = false;
+
+  @override
+  void dispose() {
+    _comment.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (_stars == 0 || _submitting) return;
+    setState(() => _submitting = true);
+    final ok = await widget.ref.read(bookingControllerProvider.notifier).submitReview(
+          stars: _stars,
+          tags: _tags.toList(),
+          comment: _comment.text,
+        );
+    if (!mounted) return;
+    if (ok) {
+      Navigator.pop(context, true);
+    } else {
+      setState(() => _submitting = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Couldn't submit your rating. Please try again.")),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final showTags = _stars > 0 && _stars <= 3;
+    return Container(
+      decoration: const BoxDecoration(
+        color: AppColors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        boxShadow: [BoxShadow(color: Color(0x22000000), blurRadius: 28, offset: Offset(0, -6))],
+      ),
+      child: SafeArea(
+        top: false,
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(
+                child: Container(
+                  width: 44,
+                  height: 5,
+                  margin: const EdgeInsets.only(bottom: 20),
+                  decoration: BoxDecoration(
+                    color: AppColors.border,
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                ),
+              ),
+              Text(
+                widget.driverName != null && widget.driverName!.isNotEmpty
+                    ? 'How was your ride with ${widget.driverName}?'
+                    : 'How was your ride?',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                    fontSize: 20, fontWeight: FontWeight.w700, color: AppColors.charcoal),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'Your rating helps keep Keke rides safe and reliable.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 13, color: AppColors.midGray),
+              ),
+              const SizedBox(height: 20),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: List.generate(5, (i) {
+                  final idx = i + 1;
+                  final filled = idx <= _stars;
+                  return GestureDetector(
+                    onTap: _submitting ? null : () => setState(() => _stars = idx),
+                    behavior: HitTestBehavior.opaque,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                      child: Icon(
+                        filled ? Icons.star_rounded : Icons.star_outline_rounded,
+                        size: 44,
+                        color: filled ? AppColors.primary : AppColors.lightGray,
+                      ),
+                    ),
+                  );
+                }),
+              ),
+              if (showTags) ...[
+                const SizedBox(height: 20),
+                const Text('What went wrong?',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.charcoal)),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: _kLowRatingTags.map((t) {
+                    final selected = _tags.contains(t.key);
+                    return GestureDetector(
+                      onTap: _submitting
+                          ? null
+                          : () => setState(() {
+                                selected ? _tags.remove(t.key) : _tags.add(t.key);
+                              }),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                        decoration: BoxDecoration(
+                          color: selected ? AppColors.primaryLight : AppColors.paleGray,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                              color: selected ? AppColors.primary : AppColors.border),
+                        ),
+                        child: Text(t.value,
+                            style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                                color: selected ? AppColors.primaryDark : AppColors.darkGray)),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ],
+              const SizedBox(height: 20),
+              TextField(
+                controller: _comment,
+                enabled: !_submitting,
+                minLines: 2,
+                maxLines: 4,
+                maxLength: 500,
+                textInputAction: TextInputAction.newline,
+                decoration: InputDecoration(
+                  hintText: 'Add a comment (optional)',
+                  filled: true,
+                  fillColor: AppColors.paleGray,
+                  counterText: '',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: BorderSide.none,
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                ),
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                height: 52,
+                child: ElevatedButton(
+                  onPressed: (_stars == 0 || _submitting) ? null : _submit,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primary,
+                    disabledBackgroundColor: AppColors.lightGray,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  ),
+                  child: _submitting
+                      ? const SizedBox(
+                          width: 22, height: 22,
+                          child: CircularProgressIndicator(strokeWidth: 2.5, color: AppColors.white))
+                      : const Text('Submit rating',
+                          style: TextStyle(
+                              fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.white)),
+                ),
+              ),
+              const SizedBox(height: 4),
+              TextButton(
+                onPressed: _submitting ? null : () => Navigator.pop(context, false),
+                child: const Text('Skip',
+                    style: TextStyle(fontSize: 15, color: AppColors.midGray)),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }

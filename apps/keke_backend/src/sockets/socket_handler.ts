@@ -450,12 +450,15 @@ export class SocketHandler {
 
                     const driverUser = await AppDataSource.getRepository(User).findOne({ where: { id: data.driverId } });
 
+                    const ratingCount = profile.ratingCount ?? 0;
                     const driverDetails = {
                         name: `${profile.firstName} ${profile.lastName}`,
                         plate: profile.vehiclePlate,
                         model: profile.vehicleModel,
                         phone: driverUser?.phone ?? null,
                         photoUrl: profile.photoUrl ?? null,
+                        rating: ratingCount > 0 ? Number(((profile.ratingSum ?? 0) / ratingCount).toFixed(2)) : 0,
+                        ratingCount,
                     };
 
                     this.broadcastToRide(data.rideId, 'ride:assigned', {

@@ -68,6 +68,11 @@ class BookingState {
   /// off here?"). Drives the confirm/report dialog on the active-ride screen.
   final bool earlyEndRequested;
 
+  /// Set to the just-completed ride's id when the trip finishes, so the receipt
+  /// can prompt the passenger to rate the driver. Cleared once the passenger
+  /// submits or skips the rating (so it never re-prompts for the same ride).
+  final String? pendingReviewRideId;
+
   const BookingState({
     this.step = BookingStep.loading,
     this.mapCenter,
@@ -104,6 +109,7 @@ class BookingState {
     this.receiptDistance,
     this.receiptCompletedAt,
     this.earlyEndRequested = false,
+    this.pendingReviewRideId,
   });
 
   BookingState copyWith({
@@ -150,6 +156,8 @@ class BookingState {
     String? receiptDistance,
     DateTime? receiptCompletedAt,
     bool? earlyEndRequested,
+    String? pendingReviewRideId,
+    bool clearPendingReview = false,
   }) {
     return BookingState(
       step: step ?? this.step,
@@ -187,6 +195,7 @@ class BookingState {
       receiptDistance: receiptDistance ?? this.receiptDistance,
       receiptCompletedAt: receiptCompletedAt ?? this.receiptCompletedAt,
       earlyEndRequested: earlyEndRequested ?? this.earlyEndRequested,
+      pendingReviewRideId: clearPendingReview ? null : (pendingReviewRideId ?? this.pendingReviewRideId),
     );
   }
 }

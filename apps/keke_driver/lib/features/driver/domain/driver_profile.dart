@@ -34,6 +34,8 @@ class DriverProfile {
   final String? photoUrl;
   final double debtAmount;
   final bool ninVerified;
+  final double rating;
+  final int ratingCount;
 
   const DriverProfile({
     this.id,
@@ -48,6 +50,8 @@ class DriverProfile {
     this.photoUrl,
     this.debtAmount = 0.0,
     this.ninVerified = false,
+    this.rating = 0.0,
+    this.ratingCount = 0,
   });
 
   DriverProfile copyWith({
@@ -63,6 +67,8 @@ class DriverProfile {
     String? photoUrl,
     double? debtAmount,
     bool? ninVerified,
+    double? rating,
+    int? ratingCount,
   }) {
     return DriverProfile(
       id: id ?? this.id,
@@ -77,6 +83,8 @@ class DriverProfile {
       photoUrl: photoUrl ?? this.photoUrl,
       debtAmount: debtAmount ?? this.debtAmount,
       ninVerified: ninVerified ?? this.ninVerified,
+      rating: rating ?? this.rating,
+      ratingCount: ratingCount ?? this.ratingCount,
     );
   }
 }

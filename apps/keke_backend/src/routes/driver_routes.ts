@@ -151,6 +151,10 @@ router.get("/status/:userId", authMiddleware, async (req: AuthRequest, res: Resp
             idCardUrl: profile.idCardUrl ?? null,
             vehiclePaperUrl: profile.vehiclePaperUrl ?? null,
             photoUrl: profile.photoUrl ?? null,
+            rating: (profile.ratingCount ?? 0) > 0
+                ? Number(((profile.ratingSum ?? 0) / profile.ratingCount).toFixed(2))
+                : 0,
+            ratingCount: profile.ratingCount ?? 0,
         });
     } catch (err: any) {
         console.error('[DRIVER] Status fetch error:', err?.message);

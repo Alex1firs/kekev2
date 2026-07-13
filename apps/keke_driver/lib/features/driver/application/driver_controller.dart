@@ -35,6 +35,12 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
   Timer? _watchdogTimer;
   Timer? _errorClearTimer;
   StreamSubscription? _socketSubscription;
+
+  /// Wall-clock time the current pending offer arrived. Used to expire a stale
+  /// offer whose 1-second countdown froze while the app was backgrounded
+  /// (Dart timers pause in the background, so the countdown alone can't be
+  /// trusted to reset the offer).
+  DateTime? _offerReceivedAt;
   StreamSubscription? _notificationSubscription;
   final NotificationService _notificationService;
   final SoundService _soundService;
@@ -300,7 +306,17 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
   }
 
   void _handleIncomingRequest(Map<String, dynamic> data) {
-    if (state.operationStatus != OperationStatus.available) return;
+    // Refuse a new offer only when the driver is genuinely unavailable —
+    // offline, or already committed to an active trip. A lingering `busy` with
+    // no trip in progress (e.g. a previous offer whose 30s countdown froze
+    // while the app was backgrounded, then was never reset) must NOT keep
+    // swallowing new requests: replace the stale offer with this fresh one.
+    // Without this the driver still heartbeats (stays on the passenger's map)
+    // yet silently drops every incoming request.
+    final onActiveTrip = state.tripStep == TripStep.accepted ||
+        state.tripStep == TripStep.arrived ||
+        state.tripStep == TripStep.started;
+    if (state.operationStatus == OperationStatus.offline || onActiveTrip) return;
 
     // Debt gate: suppress cash requests when driver has cash-block-level debt
     final incomingIsCash = data['isCash'] == true;
@@ -336,6 +352,7 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
         pickupCode: data['pickupCode']?.toString(),
       );
 
+      _offerReceivedAt = DateTime.now();
       state = state.copyWith(
         operationStatus: OperationStatus.busy,
         activeRequest: request,
@@ -906,6 +923,7 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
   void _resetToAvailable() {
     print('[DRIVER_LIFECYCLE] Resetting to available state.');
     _countdownTimer?.cancel();
+    _offerReceivedAt = null;
     _socketService?.updateActiveRide(null);
     state = state.copyWith(
       operationStatus: OperationStatus.available,
@@ -1157,8 +1175,19 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
            print('[DRIVER_SYNC] Server says no active ride. Force resetting.');
            _stopWatchdog();
            finishAndGoAvailable();
+         } else if (state.activeRequest != null &&
+             _offerReceivedAt != null &&
+             DateTime.now().difference(_offerReceivedAt!) >
+                 const Duration(seconds: 40)) {
+           // A pending offer that's older than its 30s lifetime is stale — its
+           // countdown froze while backgrounded and it will never be accepted.
+           // Clear it so the driver returns to `available` and can receive new
+           // requests. (Fresh offers are < 40s old and are kept intact, so the
+           // recover-offer-on-reconnect race fix still holds.)
+           print('[DRIVER_SYNC] Clearing stale pending offer (countdown froze while backgrounded).');
+           _resetToAvailable();
          } else {
-           print('[DRIVER_SYNC] No accepted ride server-side; keeping any pending offer intact.');
+           print('[DRIVER_SYNC] No accepted ride server-side; keeping any fresh pending offer intact.');
          }
       }
     } catch (e) {

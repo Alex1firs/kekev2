@@ -120,6 +120,11 @@ class BookingController extends StateNotifier<BookingState> {
              );
            }
            break;
+        case 'ride:early_end_request':
+          print('[PASSENGER] Driver requested early drop-off confirmation.');
+          state = state.copyWith(earlyEndRequested: true);
+          _soundService.playAlert();
+          break;
         case 'chat:message':
           try {
             final msg = ChatMessage(
@@ -649,6 +654,36 @@ class BookingController extends StateNotifier<BookingState> {
       'reason': reason,
       'lat': loc?.latitude ?? state.pickupLocation?.latitude ?? 0.0,
       'lng': loc?.longitude ?? state.pickupLocation?.longitude ?? 0.0,
+    });
+  }
+
+  /// Passenger taps "End Trip Here" — end the trip at their current location.
+  /// The server settles the full quoted fare; consent overrides only the
+  /// destination-proximity check (movement/duration still enforced).
+  Future<void> endTripHere() async {
+    if (_socketService == null || state.rideId == null) return;
+    final loc = await _mapRepo.getCurrentLocation();
+    _socketService!.emit('ride:end_early', {
+      'rideId': state.rideId,
+      'passengerId': passengerId,
+      'lat': loc?.latitude,
+      'lng': loc?.longitude,
+    });
+  }
+
+  /// Passenger confirms the driver's "dropped off here" request.
+  Future<void> confirmEarlyEnd() async {
+    state = state.copyWith(earlyEndRequested: false);
+    await endTripHere();
+  }
+
+  /// Passenger disputes the driver's early-end request → ride is held for review.
+  void rejectEarlyEnd() {
+    state = state.copyWith(earlyEndRequested: false);
+    if (_socketService == null || state.rideId == null) return;
+    _socketService!.emit('ride:reject_early_end', {
+      'rideId': state.rideId,
+      'passengerId': passengerId,
     });
   }
 

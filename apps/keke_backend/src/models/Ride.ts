@@ -132,4 +132,34 @@ export class Ride {
     @Index()
     @Column({ default: false })
     paymentHeld!: boolean;
+
+    // --- Early drop-off / passenger consent ---
+    // A legitimate early end (traffic, changed mind, wants to walk) means the
+    // Keke never reaches the booked destination pin. Passenger consent lets the
+    // ride settle despite ended_far_from_destination — but ONLY that check;
+    // movement / duration / stale-GPS holds still apply.
+
+    /** Passenger tapped "End Trip Here" on their own screen. */
+    @Column({ default: false })
+    endedEarlyByPassenger!: boolean;
+
+    /** Driver swiped End while far from the pin and asked the passenger to confirm. */
+    @Column({ default: false })
+    earlyEndRequestedByDriver!: boolean;
+
+    /** Consent recorded via either path — overrides only ended_far_from_destination. */
+    @Column({ default: false })
+    passengerConsentedEnd!: boolean;
+
+    @Column({ type: "timestamp", nullable: true })
+    passengerConsentAt!: Date | null;
+
+    @Column({ type: "double precision", nullable: true })
+    passengerConsentLat!: number | null;
+    @Column({ type: "double precision", nullable: true })
+    passengerConsentLng!: number | null;
+
+    /** Why a ride is held for review (e.g. early_end_no_passenger_response). */
+    @Column({ type: "varchar", length: 120, nullable: true })
+    reviewReason!: string | null;
 }

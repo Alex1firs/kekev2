@@ -606,3 +606,25 @@ body.authenticated .admin-container { display: flex; }
     50% { transform: scale(1.2); opacity: 0.8; }
     100% { transform: scale(1); opacity: 1; }
 }
+
+/* --- Held / Flagged rides review --- */
+.held-rides-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+.held-card { background: var(--card-bg, #1c2230); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 16px; }
+.held-card-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.held-pills { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+.pill { font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 999px; white-space: nowrap; }
+.pill-held { background: rgba(255,77,77,0.18); color: #ff6b6b; }
+.pill-ok { background: rgba(46,204,113,0.18); color: #2ecc71; }
+.pill-warn { background: rgba(241,196,15,0.18); color: #f1c40f; }
+.pill-info { background: rgba(52,152,219,0.18); color: #3498db; }
+.held-reason { font-size: 13px; margin: 6px 0; opacity: 0.9; }
+.held-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 12px 0; }
+.held-metrics div { display: flex; flex-direction: column; }
+.held-metrics span { font-size: 10px; text-transform: uppercase; opacity: 0.6; }
+.held-metrics b { font-size: 14px; }
+.held-meta { display: flex; gap: 12px; font-size: 11px; opacity: 0.6; margin-bottom: 12px; flex-wrap: wrap; }
+.held-actions { display: flex; gap: 8px; }
+.held-actions button { flex: 1; }
+.btn-danger { background: #ff4d4d; color: #fff; border: none; padding: 8px 12px; border-radius: 8px; cursor: pointer; font-weight: 600; }
+.btn-danger:hover { background: #e63e3e; }
+.muted { opacity: 0.6; }

@@ -102,6 +102,7 @@ function switchSection(id) {
 
     if (id === 'drivers')       { fetchPendingDrivers(); fetchIncompleteDrivers(); }
     if (id === 'active-rides')  fetchActiveRides();
+    if (id === 'held-rides')    fetchHeldRides();
     if (id === 'finance')       { fetchFinanceSummary(); fetchDebtLeaderboard(); }
     if (id === 'payouts')       fetchPayouts();
     if (id === 'history')       fetchRideHistory();
@@ -277,6 +278,68 @@ async function fetchActiveRides() {
     updateOperationalAlerts(rides);
     if (!rides.length) list.innerHTML = '<tr><td colspan="6">No active rides.</td></tr>';
 }
+
+// --- Held / Flagged rides review ---
+function fmtM(v) { return (v === null || v === undefined) ? '—' : Math.round(Number(v)) + ' m'; }
+function fmtS(v) { return (v === null || v === undefined) ? '—' : Math.round(Number(v)) + ' s'; }
+
+async function fetchHeldRides() {
+    const list = document.getElementById('held-rides-list');
+    if (list) list.innerHTML = '<p class="muted">Loading…</p>';
+    const rides = (await adminFetch('/rides/flagged')) || [];
+    const held = rides.filter(r => r.paymentHeld);
+    if (!list) return;
+    if (!held.length) { list.innerHTML = '<p class="muted">No rides are currently held for review. 🎉</p>'; return; }
+
+    list.innerHTML = held.map(r => {
+        const consent = r.passengerConsentedEnd
+            ? '<span class="pill pill-ok">Passenger confirmed</span>'
+            : (r.earlyEndRequestedByDriver
+                ? '<span class="pill pill-warn">Driver requested — not confirmed</span>'
+                : '');
+        const early = r.endedEarlyByPassenger ? '<span class="pill pill-info">Passenger ended early</span>' : '';
+        const consentAt = r.passengerConsentAt ? new Date(r.passengerConsentAt).toLocaleString() : null;
+        return `
+        <div class="held-card">
+            <div class="held-card-head">
+                <strong>${escapeHtml(r.rideId)}</strong>
+                <span class="pill pill-held">PAYMENT HELD</span>
+            </div>
+            <div class="held-pills">${consent}${early}</div>
+            <div class="held-reason">Reason: <b>${escapeHtml(r.reviewReason || r.suspiciousReason || 'flagged')}</b></div>
+            <div class="held-metrics">
+                <div><span>Moved</span><b>${fmtM(r.movementDistanceM)}</b></div>
+                <div><span>Duration</span><b>${fmtS(r.tripDurationSec)}</b></div>
+                <div><span>From dest</span><b>${fmtM(r.endDestinationDistanceM)}</b></div>
+                <div><span>Fare</span><b>₦${Number(r.finalFare ?? r.fare).toLocaleString()}</b></div>
+            </div>
+            <div class="held-meta">
+                <span>${escapeHtml((r.paymentMode || 'cash').toUpperCase())}</span>
+                ${consentAt ? `<span>Consent: ${escapeHtml(consentAt)}</span>` : ''}
+            </div>
+            <div class="held-actions">
+                <button class="btn-primary" onclick="releaseRide('${escapeHtml(r.rideId)}')">Release payment</button>
+                <button class="btn-danger" onclick="voidRide('${escapeHtml(r.rideId)}')">Void (no charge)</button>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+window.releaseRide = async function(rideId) {
+    if (!confirm(`Release payment for ${rideId}? This settles the driver/passenger for the full fare.`)) return;
+    try {
+        await adminFetch(`/rides/${rideId}/release`, 'POST');
+        fetchHeldRides();
+    } catch (e) { alert('Release failed: ' + (e?.message || 'error')); }
+};
+
+window.voidRide = async function(rideId) {
+    if (!confirm(`Void ${rideId}? The ride is dismissed with NO charge to the passenger and NO payout to the driver.`)) return;
+    try {
+        await adminFetch(`/rides/${rideId}/void`, 'POST');
+        fetchHeldRides();
+    } catch (e) { alert('Void failed: ' + (e?.message || 'error')); }
+};
 
 async function fetchFinanceSummary() {
     const summary = await adminFetch('/finance/summary');

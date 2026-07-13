@@ -26,6 +26,13 @@ class BookingSheet extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(bookingControllerProvider);
 
+    // Driver asked the passenger to confirm an early drop-off → pop the dialog.
+    ref.listen<BookingState>(bookingControllerProvider, (prev, next) {
+      if (next.earlyEndRequested && !(prev?.earlyEndRequested ?? false)) {
+        showDriverEarlyEndDialog(context, ref);
+      }
+    });
+
     return Align(
       alignment: Alignment.bottomCenter,
       child: Container(
@@ -783,6 +790,23 @@ class BookingSheet extends ConsumerWidget {
             onPressed: () =>
                 ref.read(bookingControllerProvider.notifier).cancelBooking(),
             child: const Text('Cancel Trip'),
+          ),
+        ],
+
+        // Active trip: passenger may end early at their current location.
+        if (state.step == BookingStep.started) ...[
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.primary,
+              side: const BorderSide(color: AppColors.primary),
+              minimumSize: const Size(double.infinity, 48),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14)),
+            ),
+            icon: const Icon(Icons.flag_outlined, size: 18),
+            label: const Text('End Trip Here'),
+            onPressed: () => confirmEndTripHere(context, ref),
           ),
         ],
       ],
@@ -2629,4 +2653,58 @@ class _PaymentOption extends StatelessWidget {
       ),
     );
   }
+}
+
+// ── Early drop-off dialogs ─────────────────────────────────────────────────
+
+/// Passenger taps "End Trip Here" → confirm they'll be charged the agreed fare.
+Future<void> confirmEndTripHere(BuildContext context, WidgetRef ref) async {
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('End trip here?'),
+      content: const Text(
+          'Are you sure you want to end the trip at your current location? You will be charged the agreed fare.'),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Not yet')),
+        ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('End Trip')),
+      ],
+    ),
+  );
+  if (ok == true) {
+    ref.read(bookingControllerProvider.notifier).endTripHere();
+  }
+}
+
+/// Driver requested confirmation that the passenger was dropped off here.
+Future<void> showDriverEarlyEndDialog(BuildContext context, WidgetRef ref) async {
+  await showDialog<void>(
+    context: context,
+    barrierDismissible: false,
+    builder: (ctx) => AlertDialog(
+      title: const Text('Confirm drop-off'),
+      content: const Text(
+          'Your driver says you have been dropped off here. Do you confirm?'),
+      actions: [
+        TextButton(
+          onPressed: () {
+            Navigator.pop(ctx);
+            ref.read(bookingControllerProvider.notifier).rejectEarlyEnd();
+          },
+          child: const Text('Report issue'),
+        ),
+        ElevatedButton(
+          onPressed: () {
+            Navigator.pop(ctx);
+            ref.read(bookingControllerProvider.notifier).confirmEarlyEnd();
+          },
+          child: const Text('Confirm'),
+        ),
+      ],
+    ),
+  );
 }

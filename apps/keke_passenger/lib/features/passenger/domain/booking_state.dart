@@ -64,6 +64,10 @@ class BookingState {
   final String? receiptDistance;
   final DateTime? receiptCompletedAt;
 
+  /// The driver requested an early drop-off confirmation ("Did you get dropped
+  /// off here?"). Drives the confirm/report dialog on the active-ride screen.
+  final bool earlyEndRequested;
+
   const BookingState({
     this.step = BookingStep.loading,
     this.mapCenter,
@@ -99,6 +103,7 @@ class BookingState {
     this.receiptDriver,
     this.receiptDistance,
     this.receiptCompletedAt,
+    this.earlyEndRequested = false,
   });
 
   BookingState copyWith({
@@ -144,6 +149,7 @@ class BookingState {
     Map<String, dynamic>? receiptDriver,
     String? receiptDistance,
     DateTime? receiptCompletedAt,
+    bool? earlyEndRequested,
   }) {
     return BookingState(
       step: step ?? this.step,
@@ -180,6 +186,7 @@ class BookingState {
       receiptDriver: receiptDriver ?? this.receiptDriver,
       receiptDistance: receiptDistance ?? this.receiptDistance,
       receiptCompletedAt: receiptCompletedAt ?? this.receiptCompletedAt,
+      earlyEndRequested: earlyEndRequested ?? this.earlyEndRequested,
     );
   }
 }

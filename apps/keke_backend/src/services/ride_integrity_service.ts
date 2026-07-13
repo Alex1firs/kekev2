@@ -119,6 +119,13 @@ export interface CompletionInput {
     destination: LatLng | null;
     startedAt: Date | null;
     now: Date;
+    /**
+     * The passenger consented to ending the trip early (tapped "End Trip Here"
+     * or confirmed the driver's request). When true, `ended_far_from_destination`
+     * no longer holds the payment — but movement / duration / GPS-confidence
+     * holds are unaffected.
+     */
+    passengerConsentedEnd?: boolean;
 }
 
 export interface CompletionResult {
@@ -165,8 +172,14 @@ export function evaluateCompletion(input: CompletionInput): CompletionResult {
     if (!input.endLive) reasons.push("no_driver_location_at_completion");
     else if (!input.endLive.fresh) reasons.push("stale_gps_at_completion");
 
-    // Hard reasons move money to review; a stale-GPS fix on its own only flags.
-    const hardReasons = reasons.filter((r) => r !== "stale_gps_at_completion");
+    // Hard reasons move money to review. A stale-GPS fix on its own only flags.
+    // Passenger consent additionally forgives ONLY ended_far_from_destination —
+    // it never forgives no_meaningful_movement, trip_too_short, or a missing fix.
+    const hardReasons = reasons.filter((r) => {
+        if (r === "stale_gps_at_completion") return false;
+        if (r === "ended_far_from_destination" && input.passengerConsentedEnd) return false;
+        return true;
+    });
     return {
         endLoc,
         endDestinationDistanceM,

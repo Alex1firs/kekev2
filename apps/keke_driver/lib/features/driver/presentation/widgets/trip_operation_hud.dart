@@ -269,17 +269,25 @@ class TripOperationHUD extends ConsumerWidget {
             ref.read(driverControllerProvider.notifier).startTrip();
         break;
       case TripStep.started:
-        text = 'End Trip';
-        bgColor = AppColors.error;
-        fgColor = AppColors.white;
-        icon = Icons.stop_rounded;
-        onPressed = () {
-          if (state.activeRequest!.isCash) {
-            _showCashConfirmDialog(context, ref);
-          } else {
-            ref.read(driverControllerProvider.notifier).completeTrip();
-          }
-        };
+        if (state.awaitingEarlyEndConfirmation) {
+          text = 'Waiting for passenger…';
+          bgColor = AppColors.midGray;
+          fgColor = AppColors.white;
+          icon = Icons.hourglass_top_rounded;
+          onPressed = null; // waiting on passenger confirmation
+        } else {
+          text = 'End Trip';
+          bgColor = AppColors.error;
+          fgColor = AppColors.white;
+          icon = Icons.stop_rounded;
+          onPressed = () {
+            if (state.activeRequest!.isCash) {
+              _showCashConfirmDialog(context, ref);
+            } else {
+              ref.read(driverControllerProvider.notifier).completeTrip();
+            }
+          };
+        }
         break;
       default:
         return const SizedBox.shrink();

@@ -187,6 +187,22 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
             _onWalletRefreshNeeded?.call();
           }
           break;
+        case 'ride:awaiting_confirmation':
+          print('[DRIVER] Far from destination — awaiting passenger early-end confirmation.');
+          state = state.copyWith(
+            awaitingEarlyEndConfirmation: true,
+            errorMessage: data['message']?.toString() ??
+                "You're far from the booked destination — waiting for the passenger to confirm the drop-off.",
+          );
+          break;
+        case 'ride:early_end_held':
+          print('[DRIVER] Early-end resolved: payment held for review.');
+          _stopWatchdog();
+          finishAndGoAvailable();
+          _onWalletRefreshNeeded?.call();
+          state = state.copyWith(errorMessage: 'Trip completed. Payment is under review.');
+          _scheduleErrorClear(seconds: 8);
+          break;
         case 'chat:message':
           try {
             final msg = ChatMessage(
@@ -1019,6 +1035,7 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
       clearPickupRoute: true,
       clearDestinationRoute: true,
       clearRouteEta: true,
+      awaitingEarlyEndConfirmation: false,
     );
     _stopWatchdog();
   }

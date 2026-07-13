@@ -81,6 +81,9 @@ const Schemas = {
         totalFare:       z.number().min(100).max(50000).optional(),
         waitTimeSeconds: z.number().int().min(0).optional(),
     }),
+    // Passenger-consented early drop-off (Option 4 primary / Option 1 confirm).
+    rideEndEarly:      z.object({ rideId: id(), passengerId: id(), lat: lat().optional(), lng: lng().optional() }),
+    rideEarlyEndReject: z.object({ rideId: id(), passengerId: id() }),
     sosAlert: z.object({
         rideId: id(),
         initiatorId: id(),
@@ -110,6 +113,11 @@ export class SocketHandler {
     // reconnect instead of silently missing it.
     private dispatchPayloads: Map<string, any> = new Map();
     private driverRideMap:    Map<string, string>       = new Map();
+    // Pending driver-initiated early-end confirmations, keyed by rideId. If the
+    // passenger doesn't confirm/reject within the window the ride completes with
+    // payment held for admin review.
+    private earlyEndTimers:   Map<string, NodeJS.Timeout>  = new Map();
+    private static readonly EARLY_END_CONFIRM_MS = 90_000;
 
     /** Clear all in-memory dispatch state for a ride (offer targets + payload). */
     private clearDispatch(rideId: string) {
@@ -562,16 +570,12 @@ export class SocketHandler {
                     const ride = await this.validateRideState(data.rideId, ['in_progress', 'started']);
                     if (!ride) return;
 
-                    this.driverRideMap.delete(data.driverId);
-
-                    const isCashPayment = ride.paymentMode === 'cash';
                     const rideRepo = AppDataSource.getRepository(Ride);
 
                     // SERVER-AUTHORITATIVE FARE: never trust the client-supplied
-                    // amount for charging. Charge the stored quoted fare; the
-                    // client value is recorded only as audit evidence.
-                    const baseFare = Number(ride.fare);
-                    const finalFare = baseFare;
+                    // amount. Charge the stored quoted fare; the client value is
+                    // recorded only as audit evidence.
+                    const finalFare = Number(ride.fare);
                     const clientSuppliedFare = (typeof data.totalFare === 'number') ? data.totalFare : null;
                     const fareDifference = clientSuppliedFare != null ? clientSuppliedFare - finalFare : null;
 
@@ -581,26 +585,24 @@ export class SocketHandler {
                         ? { lat: Number(ride.startLat), lng: Number(ride.startLng) } : null;
                     const destination: LatLng | null = (ride.destinationLat != null && ride.destinationLng != null)
                         ? { lat: Number(ride.destinationLat), lng: Number(ride.destinationLng) } : null;
+                    const consented = !!ride.passengerConsentedEnd;
                     const integrity = evaluateCompletion({
-                        startLoc,
-                        endLive,
-                        destination,
+                        startLoc, endLive, destination,
                         startedAt: ride.startedAt ? new Date(ride.startedAt) : null,
                         now: new Date(),
+                        passengerConsentedEnd: consented,
                     });
 
-                    // If the client tried to inflate the fare, that is itself a flag.
                     const reasons = [...integrity.reasons];
                     if (fareDifference != null && fareDifference > 0) reasons.push('client_fare_above_quote');
                     const suspicious = reasons.length > 0;
-                    const holdPayment = integrity.holdPayment; // only HARD anomalies hold money
 
                     log.info(JSON.stringify({
                         event: 'ride_complete_integrity', rideId: data.rideId, driverId: data.driverId,
-                        paymentMode: ride.paymentMode, finalFare, clientSuppliedFare, fareDifference,
+                        paymentMode: ride.paymentMode, finalFare, clientSuppliedFare, fareDifference, consented,
                         endDestinationDistanceM: integrity.endDestinationDistanceM,
                         movementDistanceM: integrity.movementDistanceM, tripDurationSec: integrity.durationSec,
-                        endFresh: endLive?.fresh ?? false, suspicious, holdPayment, reasons,
+                        endFresh: endLive?.fresh ?? false, suspicious, holdPayment: integrity.holdPayment, reasons,
                     }));
 
                     // Persist all evidence up front (regardless of the money decision).
@@ -610,72 +612,118 @@ export class SocketHandler {
                         endDestinationDistanceM: integrity.endDestinationDistanceM,
                         movementDistanceM: integrity.movementDistanceM,
                         tripDurationSec: integrity.durationSec,
-                        clientSuppliedFare,
-                        finalFare,
+                        clientSuppliedFare, finalFare,
                         suspicious: suspicious || undefined,
                         suspiciousReason: suspicious ? mergeReasons(ride.suspiciousReason, reasons) : ride.suspiciousReason,
                     } as any);
+                    const freshRide = await rideRepo.findOne({ where: { rideId: data.rideId } }) ?? ride;
 
-                    let paymentSucceeded = false;
-                    let held = false;
-
-                    if (holdPayment) {
-                        // HOLD: do NOT debit the passenger / settle commission. Mark
-                        // for admin review; ride still completes so nobody is stuck.
-                        held = true;
-                        await rideRepo.update(data.rideId, { paymentHeld: true, suspicious: true } as any);
-                        log.warn(JSON.stringify({ level: 'warn', event: 'payment_held_for_review', rideId: data.rideId, reasons }));
-                        this.io.to('admin').emit('ride:held_for_review', { rideId: data.rideId, reasons, finalFare, paymentMode: ride.paymentMode });
+                    if (integrity.holdPayment) {
+                        // Early drop-off? If the ONLY hard reason is ending far from
+                        // the destination (real movement + duration) and there's no
+                        // consent yet, ask the passenger to confirm rather than hold.
+                        const hardSet = new Set(integrity.reasons.filter(r => r !== 'stale_gps_at_completion'));
+                        const onlyFarFromDest = hardSet.size === 1 && hardSet.has('ended_far_from_destination');
+                        if (!consented && onlyFarFromDest && !this.earlyEndTimers.has(data.rideId)) {
+                            await this.startEarlyEndConfirmation(freshRide, finalFare);
+                            return; // ride stays active until the passenger responds / times out
+                        }
+                        await this.settleAndComplete(freshRide, { finalFare, clientSuppliedFare, reasons, hold: true });
                     } else {
-                        // Normal settlement using the server-authoritative fare.
-                        log.info(`Processing financials for completed ride ${data.rideId} — fare: ${finalFare}`);
-                        try {
-                            await WalletService.postRideFinancials({
-                                rideId: data.rideId,
-                                passengerId: ride.passengerId,
-                                driverId: ride.driverId,
-                                totalFare: finalFare,
-                                isCash: isCashPayment,
-                            });
-                            paymentSucceeded = true;
-                        } catch (e: any) {
-                            log.error(JSON.stringify({ level: 'error', event: 'payment_failed', rideId: data.rideId, error: e.message }));
-                            await rideRepo.update(data.rideId, { paymentFailed: true } as any);
-                            this.io.to('admin').emit('ride:payment_failed', { rideId: data.rideId, error: e.message });
-                            socket.emit('ride:payment_error', {
-                                rideId: data.rideId,
-                                message: 'Payment processing failed. Our team will resolve this shortly.',
-                            });
-                        }
-                    }
-
-                    // Always mark the ride completed so driver and passenger are never stuck.
-                    await rideRepo.update(data.rideId, { status: 'completed' as any, completedAt: new Date() });
-
-                    const adminStatus = held ? 'completed_held_for_review' : (paymentSucceeded ? 'completed' : 'completed_payment_failed');
-                    this.io.to('admin').emit('ride:status_update', { rideId: data.rideId, status: adminStatus });
-                    this.broadcastToRide(data.rideId, 'ride:finished', { rideId: data.rideId });
-
-                    NotificationService.sendToUser(data.passengerId, UserRole.PASSENGER, 'Trip Completed', 'Hope you enjoyed the ride!', {
-                        type: 'TRIP_COMPLETED', rideId: data.rideId, intent: 'receipt',
-                    });
-
-                    // Payment held for review — tell both parties so nobody thinks they were charged/paid.
-                    if (held) {
-                        NotificationService.sendToUser(data.passengerId, UserRole.PASSENGER, 'Payment Under Review',
-                            "Your payment for this trip is being reviewed. You won't be charged until it's cleared.", {
-                            type: 'PAYMENT_HELD', rideId: data.rideId, intent: 'receipt',
-                        });
-                        if (ride.driverId) {
-                            NotificationService.sendToUser(ride.driverId, UserRole.DRIVER, 'Ride Under Review',
-                                'This ride was completed but payment is held for review.', {
-                                type: 'PAYMENT_HELD', rideId: data.rideId, intent: 'receipt',
-                            });
-                        }
+                        await this.settleAndComplete(freshRide, { finalFare, clientSuppliedFare, reasons, hold: false });
                     }
                 } catch (err) {
                     log.error('Ride completion lifecycle failed:', err);
                     socket.emit('ride:error', { code: 'INTERNAL_ERROR', message: 'Could not complete the ride right now. Please try again.' });
+                }
+            });
+
+            // --- Passenger-consented early drop-off (primary "End Trip Here" AND
+            //     confirming a driver's early-end request both land here) ---
+            socket.on('ride:end_early', async (raw) => {
+                const data = validate(Schemas.rideEndEarly, raw, socket);
+                if (!data) return;
+                try {
+                    const ride = await this.validateRideState(data.rideId, ['in_progress', 'started']);
+                    if (!ride) return;
+                    if (ride.passengerId !== data.passengerId) {
+                        socket.emit('ride:error', { code: 'FORBIDDEN', message: 'You cannot end this trip.' });
+                        return;
+                    }
+
+                    const rideRepo = AppDataSource.getRepository(Ride);
+                    // Record consent. If the driver didn't request it, the passenger
+                    // initiated the early end themselves.
+                    await rideRepo.update(data.rideId, {
+                        endedEarlyByPassenger: !ride.earlyEndRequestedByDriver,
+                        passengerConsentedEnd: true,
+                        passengerConsentAt: new Date(),
+                        passengerConsentLat: (typeof data.lat === 'number') ? data.lat : null,
+                        passengerConsentLng: (typeof data.lng === 'number') ? data.lng : null,
+                    } as any);
+                    const pending = this.earlyEndTimers.get(data.rideId);
+                    if (pending) { clearTimeout(pending); this.earlyEndTimers.delete(data.rideId); }
+                    log.info(JSON.stringify({ event: 'early_end_consented', rideId: data.rideId, passengerId: data.passengerId, initiatedByDriver: !!ride.earlyEndRequestedByDriver }));
+
+                    const fresh = await rideRepo.findOne({ where: { rideId: data.rideId } });
+                    if (!fresh) return;
+                    const finalFare = Number(fresh.fare);
+
+                    // Re-evaluate WITH consent — far-from-destination is forgiven, but
+                    // movement / duration / stale-GPS holds still apply.
+                    const endLive = await getDriverLiveLocation(fresh.driverId);
+                    const startLoc: LatLng | null = (fresh.startLat != null && fresh.startLng != null)
+                        ? { lat: Number(fresh.startLat), lng: Number(fresh.startLng) } : null;
+                    const destination: LatLng | null = (fresh.destinationLat != null && fresh.destinationLng != null)
+                        ? { lat: Number(fresh.destinationLat), lng: Number(fresh.destinationLng) } : null;
+                    const integrity = evaluateCompletion({
+                        startLoc, endLive, destination,
+                        startedAt: fresh.startedAt ? new Date(fresh.startedAt) : null,
+                        now: new Date(), passengerConsentedEnd: true,
+                    });
+                    const blocking = integrity.reasons.filter(r => r !== 'stale_gps_at_completion' && r !== 'ended_far_from_destination');
+                    const reasons = [...integrity.reasons, 'passenger_consented_early_end'];
+
+                    await rideRepo.update(data.rideId, {
+                        endLat: integrity.endLoc?.lat ?? null,
+                        endLng: integrity.endLoc?.lng ?? null,
+                        endDestinationDistanceM: integrity.endDestinationDistanceM,
+                        movementDistanceM: integrity.movementDistanceM,
+                        tripDurationSec: integrity.durationSec,
+                        finalFare,
+                        suspicious: integrity.reasons.length > 0 || undefined,
+                        suspiciousReason: mergeReasons(fresh.suspiciousReason, reasons),
+                    } as any);
+                    const persisted = await rideRepo.findOne({ where: { rideId: data.rideId } }) ?? fresh;
+
+                    await this.settleAndComplete(persisted, {
+                        finalFare, clientSuppliedFare: null, reasons,
+                        hold: integrity.holdPayment,
+                        reviewReason: integrity.holdPayment ? (blocking.join(',') || 'flagged') : null,
+                    });
+                } catch (err) {
+                    log.error('Early-end (consent) failed:', err);
+                    socket.emit('ride:error', { code: 'INTERNAL_ERROR', message: 'Could not end the trip right now. Please try again.' });
+                }
+            });
+
+            // --- Passenger rejects the driver's early-end request ---
+            socket.on('ride:reject_early_end', async (raw) => {
+                const data = validate(Schemas.rideEarlyEndReject, raw, socket);
+                if (!data) return;
+                try {
+                    const ride = await this.validateRideState(data.rideId, ['in_progress', 'started']);
+                    if (!ride || ride.passengerId !== data.passengerId) return;
+                    const pending = this.earlyEndTimers.get(data.rideId);
+                    if (pending) { clearTimeout(pending); this.earlyEndTimers.delete(data.rideId); }
+                    log.warn(JSON.stringify({ level: 'warn', event: 'early_end_rejected', rideId: data.rideId }));
+                    await this.settleAndComplete(ride, {
+                        finalFare: Number(ride.fare), clientSuppliedFare: null,
+                        reasons: ['ended_far_from_destination', 'passenger_disputed_early_end'],
+                        hold: true, reviewReason: 'passenger_disputed_early_end',
+                    });
+                } catch (err) {
+                    log.error('Early-end reject failed:', err);
                 }
             });
 
@@ -851,6 +899,121 @@ export class SocketHandler {
             this.rideExclusions.delete(rideId);
             this.clearDispatch(rideId);
         }
+    }
+
+    /**
+     * Settle-or-hold a finished ride, mark it completed, and notify both parties.
+     * Shared by the driver ride:complete path and the passenger early-end paths.
+     * The hold-vs-settle decision is made by the caller from evaluateCompletion.
+     */
+    private async settleAndComplete(
+        ride: any,
+        args: { finalFare: number; clientSuppliedFare: number | null; reasons: string[]; hold: boolean; reviewReason?: string | null }
+    ): Promise<void> {
+        const rideRepo = AppDataSource.getRepository(Ride);
+        const rideId = ride.rideId;
+        const isCash = ride.paymentMode === 'cash';
+
+        // Any pending early-end confirmation is now resolved.
+        const pending = this.earlyEndTimers.get(rideId);
+        if (pending) { clearTimeout(pending); this.earlyEndTimers.delete(rideId); }
+        // The driver is no longer on an active ride.
+        if (ride.driverId) this.driverRideMap.delete(ride.driverId);
+
+        let paymentSucceeded = false;
+        const held = args.hold;
+
+        if (held) {
+            await rideRepo.update(rideId, {
+                paymentHeld: true,
+                suspicious: true,
+                reviewReason: args.reviewReason ?? ride.reviewReason ?? null,
+            } as any);
+            log.warn(JSON.stringify({ level: 'warn', event: 'payment_held_for_review', rideId, reasons: args.reasons, reviewReason: args.reviewReason ?? null }));
+            this.io.to('admin').emit('ride:held_for_review', { rideId, reasons: args.reasons, reviewReason: args.reviewReason ?? null, finalFare: args.finalFare, paymentMode: ride.paymentMode });
+        } else {
+            log.info(`Processing financials for completed ride ${rideId} — fare: ${args.finalFare}`);
+            try {
+                await WalletService.postRideFinancials({
+                    rideId, passengerId: ride.passengerId, driverId: ride.driverId,
+                    totalFare: args.finalFare, isCash,
+                });
+                paymentSucceeded = true;
+            } catch (e: any) {
+                log.error(JSON.stringify({ level: 'error', event: 'payment_failed', rideId, error: e.message }));
+                await rideRepo.update(rideId, { paymentFailed: true } as any);
+                this.io.to('admin').emit('ride:payment_failed', { rideId, error: e.message });
+            }
+        }
+
+        await rideRepo.update(rideId, { status: 'completed' as any, completedAt: new Date() });
+
+        const adminStatus = held ? 'completed_held_for_review' : (paymentSucceeded ? 'completed' : 'completed_payment_failed');
+        this.io.to('admin').emit('ride:status_update', { rideId, status: adminStatus });
+        this.broadcastToRide(rideId, 'ride:finished', { rideId });
+
+        NotificationService.sendToUser(ride.passengerId, UserRole.PASSENGER, 'Trip Completed', 'Hope you enjoyed the ride!', {
+            type: 'TRIP_COMPLETED', rideId, intent: 'receipt',
+        });
+        if (held) {
+            NotificationService.sendToUser(ride.passengerId, UserRole.PASSENGER, 'Payment Under Review',
+                "Your payment for this trip is being reviewed. You won't be charged until it's cleared.", {
+                type: 'PAYMENT_HELD', rideId, intent: 'receipt',
+            });
+            if (ride.driverId) {
+                NotificationService.sendToUser(ride.driverId, UserRole.DRIVER, 'Ride Under Review',
+                    'This ride was completed but payment is held for review.', {
+                    type: 'PAYMENT_HELD', rideId, intent: 'receipt',
+                });
+                // Release the driver app from any "awaiting confirmation" state.
+                this.io.to(`driver:${ride.driverId}`).emit('ride:early_end_held', { rideId, reviewReason: args.reviewReason ?? null });
+            }
+        }
+    }
+
+    /**
+     * Driver ended the trip far from the destination but with real movement and
+     * duration and no consent yet. Ask the passenger to confirm the early
+     * drop-off; if they don't within the window, the ride completes with payment
+     * held for admin review (never auto-approved).
+     */
+    private async startEarlyEndConfirmation(ride: any, finalFare: number): Promise<void> {
+        const rideId = ride.rideId;
+        await AppDataSource.getRepository(Ride).update(rideId, { earlyEndRequestedByDriver: true } as any);
+
+        this.io.to(`ride:${rideId}`).emit('ride:early_end_request', { rideId });
+        NotificationService.sendToUser(ride.passengerId, UserRole.PASSENGER, 'Confirm Drop-off',
+            'Your driver says you were dropped off here. Please confirm in the app.', {
+            type: 'EARLY_END_REQUEST', rideId, intent: 'confirm',
+        });
+        if (ride.driverId) {
+            this.io.to(`driver:${ride.driverId}`).emit('ride:awaiting_confirmation', {
+                rideId,
+                message: "You're far from the booked destination — waiting for the passenger to confirm the drop-off.",
+            });
+        }
+        log.info(JSON.stringify({ event: 'early_end_requested', rideId, driverId: ride.driverId }));
+
+        const timer = setTimeout(async () => {
+            this.earlyEndTimers.delete(rideId);
+            try {
+                const rideRepo = AppDataSource.getRepository(Ride);
+                const fresh = await rideRepo.findOne({ where: { rideId } });
+                if (!fresh) return;
+                // Only act if still un-resolved (not confirmed/rejected/completed meanwhile).
+                if ((fresh.status as any) !== 'in_progress' && (fresh.status as any) !== 'started') return;
+                if (fresh.passengerConsentedEnd) return;
+                log.warn(JSON.stringify({ level: 'warn', event: 'early_end_timeout', rideId }));
+                await this.settleAndComplete(fresh, {
+                    finalFare, clientSuppliedFare: null,
+                    reasons: ['ended_far_from_destination', 'early_end_no_passenger_response'],
+                    hold: true, reviewReason: 'early_end_no_passenger_response',
+                });
+            } catch (err) {
+                log.error('Early-end timeout handler failed:', err);
+            }
+        }, SocketHandler.EARLY_END_CONFIRM_MS);
+        this.earlyEndTimers.set(rideId, timer);
     }
 
     private async isRideAssigned(rideId: string): Promise<boolean> {

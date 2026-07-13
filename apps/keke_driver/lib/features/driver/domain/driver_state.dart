@@ -28,6 +28,10 @@ class DriverState {
   // Driver's own live GPS position (updated every heartbeat)
   final LatLng? driverCurrentPosition;
 
+  /// The driver ended the trip far from the destination and is waiting for the
+  /// passenger to confirm the early drop-off.
+  final bool awaitingEarlyEndConfirmation;
+
   const DriverState({
     required this.profile,
     this.operationStatus = OperationStatus.offline,
@@ -44,6 +48,7 @@ class DriverState {
     this.routeEtaMinutes,
     this.routeDistanceMeters,
     this.driverCurrentPosition,
+    this.awaitingEarlyEndConfirmation = false,
   });
 
   DriverState copyWith({
@@ -69,6 +74,7 @@ class DriverState {
     double? routeDistanceMeters,
     LatLng? driverCurrentPosition,
     bool clearDriverPosition = false,
+    bool? awaitingEarlyEndConfirmation,
   }) {
     return DriverState(
       profile: profile ?? this.profile,
@@ -86,6 +92,7 @@ class DriverState {
       routeEtaMinutes: clearRouteEta ? null : (routeEtaMinutes ?? this.routeEtaMinutes),
       routeDistanceMeters: clearRouteEta ? null : (routeDistanceMeters ?? this.routeDistanceMeters),
       driverCurrentPosition: clearDriverPosition ? null : (driverCurrentPosition ?? this.driverCurrentPosition),
+      awaitingEarlyEndConfirmation: awaitingEarlyEndConfirmation ?? this.awaitingEarlyEndConfirmation,
     );
   }
 }

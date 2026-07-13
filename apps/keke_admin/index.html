@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Keke Admin | Dashboard</title>
-    <link rel="stylesheet" href="styles.css?v=3.4">
+    <link rel="stylesheet" href="styles.css?v=3.5">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 </head>
@@ -57,6 +57,9 @@
                 </li>
                 <li data-section="active-rides">
                     <i class="fas fa-broadcast-tower"></i> <span>Active Rides</span>
+                </li>
+                <li data-section="held-rides">
+                    <i class="fas fa-gavel"></i> <span>Held Rides</span>
                 </li>
                 <li data-section="history">
                     <i class="fas fa-history"></i> <span>Ride History</span>
@@ -180,6 +183,11 @@
                             <tbody id="active-rides-list"></tbody>
                         </table>
                     </div>
+                </section>
+
+                <!-- Held / Flagged Rides (payment held for review) -->
+                <section id="held-rides" class="content-section hidden">
+                    <div id="held-rides-list" class="held-rides-grid"></div>
                 </section>
 
                 <!-- Finance Section -->
@@ -372,6 +380,6 @@
 
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="app.js?v=3.4"></script>
+    <script src="app.js?v=3.5"></script>
 </body>
 </html>

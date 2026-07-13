@@ -8,6 +8,12 @@
         android:label="keke_passenger"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+        <!-- Default channel for notification-type messages that don't set an
+             explicit channelId. Loud alerts (driver assigned/arrived) target the
+             high-importance "keke_ride_updates" channel instead. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="keke_general" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

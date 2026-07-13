@@ -75,6 +75,15 @@ export class NotificationService {
         const customSoundTypes = ['NEW_REQUEST', 'RIDE_ASSIGNED', 'RIDE_ARRIVED'];
         const sound = customSoundTypes.includes(type) ? 'keke_ring.wav' : 'default';
 
+        // On Android 8+ the ring is owned by the notification CHANNEL, so we must
+        // target the right high-importance channel per app. NEW_REQUEST is a
+        // driver push (keke_ride_requests); RIDE_ASSIGNED / RIDE_ARRIVED are
+        // passenger pushes (keke_ride_updates). Anything else falls back to each
+        // app's default_notification_channel_id.
+        let androidChannelId: string | undefined;
+        if (type === 'NEW_REQUEST') androidChannelId = 'keke_ride_requests';
+        else if (type === 'RIDE_ASSIGNED' || type === 'RIDE_ARRIVED') androidChannelId = 'keke_ride_updates';
+
         const message: admin.messaging.MulticastMessage = {
             tokens: tokens,
             notification: {
@@ -89,10 +98,10 @@ export class NotificationService {
                 priority: 'high',
                 notification: {
                     sound: sound.replace('.wav', ''), // Android <8 uses this; 8+ takes the sound from the channel
-                    // Route new ride requests to the driver app's high-importance
-                    // "Ride Requests" channel so the custom ring actually plays on
-                    // Android 8+ (channel-owned sound). Other types use the default.
-                    channelId: type === 'NEW_REQUEST' ? 'keke_ride_requests' : undefined,
+                    // Route ride alerts to each app's high-importance channel so
+                    // the custom ring actually plays on Android 8+ (channel-owned
+                    // sound). Other types fall back to the app default channel.
+                    channelId: androidChannelId,
                 }
             },
             apns: {

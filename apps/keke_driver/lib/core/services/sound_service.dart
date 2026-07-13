@@ -7,7 +7,10 @@ class SoundService {
   Future<void> playRequestSound() async {
     try {
       await _player.stop();
-      // 'keke_ring.wav' or 'keke_ring.mp3' must be in assets/sounds/
+      // Ring continuously (like an incoming call) until the driver accepts,
+      // declines, or the request times out — SoundService.stop() ends it.
+      await _player.setReleaseMode(ReleaseMode.loop);
+      // 'keke_ring.wav' must be in assets/sounds/
       await _player.play(AssetSource('sounds/keke_ring.wav'));
     } catch (e) {
       print('[SOUND_ERROR] Failed to play request sound: $e');

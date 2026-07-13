@@ -1727,9 +1727,9 @@ class _LiveApproachCard extends StatelessWidget {
                         context: parentContext,
                         isScrollControlled: true,
                         backgroundColor: Colors.transparent,
-                        builder: (_) => SizedBox(
-                          height: MediaQuery.of(parentContext).size.height *
-                              0.6,
+                        builder: (ctx) => SizedBox(
+                          height: MediaQuery.of(ctx).size.height * 0.6 +
+                              MediaQuery.of(ctx).viewInsets.bottom,
                           child: const RideChatPanel(),
                         ),
                       ),
@@ -2125,8 +2125,9 @@ class _DriverContactRow extends StatelessWidget {
               context: parentContext,
               isScrollControlled: true,
               backgroundColor: Colors.transparent,
-              builder: (_) => SizedBox(
-                height: MediaQuery.of(parentContext).size.height * 0.6,
+              builder: (ctx) => SizedBox(
+                height: MediaQuery.of(ctx).size.height * 0.6 +
+                    MediaQuery.of(ctx).viewInsets.bottom,
                 child: const RideChatPanel(),
               ),
             ),
@@ -2346,9 +2347,9 @@ class _OnTripCard extends StatelessWidget {
                     context: parentContext,
                     isScrollControlled: true,
                     backgroundColor: Colors.transparent,
-                    builder: (_) => SizedBox(
-                      height:
-                          MediaQuery.of(parentContext).size.height * 0.6,
+                    builder: (ctx) => SizedBox(
+                      height: MediaQuery.of(ctx).size.height * 0.6 +
+                          MediaQuery.of(ctx).viewInsets.bottom,
                       child: const RideChatPanel(),
                     ),
                   ),

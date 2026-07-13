@@ -458,8 +458,9 @@ class TripOperationHUD extends ConsumerWidget {
                   context: context,
                   isScrollControlled: true,
                   backgroundColor: Colors.transparent,
-                  builder: (_) => SizedBox(
-                    height: MediaQuery.of(context).size.height * 0.6,
+                  builder: (ctx) => SizedBox(
+                    height: MediaQuery.of(ctx).size.height * 0.6 +
+                        MediaQuery.of(ctx).viewInsets.bottom,
                     child: const RideChatPanel(),
                   ),
                 ),

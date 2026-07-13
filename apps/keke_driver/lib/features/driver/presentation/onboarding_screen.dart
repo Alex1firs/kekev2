@@ -269,6 +269,10 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   }
 
   Widget _buildVehicleInfoStep(dynamic driverState) {
+    // Dark, semibold text so entered/pre-filled values (e.g. a name carried
+    // over from signup) read as real input, not faint placeholder text.
+    final inputStyle =
+        AppTextStyles.body(color: AppColors.charcoal, weight: FontWeight.w600);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -286,6 +290,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                   const SizedBox(height: 6),
                   TextFormField(
                     controller: _firstNameController,
+                    style: inputStyle,
                     decoration: const InputDecoration(hintText: 'e.g. Emeka'),
                     textCapitalization: TextCapitalization.words,
                     textInputAction: TextInputAction.next,
@@ -304,6 +309,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                   const SizedBox(height: 6),
                   TextFormField(
                     controller: _lastNameController,
+                    style: inputStyle,
                     decoration: const InputDecoration(hintText: 'e.g. Okonkwo'),
                     textCapitalization: TextCapitalization.words,
                     textInputAction: TextInputAction.next,
@@ -320,6 +326,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         const SizedBox(height: 6),
         TextFormField(
           controller: _plateController,
+          style: inputStyle,
           decoration: const InputDecoration(
             hintText: 'e.g. ANK-123KW',
             prefixIcon: Icon(Icons.electric_rickshaw),
@@ -333,6 +340,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         const SizedBox(height: 6),
         TextFormField(
           controller: _modelController,
+          style: inputStyle,
           decoration: const InputDecoration(
             hintText: 'e.g. TVS King Deluxe',
             prefixIcon: Icon(Icons.electric_rickshaw),
@@ -346,6 +354,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         const SizedBox(height: 6),
         TextFormField(
           controller: _ninController,
+          style: inputStyle,
           decoration: const InputDecoration(
             hintText: 'Enter your 11-digit NIN',
             prefixIcon: Icon(Icons.badge_outlined),
@@ -430,10 +439,52 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     );
   }
 
+  /// Let the driver choose whether to snap a fresh photo or pick an existing
+  /// scan from their gallery, then upload the selected image.
   Future<void> _pickAndUpload(String type) async {
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      backgroundColor: AppColors.charcoal,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 8),
+            Container(
+              width: 44,
+              height: 5,
+              margin: const EdgeInsets.only(bottom: 8),
+              decoration: BoxDecoration(
+                color: AppColors.darkGray,
+                borderRadius: BorderRadius.circular(3),
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.camera_alt_rounded, color: AppColors.primary),
+              title: const Text('Take a photo',
+                  style: TextStyle(color: AppColors.white, fontWeight: FontWeight.w600)),
+              onTap: () => Navigator.pop(ctx, ImageSource.camera),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_rounded, color: AppColors.primary),
+              title: const Text('Upload from gallery',
+                  style: TextStyle(color: AppColors.white, fontWeight: FontWeight.w600)),
+              onTap: () => Navigator.pop(ctx, ImageSource.gallery),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+
+    if (source == null) return;
+
     final picker = ImagePicker();
     final XFile? image = await picker.pickImage(
-      source: ImageSource.camera,
+      source: source,
       imageQuality: 70,
       maxWidth: 1024,
       maxHeight: 1024,

@@ -8,6 +8,8 @@ import 'package:dio/dio.dart' as dio;
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:geolocator/geolocator.dart';
 import '../../../core/services/location_foreground_task.dart';
+import '../../../core/services/battery_optimization_service.dart';
+import '../../../core/storage/secure_storage.dart';
 import '../domain/chat_message.dart';
 import '../domain/driver_profile.dart';
 import '../domain/driver_state.dart';
@@ -28,6 +30,11 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
   SocketService? _socketService;
   final ApiClient _apiClient;
   final String _userId;
+  final SecureStorageService _storage;
+  /// Auth token, handed to the foreground-service isolate so it can post the
+  /// HTTP heartbeat with a Bearer header while the app UI is suspended.
+  final String? _authToken;
+  bool _autoResumeAttempted = false;
 
   Timer? _countdownTimer;
   Timer? _heartbeatTimer;
@@ -48,7 +55,7 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
 
   void setWalletRefreshCallback(void Function() cb) => _onWalletRefreshNeeded = cb;
 
-  DriverController(SocketService? initialSocket, this._apiClient, this._notificationService, this._soundService, this._userId)
+  DriverController(SocketService? initialSocket, this._apiClient, this._notificationService, this._soundService, this._userId, this._storage, this._authToken)
       : super(DriverState(
           profile: const DriverProfile(status: DriverStatus.unregistered),
           isLoading: true, // hold routing on splash until profile is fetched
@@ -85,6 +92,7 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
     syncStatus();
     if (state.operationStatus == OperationStatus.available) {
       _sendHeartbeat();
+      _refreshBatteryWarning();
     }
   }
 
@@ -160,6 +168,7 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
           break;
         case 'socket:reconnected':
           print('[DRIVER_SYNC] Socket reconnected. Triggering redundant healing...');
+          if (mounted) state = state.copyWith(connectionStatus: ConnectionStatus.connected);
           syncStatus();
           // Re-register presence in Redis immediately — the TTL may have
           // expired while the socket was down, making the driver invisible
@@ -168,11 +177,20 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
             _sendHeartbeat();
           }
           break;
+        case 'socket:disconnected':
+          print('[SOCKET] Disconnected.');
+          if (mounted) state = state.copyWith(connectionStatus: ConnectionStatus.disconnected);
+          break;
         case 'socket:connect_error':
           print('[SOCKET_ERROR] Connection failed: ${data['message']}');
           if (mounted && state.operationStatus == OperationStatus.available) {
-            state = state.copyWith(errorMessage: 'Server connection lost — retrying…');
+            state = state.copyWith(
+              connectionStatus: ConnectionStatus.connecting,
+              errorMessage: 'Server connection lost — retrying…',
+            );
             _scheduleErrorClear(seconds: 8);
+          } else if (mounted) {
+            state = state.copyWith(connectionStatus: ConnectionStatus.connecting);
           }
           break;
         case 'error:debt_blocked':
@@ -281,7 +299,10 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
       });
 
       if (mounted) {
-        state = state.copyWith(driverCurrentPosition: LatLng(lat, lng));
+        state = state.copyWith(
+          driverCurrentPosition: LatLng(lat, lng),
+          lastHeartbeatAt: DateTime.now(),
+        );
       }
 
       // Update live ETA/distance for active trip
@@ -563,6 +584,10 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
             );
           }
         }
+
+        // Auto-resume Online if the driver had chosen to stay online and isn't
+        // already mid-ride (recovery above would have set busy).
+        await _maybeAutoResumeOnline();
       } else {
         // Server confirms this account has no driver profile yet — a genuinely
         // new driver. Safe to route to onboarding.
@@ -822,7 +847,11 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
 
     // Going OFFLINE is always allowed when currently online.
     if (state.operationStatus != OperationStatus.offline) {
-      state = state.copyWith(operationStatus: OperationStatus.offline);
+      _storage.writeOnlineIntent(false); // don't auto-resume next launch
+      state = state.copyWith(
+        operationStatus: OperationStatus.offline,
+        batteryOptimizationActive: false,
+      );
       _heartbeatTimer?.cancel();
       _stopLocationForegroundService();
       if (_socketService != null) {
@@ -862,25 +891,97 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
       return;
     }
 
-    // Approved and clear — go online.
-    state = state.copyWith(operationStatus: OperationStatus.available);
+    // Approved and clear — remember the choice and go online.
+    _storage.writeOnlineIntent(true); // auto-resume on next launch/reconnect
+    _goOnlineInternal();
+  }
+
+  /// Shared "become available" path used by both the manual toggle and the
+  /// startup auto-resume. Assumes eligibility has already been checked.
+  void _goOnlineInternal() {
+    state = state.copyWith(
+      operationStatus: OperationStatus.available,
+      connectionStatus: _socketService?.isConnected == true
+          ? ConnectionStatus.connected
+          : ConnectionStatus.connecting,
+    );
     _startHeartbeat();
-    _startLocationForegroundService();
+    _startLocationForegroundService(); // async fire-and-forget
+    _refreshBatteryWarning();
   }
 
-  void _startLocationForegroundService() {
-    if (!Platform.isAndroid) return;
-    FlutterForegroundTask.startService(
-      serviceId: 1001,
-      notificationTitle: 'Keke Driver',
-      notificationText: 'You are online and available for rides',
-      callback: locationTaskCallback,
-    ).catchError((_) {});
+  /// Restores Online after an app restart / process kill if the driver had
+  /// chosen to stay online — so they never have to re-toggle. Runs once, and
+  /// only when the driver is genuinely eligible AND location is usable (we
+  /// never fake "Online" without a working location source).
+  Future<void> _maybeAutoResumeOnline() async {
+    if (_autoResumeAttempted) return;
+    _autoResumeAttempted = true;
+    if (!mounted) return;
+    if (state.operationStatus != OperationStatus.offline) return; // already on a ride
+    if (state.profile.status != DriverStatus.approved) return;
+    if (state.profile.debtAmount >= 5000) return;
+
+    final wantsOnline = await _storage.readOnlineIntent();
+    if (!wantsOnline || !mounted) return;
+
+    try {
+      final perm = await Geolocator.checkPermission();
+      final granted = perm == LocationPermission.always ||
+          perm == LocationPermission.whileInUse;
+      final serviceOn = await Geolocator.isLocationServiceEnabled();
+      if (!granted || !serviceOn) {
+        // Don't silently claim Online — nudge the driver to tap Online so the
+        // permission/GPS prompts can run.
+        if (mounted) {
+          state = state.copyWith(errorMessage: 'Tap Online to resume — location access is needed.');
+          _scheduleErrorClear(seconds: 6);
+        }
+        return;
+      }
+    } catch (_) {
+      return;
+    }
+
+    if (!mounted) return;
+    print('[AUTO_RESUME] Restoring Online from saved intent.');
+    _goOnlineInternal();
   }
 
-  void _stopLocationForegroundService() {
+  Future<void> _refreshBatteryWarning() async {
+    try {
+      final active = await BatteryOptimizationService.isOptimizationActive();
+      if (mounted) state = state.copyWith(batteryOptimizationActive: active);
+    } catch (_) {}
+  }
+
+  Future<void> _startLocationForegroundService() async {
     if (!Platform.isAndroid) return;
-    FlutterForegroundTask.stopService().catchError((_) {});
+    // Hand the heartbeat context to the service isolate BEFORE it starts so its
+    // onStart/onRepeatEvent can post the HTTP heartbeat with a valid token.
+    final token = _authToken;
+    if (token != null) {
+      try {
+        await FlutterForegroundTask.saveData(key: kHbUrlKey, value: EnvConfig.current.apiBaseUrl);
+        await FlutterForegroundTask.saveData(key: kHbTokenKey, value: token);
+        await FlutterForegroundTask.saveData(key: kHbUserKey, value: _userId);
+      } catch (_) {}
+    }
+    try {
+      await FlutterForegroundTask.startService(
+        serviceId: 1001,
+        notificationTitle: 'KekeRide',
+        notificationText: 'KekeRide is online — accepting rides nearby.',
+        callback: locationTaskCallback,
+      );
+    } catch (_) {}
+  }
+
+  Future<void> _stopLocationForegroundService() async {
+    if (!Platform.isAndroid) return;
+    try {
+      await FlutterForegroundTask.stopService();
+    } catch (_) {}
   }
 
   // --- Real Request Flow ---
@@ -1219,6 +1320,10 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    // Stop the foreground service so a disposed controller (e.g. on logout /
+    // auth change) can't keep the heartbeat isolate posting with a stale token.
+    // If the driver is still online, the fresh controller's auto-resume restarts it.
+    _stopLocationForegroundService();
     _waitTimer?.cancel();
     _countdownTimer?.cancel();
     _heartbeatTimer?.cancel();
@@ -1238,6 +1343,7 @@ final driverControllerProvider = StateNotifierProvider<DriverController, DriverS
   final socketService = ref.read(socketServiceProvider);
   final notificationService = ref.read(notificationServiceProvider('driver'));
   final soundService = ref.read(soundServiceProvider);
+  final secureStorage = ref.read(secureStorageServiceProvider);
 
   String userId = 'guest';
   if (authState.status == AuthStatus.authenticated && authState.token != null) {
@@ -1255,11 +1361,11 @@ final driverControllerProvider = StateNotifierProvider<DriverController, DriverS
       Future.microtask(() {
         ref.read(authControllerProvider.notifier).forceUnauthorizedCleanup();
       });
-      return DriverController(null, apiClient, notificationService, soundService, 'session_invalid');
+      return DriverController(null, apiClient, notificationService, soundService, 'session_invalid', secureStorage, authState.token);
     }
   }
 
-  final controller = DriverController(socketService, apiClient, notificationService, soundService, userId);
+  final controller = DriverController(socketService, apiClient, notificationService, soundService, userId, secureStorage, authState.token);
 
   controller.setWalletRefreshCallback(
     () => ref.read(driverFinanceControllerProvider.notifier).refresh(),

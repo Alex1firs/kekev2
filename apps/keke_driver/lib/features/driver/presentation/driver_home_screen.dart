@@ -8,7 +8,6 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/services/battery_optimization_service.dart';
-import '../../../../core/network/socket_provider.dart';
 import '../../auth/application/auth_controller.dart';
 import '../application/driver_controller.dart';
 import '../domain/driver_profile.dart';
@@ -362,11 +361,38 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
     final isOnline = state.operationStatus != OperationStatus.offline;
     final topPad = MediaQuery.of(context).padding.top + 12;
 
+    // Honest status: reflect the real link health, never a static "Online".
+    final conn = state.connectionStatus;
+    final String statusLabel;
+    final String statusSubtitle;
+    final Color subtitleColor;
+    if (!isOnline) {
+      statusLabel = 'Offline';
+      statusSubtitle = 'Tap to go online';
+      subtitleColor = AppColors.midGray;
+    } else if (conn == ConnectionStatus.connected) {
+      statusLabel = 'Online';
+      statusSubtitle = 'Looking for rides…';
+      subtitleColor = AppColors.lightGray;
+    } else if (conn == ConnectionStatus.connecting) {
+      statusLabel = 'Reconnecting';
+      statusSubtitle = 'Trying to stay online…';
+      subtitleColor = AppColors.warning;
+    } else {
+      statusLabel = 'Offline — connection lost';
+      statusSubtitle = 'Reconnecting…';
+      subtitleColor = AppColors.warning;
+    }
+
     return Positioned(
       top: topPad,
       left: 12,
       right: 12,
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
         children: [
           // Status pill
           Expanded(
@@ -408,26 +434,20 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          isOnline ? 'Online' : 'Offline',
+                          statusLabel,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: AppTextStyles.body(
                             color: AppColors.white,
                             weight: FontWeight.w700,
                           ).copyWith(fontSize: 13, height: 1.1),
                         ),
                         Text(
-                          isOnline
-                              ? (ref.watch(socketServiceProvider)?.isConnected ?? false
-                                  ? 'Looking for rides...'
-                                  : 'Connecting...')
-                              : 'Tap to go online',
+                          statusSubtitle,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: AppTextStyles.caption(
-                            color: isOnline
-                                ? (ref.watch(socketServiceProvider)?.isConnected ?? false
-                                    ? AppColors.lightGray
-                                    : AppColors.warning)
-                                : AppColors.midGray,
+                            color: subtitleColor,
                           ).copyWith(fontSize: 9, height: 1.1),
                         ),
                       ],
@@ -484,6 +504,43 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
             isDestructive: true,
           ),
         ],
+      ),
+          if (isOnline && state.batteryOptimizationActive) _buildBatteryWarning(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBatteryWarning() {
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: GestureDetector(
+        onTap: BatteryOptimizationService.openSettings,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: AppColors.warning.withOpacity(0.15),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: AppColors.warning.withOpacity(0.5)),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.battery_alert_rounded,
+                  color: AppColors.warning, size: 15),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Battery optimization may stop ride requests',
+                  style: AppTextStyles.caption(color: AppColors.warning)
+                      .copyWith(fontSize: 10),
+                ),
+              ),
+              Text('Fix',
+                  style: AppTextStyles.caption(color: AppColors.primary)
+                      .copyWith(fontSize: 10, fontWeight: FontWeight.w700)),
+            ],
+          ),
+        ),
       ),
     );
   }

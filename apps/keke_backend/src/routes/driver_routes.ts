@@ -259,6 +259,41 @@ router.post("/verify-nin", authMiddleware, async (req: AuthRequest, res: Respons
     }
 });
 
+/**
+ * POST /api/v1/drivers/heartbeat
+ * HTTP fallback for the driver availability heartbeat. The Android foreground
+ * service posts here every ~12s from its own isolate so the driver stays in the
+ * Redis dispatch pool even when the socket / main isolate is suspended while the
+ * phone is locked. Mirrors the socket 'driver:heartbeat' handler (approved-only,
+ * then GEOADD + refresh the 45s availability key via updateDriverLocation).
+ */
+router.post("/heartbeat", authMiddleware, async (req: AuthRequest, res: Response) => {
+    try {
+        const userId = req.user!.userId;
+        const { lat, lng } = req.body ?? {};
+        const latN = Number(lat);
+        const lngN = Number(lng);
+        if (!Number.isFinite(latN) || !Number.isFinite(lngN)) {
+            return res.status(400).json(errBody(ErrorCode.VALIDATION_ERROR, "Valid lat/lng are required."));
+        }
+
+        const profile = await AppDataSource.getRepository(DriverProfile).findOneBy({ userId });
+        if (!profile || profile.status !== DriverStatus.APPROVED) {
+            // Not eligible to be online — make sure a suspended/rejected/unknown
+            // driver isn't left lingering in the availability pool or on the
+            // passenger map.
+            await DispatchService.removeDriverAvailability(userId);
+            return res.status(403).json(errBody(ErrorCode.FORBIDDEN, "Driver is not approved to be online."));
+        }
+
+        await DispatchService.updateDriverLocation(userId, latN, lngN);
+        return res.json({ ok: true });
+    } catch (err: any) {
+        console.error('[DRIVER] HTTP heartbeat error:', err?.message);
+        return res.status(500).json(errBody(ErrorCode.INTERNAL_ERROR, "Heartbeat failed."));
+    }
+});
+
 // Diagnostic: lets the driver app verify heartbeats are reaching the backend.
 router.get("/availability/check", authMiddleware, async (req: AuthRequest, res: Response) => {
     try {

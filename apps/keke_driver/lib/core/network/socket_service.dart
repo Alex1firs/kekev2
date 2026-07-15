@@ -56,7 +56,12 @@ class SocketService {
       _controller.add({'event': 'socket:connect_error', 'message': err?.toString() ?? 'Connection failed'});
     });
 
-    _socket!.onDisconnect((_) => print('Socket disconnected'));
+    _socket!.onDisconnect((_) {
+      print('Socket disconnected');
+      // Surface disconnects so the controller can drive an honest UI
+      // ("Reconnecting…") instead of silently claiming the driver is Online.
+      _controller.add({'event': 'socket:disconnected'});
+    });
 
     // Broad listener for all dispatcher events
     _socket!.onAny((event, data) {

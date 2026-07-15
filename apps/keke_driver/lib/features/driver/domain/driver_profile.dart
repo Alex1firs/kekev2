@@ -13,6 +13,14 @@ enum OperationStatus {
   busy
 }
 
+/// Real-time link health, used to drive an honest online indicator instead of
+/// showing a static "Online" while the socket is actually dropped.
+enum ConnectionStatus {
+  connected,
+  connecting,
+  disconnected
+}
+
 enum TripStep {
   none,
   accepted,

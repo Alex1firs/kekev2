@@ -32,6 +32,17 @@ class DriverState {
   /// passenger to confirm the early drop-off.
   final bool awaitingEarlyEndConfirmation;
 
+  /// Real-time socket link health — drives the honest online indicator.
+  final ConnectionStatus connectionStatus;
+
+  /// Wall-clock time of the last heartbeat the app successfully sent. Used to
+  /// warn when we can no longer keep the driver online.
+  final DateTime? lastHeartbeatAt;
+
+  /// True when Android battery optimization is still active while online, so the
+  /// UI can warn that ride requests may be missed.
+  final bool batteryOptimizationActive;
+
   const DriverState({
     required this.profile,
     this.operationStatus = OperationStatus.offline,
@@ -49,6 +60,9 @@ class DriverState {
     this.routeDistanceMeters,
     this.driverCurrentPosition,
     this.awaitingEarlyEndConfirmation = false,
+    this.connectionStatus = ConnectionStatus.connecting,
+    this.lastHeartbeatAt,
+    this.batteryOptimizationActive = false,
   });
 
   DriverState copyWith({
@@ -75,6 +89,9 @@ class DriverState {
     LatLng? driverCurrentPosition,
     bool clearDriverPosition = false,
     bool? awaitingEarlyEndConfirmation,
+    ConnectionStatus? connectionStatus,
+    DateTime? lastHeartbeatAt,
+    bool? batteryOptimizationActive,
   }) {
     return DriverState(
       profile: profile ?? this.profile,
@@ -93,6 +110,9 @@ class DriverState {
       routeDistanceMeters: clearRouteEta ? null : (routeDistanceMeters ?? this.routeDistanceMeters),
       driverCurrentPosition: clearDriverPosition ? null : (driverCurrentPosition ?? this.driverCurrentPosition),
       awaitingEarlyEndConfirmation: awaitingEarlyEndConfirmation ?? this.awaitingEarlyEndConfirmation,
+      connectionStatus: connectionStatus ?? this.connectionStatus,
+      lastHeartbeatAt: lastHeartbeatAt ?? this.lastHeartbeatAt,
+      batteryOptimizationActive: batteryOptimizationActive ?? this.batteryOptimizationActive,
     );
   }
 }

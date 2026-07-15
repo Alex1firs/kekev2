@@ -18,6 +18,17 @@ class SecureStorageService {
     await _storage.delete(key: 'session_token');
   }
 
+  /// Whether the driver has chosen to be Online. Persisted so the app can
+  /// auto-resume Online after a restart / process kill instead of forcing a
+  /// manual re-toggle. Cleared when the driver taps Offline (or logs out).
+  Future<void> writeOnlineIntent(bool online) async {
+    await _storage.write(key: 'driver_online_intent', value: online ? 'true' : 'false');
+  }
+
+  Future<bool> readOnlineIntent() async {
+    return (await _storage.read(key: 'driver_online_intent')) == 'true';
+  }
+
   Future<void> clearAll() async {
     await _storage.deleteAll();
   }

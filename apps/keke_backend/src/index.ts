@@ -37,6 +37,12 @@ if (!_allowedOrigins) {
 const ALLOWED_ORIGINS: string[] = _allowedOrigins.split(',').map(o => o.trim());
 
 const app = express();
+// Behind the dockerized nginx reverse proxy: trust the first proxy hop so
+// req.ip reflects the real client (via X-Forwarded-For) instead of the proxy's
+// address. Without this, express-rate-limit buckets EVERY request under the
+// proxy IP — turning the per-IP limits into a single global limit for the whole
+// platform (which is why onboarding was rejecting legitimate new drivers).
+app.set('trust proxy', 1);
 app.use(helmet());
 app.use(cors({ origin: ALLOWED_ORIGINS, credentials: true }));
 

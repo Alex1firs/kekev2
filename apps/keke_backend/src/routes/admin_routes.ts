@@ -71,6 +71,26 @@ router.get("/drivers/online", async (req: Request, res: Response) => {
 });
 
 /**
+ * GET /admin/drivers/all
+ * All drivers with optional status filter (?status=approved|suspended|pending_review etc.)
+ * NOTE: must be registered BEFORE "/drivers/:userId" or Express matches this as
+ * userId="all" and the handler below returns null.
+ */
+router.get("/drivers/all", async (req: Request, res: Response) => {
+    try {
+        const where = req.query.status ? { status: req.query.status as any } : {};
+        const drivers = await AppDataSource.getRepository(DriverProfile).find({
+            where,
+            order: { createdAt: "DESC" },
+            take: 200,
+        });
+        res.json(drivers);
+    } catch (err: any) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
  * GET /admin/drivers/:userId
  */
 router.get("/drivers/:userId", async (req: Request, res: Response) => {
@@ -359,24 +379,6 @@ router.get("/audit-log", async (req: Request, res: Response) => {
             take: 100,
         });
         res.json(logs);
-    } catch (err: any) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-/**
- * GET /admin/drivers/all
- * All drivers with optional status filter (?status=approved|suspended|pending_review etc.)
- */
-router.get("/drivers/all", async (req: Request, res: Response) => {
-    try {
-        const where = req.query.status ? { status: req.query.status as any } : {};
-        const drivers = await AppDataSource.getRepository(DriverProfile).find({
-            where,
-            order: { createdAt: "DESC" },
-            take: 200,
-        });
-        res.json(drivers);
     } catch (err: any) {
         res.status(500).json({ error: err.message });
     }

@@ -287,6 +287,9 @@ router.post("/heartbeat", authMiddleware, async (req: AuthRequest, res: Response
         }
 
         await DispatchService.updateDriverLocation(userId, latN, lngN);
+        if (process.env.HEARTBEAT_DEBUG_LOG === 'true') {
+            console.log(`[HB] ${new Date().toISOString()} driver=${userId} lat=${latN} lng=${lngN}`);
+        }
         return res.json({ ok: true });
     } catch (err: any) {
         console.error('[DRIVER] HTTP heartbeat error:', err?.message);

@@ -29,6 +29,7 @@ class _HeartbeatTaskHandler extends TaskHandler {
 
   @override
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
+    print('[FGS_HB] Service isolate started (${starter.name}).');
     await _beat();
   }
 
@@ -39,14 +40,19 @@ class _HeartbeatTaskHandler extends TaskHandler {
   }
 
   @override
-  Future<void> onDestroy(DateTime timestamp) async {}
+  Future<void> onDestroy(DateTime timestamp) async {
+    print('[FGS_HB] Service isolate destroyed.');
+  }
 
   Future<void> _beat() async {
     try {
       final url = await FlutterForegroundTask.getData<String>(key: kHbUrlKey);
       final token = await FlutterForegroundTask.getData<String>(key: kHbTokenKey);
       final userId = await FlutterForegroundTask.getData<String>(key: kHbUserKey);
-      if (url == null || token == null || userId == null) return;
+      if (url == null || token == null || userId == null) {
+        print('[FGS_HB] Missing heartbeat context (url/token/userId) — skipping.');
+        return;
+      }
 
       Position? pos;
       try {
@@ -59,16 +65,22 @@ class _HeartbeatTaskHandler extends TaskHandler {
       } catch (_) {
         pos = await Geolocator.getLastKnownPosition();
       }
-      if (pos == null) return;
+      if (pos == null) {
+        print('[FGS_HB] No location available — skipping beat.');
+        return;
+      }
 
-      await _dio.post(
+      final res = await _dio.post(
         '$url/drivers/heartbeat',
         data: {'driverId': userId, 'lat': pos.latitude, 'lng': pos.longitude},
         options: Options(headers: {'Authorization': 'Bearer $token'}),
       );
-    } catch (_) {
+      // Proof line: visible in `adb logcat` even while the screen is locked.
+      print('[FGS_HB] beat OK (${res.statusCode}) lat=${pos.latitude} lng=${pos.longitude}');
+    } catch (e) {
       // Never throw from the service isolate — just miss this beat and retry
       // on the next interval.
+      print('[FGS_HB] beat FAILED: $e');
     }
   }
 }

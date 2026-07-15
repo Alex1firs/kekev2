@@ -967,13 +967,27 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
         await FlutterForegroundTask.saveData(key: kHbUserKey, value: _userId);
       } catch (_) {}
     }
+    // Android 13+ needs runtime notification permission for the foreground
+    // service to show its persistent notification (and stay reliable).
     try {
-      await FlutterForegroundTask.startService(
-        serviceId: 1001,
-        notificationTitle: 'KekeRide',
-        notificationText: 'KekeRide is online — accepting rides nearby.',
-        callback: locationTaskCallback,
-      );
+      final perm = await FlutterForegroundTask.checkNotificationPermission();
+      if (perm != NotificationPermission.granted) {
+        await FlutterForegroundTask.requestNotificationPermission();
+      }
+    } catch (_) {}
+    try {
+      // Reuse the running service (idempotent go-online / auto-resume) instead
+      // of stacking a second start.
+      if (await FlutterForegroundTask.isRunningService) {
+        await FlutterForegroundTask.restartService();
+      } else {
+        await FlutterForegroundTask.startService(
+          serviceId: 1001,
+          notificationTitle: 'KekeRide',
+          notificationText: 'KekeRide is online — accepting rides nearby.',
+          callback: locationTaskCallback,
+        );
+      }
     } catch (_) {}
   }
 

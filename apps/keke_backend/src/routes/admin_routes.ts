@@ -11,8 +11,10 @@ import { SosAlert, SosAlertStatus } from "../models/SosAlert";
 import { Ride } from "../models/Ride";
 import { User } from "../models/User";
 import { WalletService } from "../services/wallet_service";
+import { upload } from "../middleware/upload_middleware";
 import path from "path";
 import fs from "fs";
+import sharp from "sharp";
 
 const router = Router();
 
@@ -104,6 +106,87 @@ router.get("/drivers/:userId/documents/:docType", async (req: Request, res: Resp
 
         res.sendFile(filePath);
     } catch (err: any) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * POST /admin/drivers/:userId/documents/:docType
+ * Admin uploads / replaces a KYC document on the driver's behalf
+ * (e.g. the driver submitted the wrong file). Mirrors the driver-side
+ * upload pipeline (sharp downscale + jpeg re-encode) but is gated by
+ * admin auth instead of ownership, and does NOT change the driver's
+ * status — an already-approved driver stays approved after a fix.
+ */
+router.post("/drivers/:userId/documents/:docType", upload.single("document"), async (req: Request, res: Response) => {
+    try {
+        const { userId, docType } = req.params as { userId: string; docType: string };
+        if (!req.file) return res.status(400).json({ error: "Document file is required" });
+
+        const validTypes = ["license", "id_card", "vehicle_paper", "photo"];
+        if (!validTypes.includes(docType)) {
+            try { fs.unlinkSync(req.file.path); } catch (_) {}
+            return res.status(400).json({ error: "Invalid document type" });
+        }
+
+        const repo = AppDataSource.getRepository(DriverProfile);
+        const profile = await repo.findOneBy({ userId });
+        if (!profile) {
+            try { fs.unlinkSync(req.file.path); } catch (_) {}
+            return res.status(404).json({ error: "Driver profile not found" });
+        }
+
+        const originalPath = req.file.path;
+        const processedFilename = path.basename(`proc_${req.file.filename}`);
+        const processedPath = path.join(path.dirname(originalPath), processedFilename);
+
+        try {
+            await sharp(originalPath)
+                .resize(1600, 1600, { fit: "inside", withoutEnlargement: true })
+                .jpeg({ quality: 80 })
+                .toFile(processedPath);
+            fs.unlinkSync(originalPath);
+        } catch (sharpErr: any) {
+            console.error("[ADMIN] Image processing error:", sharpErr?.message);
+            try { fs.unlinkSync(originalPath); } catch (_) {}
+            return res.status(500).json({ error: "Could not process document. Try a clearer image." });
+        }
+
+        // Remember the previous file so we can remove it from disk after the swap.
+        const oldFilename =
+            docType === "license" ? profile.licenseUrl :
+            docType === "id_card" ? profile.idCardUrl :
+            docType === "vehicle_paper" ? profile.vehiclePaperUrl :
+            profile.photoUrl;
+
+        if (docType === "license") profile.licenseUrl = processedFilename;
+        else if (docType === "id_card") profile.idCardUrl = processedFilename;
+        else if (docType === "vehicle_paper") profile.vehiclePaperUrl = processedFilename;
+        else if (docType === "photo") profile.photoUrl = processedFilename;
+
+        await repo.save(profile);
+
+        // Best-effort cleanup of the replaced file (never fail the request on this).
+        if (oldFilename && path.basename(oldFilename) !== processedFilename) {
+            try { fs.unlinkSync(path.join(__dirname, "../../uploads", path.basename(oldFilename))); } catch (_) {}
+        }
+
+        const adminId = `admin_${(req.headers["x-admin-key"] as string).slice(-8)}`;
+        try {
+            await AppDataSource.getRepository(AuditLog).save(AppDataSource.getRepository(AuditLog).create({
+                adminId,
+                action: "REPLACE_DRIVER_DOCUMENT",
+                entityType: "DRIVER_PROFILE",
+                entityId: userId,
+                details: { docType, status: profile.status },
+            }));
+        } catch (auditErr) {
+            console.error("[ADMIN] Audit logging failed (upload succeeded):", auditErr);
+        }
+
+        res.json({ message: "Document replaced successfully.", docType, status: profile.status });
+    } catch (err: any) {
+        console.error("[ADMIN] Document replace error:", err?.message);
         res.status(500).json({ error: err.message });
     }
 });

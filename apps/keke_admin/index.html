@@ -55,6 +55,9 @@
                 <li data-section="drivers">
                     <i class="fas fa-users-cog"></i> <span>Driver KYC Review</span>
                 </li>
+                <li data-section="approved-drivers">
+                    <i class="fas fa-id-card"></i> <span>Approved Drivers</span>
+                </li>
                 <li data-section="active-rides">
                     <i class="fas fa-broadcast-tower"></i> <span>Active Rides</span>
                 </li>
@@ -162,6 +165,26 @@
                                 </tr>
                             </thead>
                             <tbody id="incomplete-drivers-list"></tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <!-- Approved Drivers Section -->
+                <section id="approved-drivers" class="content-section hidden">
+                    <h2>Approved Drivers</h2>
+                    <p style="color:#888;margin:4px 0 16px;">Inspect KYC documents at any time, or replace a wrong document on a driver's behalf.</p>
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Vehicle</th>
+                                    <th>Rating</th>
+                                    <th>Approved On</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="approved-drivers-list"></tbody>
                         </table>
                     </div>
                 </section>

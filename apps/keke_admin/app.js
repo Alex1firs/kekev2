@@ -101,6 +101,7 @@ function switchSection(id) {
     if (sectionTitle) sectionTitle.innerText = id.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 
     if (id === 'drivers')       { fetchPendingDrivers(); fetchIncompleteDrivers(); }
+    if (id === 'approved-drivers') fetchApprovedDrivers();
     if (id === 'active-rides')  fetchActiveRides();
     if (id === 'held-rides')    fetchHeldRides();
     if (id === 'finance')       { fetchFinanceSummary(); fetchDebtLeaderboard(); }
@@ -259,6 +260,27 @@ async function fetchIncompleteDrivers() {
         </tr>
     `).join('');
     if (!drivers.length) list.innerHTML = '<tr><td colspan="4">No incomplete applications.</td></tr>';
+}
+
+async function fetchApprovedDrivers() {
+    const list = document.getElementById('approved-drivers-list');
+    if (!list) return;
+    list.innerHTML = '<tr><td colspan="5">Loading…</td></tr>';
+    const drivers = await adminFetch('/drivers/all?status=approved');
+    list.innerHTML = drivers.map(d => {
+        const rating = (d.ratingCount || 0) > 0
+            ? `⭐ ${(d.ratingSum / d.ratingCount).toFixed(2)} (${d.ratingCount})`
+            : '—';
+        return `
+        <tr>
+            <td>${escapeHtml(d.firstName)} ${escapeHtml(d.lastName)}</td>
+            <td>${escapeHtml(d.vehicleModel)} (${escapeHtml(d.vehiclePlate)})</td>
+            <td>${rating}</td>
+            <td>${new Date(d.updatedAt || d.createdAt).toLocaleDateString()}</td>
+            <td><button class="btn-secondary" onclick="reviewDriver('${escapeHtml(d.userId)}')">Inspect / Fix Docs</button></td>
+        </tr>`;
+    }).join('');
+    if (!drivers.length) list.innerHTML = '<tr><td colspan="5">No approved drivers yet.</td></tr>';
 }
 
 async function fetchActiveRides() {
@@ -617,18 +639,22 @@ window.reviewDriver = async function(userId) {
                 <div class="doc-item">
                     <div class="doc-thumb loading" id="thumb-license"></div>
                     <span>License ${driver.licenseUrl ? '✅' : '❌'}</span>
+                    ${docReplaceControl(userId, 'license')}
                 </div>
                 <div class="doc-item">
                     <div class="doc-thumb loading" id="thumb-id"></div>
                     <span>ID Card ${driver.idCardUrl ? '✅' : '❌'}</span>
+                    ${docReplaceControl(userId, 'id_card')}
                 </div>
                 <div class="doc-item">
                     <div class="doc-thumb loading" id="thumb-vehicle"></div>
                     <span>Vehicle Paper ${driver.vehiclePaperUrl ? '✅' : '❌'}</span>
+                    ${docReplaceControl(userId, 'vehicle_paper')}
                 </div>
                 <div class="doc-item">
                     <div class="doc-thumb loading" id="thumb-photo"></div>
                     <span>Driver Selfie ${driver.photoUrl ? '✅' : '❌'}</span>
+                    ${docReplaceControl(userId, 'photo')}
                 </div>
             </div>
 
@@ -680,6 +706,59 @@ window.openKycLightbox = function(url) {
     }
     lb.innerHTML = `<img src="${url}" style="max-width:92vw;max-height:92vh;border-radius:8px;box-shadow:0 0 40px rgba(0,0,0,0.85);">`;
     lb.style.display = 'flex';
+};
+
+// Maps a docType to its thumbnail container id in the review modal.
+const DOC_THUMB_IDS = {
+    license: 'thumb-license',
+    id_card: 'thumb-id',
+    vehicle_paper: 'thumb-vehicle',
+    photo: 'thumb-photo',
+};
+
+// Small "Replace" control rendered under each KYC document in the modal.
+// Lets an admin upload a corrected file on the driver's behalf.
+function docReplaceControl(userId, docType) {
+    return `
+        <label class="doc-replace" style="display:inline-block;margin-top:6px;padding:4px 10px;font-size:12px;
+            background:#333;color:#ddd;border-radius:6px;cursor:pointer;">
+            <i class="fas fa-upload"></i> Replace
+            <input type="file" accept="image/jpeg,image/png" style="display:none;"
+                onchange="uploadDriverDoc('${escapeHtml(userId)}','${escapeHtml(docType)}',this)">
+        </label>`;
+}
+
+// Admin uploads/replaces a driver's KYC document. Does not change the driver's
+// approval status server-side — it only swaps the file.
+window.uploadDriverDoc = async function(userId, docType, input) {
+    const file = input.files && input.files[0];
+    if (!file) return;
+
+    const thumbId = DOC_THUMB_IDS[docType];
+    const container = thumbId ? document.getElementById(thumbId) : null;
+    if (container) { container.innerHTML = ''; container.classList.add('loading'); }
+
+    const fd = new FormData();
+    fd.append('document', file);
+
+    try {
+        // Note: do NOT set Content-Type — the browser adds the multipart boundary.
+        const res = await fetch(`${API_BASE}/drivers/${userId}/documents/${docType}`, {
+            method: 'POST',
+            headers: { 'x-admin-key': ADMIN_KEY },
+            body: fd,
+        });
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data.error || `HTTP ${res.status}`);
+        }
+        showToast('Document replaced successfully', 'success');
+    } catch (e) {
+        showToast('Upload failed: ' + (e.message || 'error'), 'error');
+    } finally {
+        input.value = '';
+        if (thumbId) loadDocThumbnail(userId, docType, thumbId);
+    }
 };
 
 async function loadDocThumbnail(userId, docType, containerId) {

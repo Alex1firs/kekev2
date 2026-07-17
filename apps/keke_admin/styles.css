@@ -628,3 +628,40 @@ body.authenticated .admin-container { display: flex; }
 .btn-danger { background: #ff4d4d; color: #fff; border: none; padding: 8px 12px; border-radius: 8px; cursor: pointer; font-weight: 600; }
 .btn-danger:hover { background: #e63e3e; }
 .muted { opacity: 0.6; }
+
+/* ===================== Live Riders dashboard ===================== */
+.live-header { display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px; }
+.live-stats { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { padding: 5px 12px; border-radius: 999px; font-size: 13px; font-weight: 600; background: rgba(255,255,255,0.06); color: #cfd3dc; white-space: nowrap; }
+.chip-online  { background: rgba(46, 204, 113, 0.18); color: #2ecc71; }
+.chip-trip    { background: rgba(52, 152, 219, 0.18); color: #3498db; }
+.chip-recent  { background: rgba(241, 196, 15, 0.16); color: #f1c40f; }
+.chip-stale   { background: rgba(230, 126, 34, 0.18); color: #e67e22; }
+.chip-offline { background: rgba(255,255,255,0.08); color: #9aa0ab; }
+.chip-warn    { background: rgba(255, 77, 77, 0.16); color: #ff6b6b; }
+
+.live-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.live-controls #live-search { flex: 1 1 260px; min-width: 200px; padding: 9px 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.04); color: #eaecef; }
+.live-controls select { padding: 9px 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.04); color: #eaecef; }
+.live-auto { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #cfd3dc; cursor: pointer; }
+.live-updated { font-size: 12px; color: #9aa0ab; margin-left: auto; }
+
+.live-group { margin-bottom: 26px; }
+.live-group h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; font-size: 15px; color: #eaecef; }
+.live-group-count { font-size: 12px; font-weight: 700; background: rgba(255,255,255,0.08); color: #cfd3dc; padding: 2px 9px; border-radius: 999px; }
+
+.ls-badge { display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.ls-online  { background: rgba(46, 204, 113, 0.18); color: #2ecc71; }
+.ls-ontrip  { background: rgba(52, 152, 219, 0.18); color: #3498db; }
+.ls-recent  { background: rgba(241, 196, 15, 0.16); color: #f1c40f; }
+.ls-stale   { background: rgba(230, 126, 34, 0.18); color: #e67e22; }
+.ls-offline { background: rgba(255,255,255,0.08); color: #9aa0ab; }
+
+.badge { display: inline-block; padding: 3px 9px; border-radius: 6px; font-size: 11px; font-weight: 700; }
+.badge-ok   { background: rgba(46, 204, 113, 0.18); color: #2ecc71; }
+.badge-warn { background: rgba(255, 77, 77, 0.16); color: #ff6b6b; }
+
+.btn-mini { display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; text-decoration: none; background: rgba(255,255,255,0.08); color: #eaecef; border: 1px solid rgba(255,255,255,0.10); }
+.btn-mini:hover { background: rgba(255,255,255,0.16); }
+.live-actions { white-space: nowrap; }
+.live-groups .addr, #live-groups .addr { font-size: 11px; margin-top: 3px; max-width: 240px; }

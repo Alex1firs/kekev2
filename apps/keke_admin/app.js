@@ -70,7 +70,6 @@ async function init() {
     fetchFinanceSummary().catch(() => {});
     fetchDebtLeaderboard().catch(() => {});
     fetchRideHistory().catch(() => {});
-    fetchOnlineDrivers().catch(() => {});
     fetchPayouts().catch(() => {});
     fetchSosAlerts().catch(() => {});
 
@@ -98,6 +97,7 @@ function switchSection(id) {
     if (nav) nav.classList.add('active');
 
     currentSection = id;
+    stopLiveRefresh(); // leaving any section halts the Live Riders poll
     if (sectionTitle) sectionTitle.innerText = id.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 
     if (id === 'drivers')       { fetchPendingDrivers(); fetchIncompleteDrivers(); }
@@ -107,7 +107,7 @@ function switchSection(id) {
     if (id === 'finance')       { fetchFinanceSummary(); fetchDebtLeaderboard(); }
     if (id === 'payouts')       fetchPayouts();
     if (id === 'history')       fetchRideHistory();
-    if (id === 'online-drivers')fetchOnlineDrivers();
+    if (id === 'live-riders')   { fetchLiveRiders(); toggleLiveAutoRefresh(); }
     if (id === 'sos-alerts')    fetchSosAlerts();
     if (id === 'audit-log')     fetchAuditLog();
     if (id === 'settings')      fetchSettings();
@@ -387,17 +387,154 @@ async function fetchRideHistory() {
     if (!history.length) list.innerHTML = '<tr><td colspan="5">No ride history.</td></tr>';
 }
 
-async function fetchOnlineDrivers() {
-    const drivers = await adminFetch('/drivers/online');
-    const list = document.getElementById('online-drivers-list');
-    list.innerHTML = drivers.map(d => `
-        <tr>
-            <td>${escapeHtml(d.userId)}</td>
-            <td>${escapeHtml(String(d.lat || '—'))}</td>
-            <td>${escapeHtml(String(d.lng || '—'))}</td>
-        </tr>
-    `).join('');
-    if (!drivers.length) list.innerHTML = '<tr><td colspan="3">No drivers online.</td></tr>';
+// ===================== Live Riders (real-time driver monitoring) =====================
+let liveRidersData = null;
+let liveRefreshTimer = null;
+let liveGeocoding = false;
+
+function stopLiveRefresh() {
+    if (liveRefreshTimer) { clearInterval(liveRefreshTimer); liveRefreshTimer = null; }
+}
+
+function toggleLiveAutoRefresh() {
+    stopLiveRefresh();
+    const box = document.getElementById('live-autorefresh');
+    if (box && box.checked) liveRefreshTimer = setInterval(() => fetchLiveRiders().catch(() => {}), 6000);
+}
+
+function liveStatusMeta(s) {
+    switch (s) {
+        case 'ACTIVELY_ONLINE': return { label: 'Actively Online', cls: 'ls-online' };
+        case 'ON_TRIP':         return { label: 'On Trip',         cls: 'ls-ontrip' };
+        case 'RECENTLY_SEEN':   return { label: 'Recently Seen',   cls: 'ls-recent' };
+        case 'STALE_HEARTBEAT': return { label: 'Stale Heartbeat', cls: 'ls-stale' };
+        case 'OFFLINE':         return { label: 'Offline',         cls: 'ls-offline' };
+        default:                return { label: 'Never Online',    cls: 'ls-offline' };
+    }
+}
+
+function liveAgeText(sec) {
+    if (sec == null) return '—';
+    if (sec < 60) return sec + 's ago';
+    const m = Math.floor(sec / 60);
+    if (m < 60) return m + 'm ago';
+    return Math.floor(m / 60) + 'h ' + (m % 60) + 'm ago';
+}
+
+async function fetchLiveRiders() {
+    const data = await adminFetch('/drivers/live');
+    liveRidersData = data;
+    const u = document.getElementById('live-updated');
+    if (u) u.innerText = 'Updated ' + new Date().toLocaleTimeString();
+    renderLiveRiders();
+}
+
+function liveRiderMatches(r, f) {
+    switch (f) {
+        case 'online':        return r.isActivelyOnline;
+        case 'on_trip':       return r.liveStatus === 'ON_TRIP';
+        case 'available':     return r.rideState === 'available';
+        case 'recently':      return r.liveStatus === 'RECENTLY_SEEN';
+        case 'stale':         return r.liveStatus === 'STALE_HEARTBEAT';
+        case 'offline':       return r.liveStatus === 'OFFLINE' || r.liveStatus === 'NEVER_SEEN';
+        case 'missing_token': return r.fcmTokenStatus === 'missing';
+        case 'android':       return r.platform === 'android';
+        case 'ios':           return r.platform === 'ios';
+        default:              return true;
+    }
+}
+
+function renderLiveRiders() {
+    if (!liveRidersData) return;
+    const f = (document.getElementById('live-filter') || {}).value || 'all';
+    const q = ((document.getElementById('live-search') || {}).value || '').toLowerCase().trim();
+
+    const c = liveRidersData.counts || {};
+    const stats = document.getElementById('live-stats');
+    if (stats) stats.innerHTML = `
+        <span class="chip chip-online">${c.activelyOnline || 0} Actively Online</span>
+        <span class="chip chip-trip">${c.onTrip || 0} On Trip</span>
+        <span class="chip chip-recent">${c.recentlySeen || 0} Recently Seen</span>
+        <span class="chip chip-stale">${c.stale || 0} Stale</span>
+        <span class="chip chip-offline">${c.offline || 0} Offline</span>
+        <span class="chip chip-warn">${c.missingToken || 0} No Push Token</span>`;
+
+    const visible = liveRidersData.drivers.filter(r =>
+        liveRiderMatches(r, f) &&
+        (!q || (r.name || '').toLowerCase().includes(q) || (r.phone || '').toLowerCase().includes(q) || (r.email || '').toLowerCase().includes(q))
+    );
+
+    const groups = [
+        { title: 'Actively Online Riders',        test: r => r.isActivelyOnline },
+        { title: 'Recently Seen / Stale Riders',  test: r => r.liveStatus === 'RECENTLY_SEEN' || r.liveStatus === 'STALE_HEARTBEAT' },
+        { title: 'Offline Approved Riders',       test: r => r.liveStatus === 'OFFLINE' || r.liveStatus === 'NEVER_SEEN' },
+    ];
+
+    const container = document.getElementById('live-groups');
+    if (!container) return;
+    container.innerHTML = groups.map(g => {
+        const rows = visible.filter(g.test);
+        return `<div class="live-group">
+            <h3>${g.title} <span class="live-group-count">${rows.length}</span></h3>
+            <div class="table-container"><table>
+                <thead><tr>
+                    <th>Driver</th><th>Contact</th><th>Status</th><th>Last Heartbeat</th>
+                    <th>Location</th><th>Ride</th><th>Push</th><th>Actions</th>
+                </tr></thead>
+                <tbody>${rows.length ? rows.map(renderLiveRiderRow).join('') : '<tr><td colspan="8" class="muted">None</td></tr>'}</tbody>
+            </table></div>
+        </div>`;
+    }).join('');
+
+    lazyGeocodeLiveRows();
+}
+
+function renderLiveRiderRow(r) {
+    const m = liveStatusMeta(r.liveStatus);
+    const hasCoords = r.latitude != null && r.longitude != null;
+    const coords = hasCoords ? `${r.latitude.toFixed(5)}, ${r.longitude.toFixed(5)}` : '—';
+    const addrCell = hasCoords ? `<div class="addr muted" data-lat="${r.latitude}" data-lng="${r.longitude}">resolving…</div>` : '';
+    const mapBtn = hasCoords ? `<a class="btn-mini" href="https://www.google.com/maps?q=${r.latitude},${r.longitude}" target="_blank" rel="noopener">Map</a>` : '';
+    const callBtn = r.phone ? `<a class="btn-mini" href="tel:${escapeHtml(r.phone)}">Call</a>` : '';
+    const push = r.fcmTokenStatus === 'active'
+        ? '<span class="badge badge-ok">Active</span>'
+        : '<span class="badge badge-warn">Missing</span>';
+    const ride = r.currentRideId
+        ? `${escapeHtml(String(r.currentRideStatus || ''))}<br><small class="muted">${escapeHtml(r.currentRideId)}</small>`
+        : escapeHtml(r.rideState || 'offline');
+    const platform = r.platform && r.platform !== 'unknown' ? escapeHtml(r.platform) : 'unknown';
+    return `<tr>
+        <td><strong>${escapeHtml(r.name)}</strong><br><small class="muted">${platform}</small></td>
+        <td>${escapeHtml(r.phone || '—')}<br><small class="muted">${escapeHtml(r.email || '')}</small></td>
+        <td><span class="ls-badge ${m.cls}">${m.label}</span></td>
+        <td>${liveAgeText(r.heartbeatAgeSeconds)}${r.lastHeartbeatAt ? `<br><small class="muted">${new Date(r.lastHeartbeatAt).toLocaleTimeString()}</small>` : ''}</td>
+        <td>${coords}${addrCell}</td>
+        <td>${ride}</td>
+        <td>${push}</td>
+        <td class="live-actions">${mapBtn} ${callBtn}</td>
+    </tr>`;
+}
+
+// Reverse-geocode visible rows one at a time — cached hits fill instantly, cache
+// misses are spaced ~1.1s to respect Nominatim's usage policy.
+async function lazyGeocodeLiveRows() {
+    if (liveGeocoding) return;
+    liveGeocoding = true;
+    try {
+        const cells = Array.from(document.querySelectorAll('#live-groups .addr'));
+        for (const cell of cells) {
+            const lat = cell.getAttribute('data-lat');
+            const lng = cell.getAttribute('data-lng');
+            if (!lat || !lng) continue;
+            const cached = addressCache[`${lat},${lng}`];
+            if (cached) { cell.innerText = cached; continue; }
+            const addr = await getHumanReadableAddress(lat, lng);
+            cell.innerText = addr;
+            await new Promise(res => setTimeout(res, 1100));
+        }
+    } catch { /* non-fatal */ } finally {
+        liveGeocoding = false;
+    }
 }
 
 async function fetchDebtLeaderboard() {

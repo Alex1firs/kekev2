@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Keke Admin | Dashboard</title>
-    <link rel="stylesheet" href="styles.css?v=3.6">
+    <link rel="stylesheet" href="styles.css?v=3.8">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 </head>
@@ -73,8 +73,8 @@
                 <li data-section="payouts">
                     <i class="fas fa-wallet"></i> <span>Payouts</span>
                 </li>
-                <li data-section="online-drivers">
-                    <i class="fas fa-toggle-on"></i> <span>Online Drivers</span>
+                <li data-section="live-riders">
+                    <i class="fas fa-satellite-dish"></i> <span>Live Riders</span>
                 </li>
                 <li data-section="sos-alerts" class="danger-nav">
                     <i class="fas fa-exclamation-triangle" style="color: #ff4d4d;"></i> <span style="color: #ff4d4d;">SOS Alerts</span>
@@ -266,19 +266,29 @@
                 </section>
 
                 <!-- Online Drivers Section -->
-                <section id="online-drivers" class="content-section hidden">
-                     <div class="table-container">
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>Driver ID</th>
-                                    <th>Latitude</th>
-                                    <th>Longitude</th>
-                                </tr>
-                            </thead>
-                            <tbody id="online-drivers-list"></tbody>
-                        </table>
+                <section id="live-riders" class="content-section hidden">
+                    <div class="live-header">
+                        <div class="live-stats" id="live-stats"></div>
+                        <div class="live-controls">
+                            <input type="text" id="live-search" placeholder="Search name / phone / email…" oninput="renderLiveRiders()">
+                            <select id="live-filter" onchange="renderLiveRiders()">
+                                <option value="all">All statuses</option>
+                                <option value="online">Actively Online</option>
+                                <option value="on_trip">On Trip</option>
+                                <option value="available">Available</option>
+                                <option value="recently">Recently Seen</option>
+                                <option value="stale">Stale Heartbeat</option>
+                                <option value="offline">Offline</option>
+                                <option value="missing_token">Missing Push Token</option>
+                                <option value="android">Android</option>
+                                <option value="ios">iOS</option>
+                            </select>
+                            <label class="live-auto"><input type="checkbox" id="live-autorefresh" checked onchange="toggleLiveAutoRefresh()"> Auto-refresh</label>
+                            <button class="btn-secondary" onclick="fetchLiveRiders()">Refresh now</button>
+                            <span id="live-updated" class="live-updated"></span>
+                        </div>
                     </div>
+                    <div id="live-groups"></div>
                 </section>
 
                 <!-- History Section -->
@@ -403,6 +413,6 @@
 
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="app.js?v=3.7"></script>
+    <script src="app.js?v=3.8"></script>
 </body>
 </html>

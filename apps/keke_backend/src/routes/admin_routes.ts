@@ -71,6 +71,21 @@ router.get("/drivers/online", async (req: Request, res: Response) => {
 });
 
 /**
+ * GET /admin/drivers/live
+ * Real-time "Live Riders" view: approved drivers with server-authoritative
+ * online status (fresh Redis heartbeat only), location, ride state, and push
+ * token status. Must be registered BEFORE "/drivers/:userId".
+ */
+router.get("/drivers/live", async (req: Request, res: Response) => {
+    try {
+        const data = await AdminService.getLiveDrivers();
+        res.json(data);
+    } catch (err: any) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
  * GET /admin/drivers/all
  * All drivers with optional status filter (?status=approved|suspended|pending_review etc.)
  * NOTE: must be registered BEFORE "/drivers/:userId" or Express matches this as

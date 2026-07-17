@@ -3,6 +3,17 @@ import { redis } from '../config/redis';
 export class DispatchService {
   private static readonly DRIVER_GEO_KEY = 'drivers:locations';
   private static readonly DRIVER_AVAILABILITY_PREFIX = 'driver:available:';
+  private static readonly DRIVER_LASTSEEN_PREFIX = 'driver:lastseen:';
+  // Tombstone written when a driver DELIBERATELY goes offline (or is ejected),
+  // so admin tooling can show them as Offline immediately instead of lingering
+  // as "recently seen". Cleared on the next heartbeat.
+  private static readonly DRIVER_OFFLINE_PREFIX = 'driver:offline:';
+  // Availability freshness window: 45s allows 3 missed 12s heartbeats.
+  static readonly AVAILABILITY_TTL_SECONDS = 45;
+  // How long we remember a driver's last heartbeat after they go stale, so the
+  // admin Live Riders dashboard can show "last seen N min ago" for offline
+  // drivers. Not used for dispatch — availability is still the 45s key above.
+  private static readonly LASTSEEN_TTL_SECONDS = 24 * 60 * 60;
 
   /**
    * Update driver location and reset heartbeat TTL
@@ -15,7 +26,14 @@ export class DispatchService {
 
     // 2. Set/Reset Availability Heartbeat (TTL 45s — allows 3 missed 12s heartbeats)
     const availabilityKey = `${this.DRIVER_AVAILABILITY_PREFIX}${driverId}`;
-    pipeline.set(availabilityKey, 'true', 'EX', 45);
+    pipeline.set(availabilityKey, 'true', 'EX', this.AVAILABILITY_TTL_SECONDS);
+
+    // 3. Persistent last-seen timestamp (outlives the availability key) so admin
+    // tooling can distinguish "recently seen / stale" from "never online".
+    pipeline.set(`${this.DRIVER_LASTSEEN_PREFIX}${driverId}`, Date.now().toString(), 'EX', this.LASTSEEN_TTL_SECONDS);
+
+    // 4. An active heartbeat clears any deliberate-offline tombstone.
+    pipeline.del(`${this.DRIVER_OFFLINE_PREFIX}${driverId}`);
 
     await pipeline.exec();
   }
@@ -27,6 +45,9 @@ export class DispatchService {
     const pipeline = redis.pipeline();
     pipeline.zrem(this.DRIVER_GEO_KEY, driverId);
     pipeline.del(`${this.DRIVER_AVAILABILITY_PREFIX}${driverId}`);
+    // Mark a deliberate offline so admin sees them Offline right away (not
+    // "recently seen"). TTL matches last-seen so it self-expires.
+    pipeline.set(`${this.DRIVER_OFFLINE_PREFIX}${driverId}`, Date.now().toString(), 'EX', this.LASTSEEN_TTL_SECONDS);
     await pipeline.exec();
   }
 

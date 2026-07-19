@@ -11,6 +11,7 @@ import { redis } from '../config/redis';
 import { WalletService, DEBT_CASH_BLOCK, DEBT_HARD_BLOCK } from '../services/wallet_service';
 import { In } from 'typeorm';
 import { SosAlert, SosAlertStatus } from '../models/SosAlert';
+import { toLocalDialable } from '../utils/phone';
 import {
     RideIntegrityConfig,
     getDriverLiveLocation,
@@ -455,7 +456,7 @@ export class SocketHandler {
                         name: `${profile.firstName} ${profile.lastName}`,
                         plate: profile.vehiclePlate,
                         model: profile.vehicleModel,
-                        phone: driverUser?.phone ?? null,
+                        phone: toLocalDialable(driverUser?.phone) ?? null,
                         photoUrl: profile.photoUrl ?? null,
                         rating: ratingCount > 0 ? Number(((profile.ratingSum ?? 0) / ratingCount).toFixed(2)) : 0,
                         ratingCount,
@@ -762,14 +763,14 @@ export class SocketHandler {
                     const pUser = await AppDataSource.getRepository(User).findOne({ where: { id: ride.passengerId } });
                     if (pUser) {
                         passengerName = `${pUser.firstName} ${pUser.lastName}`;
-                        passengerPhone = pUser.phone || "";
+                        passengerPhone = toLocalDialable(pUser.phone) || "";
                     }
 
                     if (ride.driverId) {
                         const dProfile = await AppDataSource.getRepository(DriverProfile).findOne({ where: { userId: ride.driverId } });
                         if (dProfile) driverName = `${dProfile.firstName} ${dProfile.lastName}`;
                         const dUser = await AppDataSource.getRepository(User).findOne({ where: { id: ride.driverId } });
-                        if (dUser) driverPhone = dUser.phone || "";
+                        if (dUser) driverPhone = toLocalDialable(dUser.phone) || "";
                     }
 
                     // Alert admins immediately
@@ -869,7 +870,7 @@ export class SocketHandler {
                 // Fetch passenger phone once for this dispatch batch
                 const passengerUser = await AppDataSource.getRepository(User).findOne({ where: { id: payload.passengerId } });
                 const rideRecord = await AppDataSource.getRepository(Ride).findOne({ where: { rideId } });
-                const enrichedPayload = { ...payload, passengerPhone: passengerUser?.phone ?? null, pickupCode: rideRecord?.pickupCode ?? null };
+                const enrichedPayload = { ...payload, passengerPhone: toLocalDialable(passengerUser?.phone) ?? null, pickupCode: rideRecord?.pickupCode ?? null };
                 // Remember the payload so a driver who reconnects mid-dispatch can
                 // have this exact offer re-delivered (see the 'join' handler).
                 this.dispatchPayloads.set(rideId, enrichedPayload);

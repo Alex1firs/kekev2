@@ -133,4 +133,107 @@ export class DispatchService {
     const result = await redis.set(lockKey, driverId, 'EX', 30, 'NX');
     return result === 'OK';
   }
+
+  // ===================== Atomic driver reservation =====================
+  // While a ride is ringing a candidate driver, that driver is temporarily
+  // reserved so a SECOND concurrent ride cannot ring/assign the same driver and
+  // instead skips to the next eligible one. The reservation is a soft lock with
+  // a short TTL (self-healing backstop) plus explicit release on every terminal
+  // event (reject / cancel / timeout / accept-elsewhere / complete).
+  private static readonly DRIVER_RESERVED_PREFIX = 'driver:reserved:';
+  // Matches the driver app's per-offer countdown so an unanswered offer frees
+  // the driver for other rides automatically.
+  static readonly RESERVATION_TTL_SECONDS = 30;
+  // Release the key only if the caller still owns it — prevents one ride from
+  // deleting a reservation that a different ride has since acquired.
+  private static readonly RELEASE_IF_OWNER =
+    "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end";
+
+  static reservedKey(driverId: string): string {
+    return `${this.DRIVER_RESERVED_PREFIX}${driverId}`;
+  }
+
+  /**
+   * Atomically reserve a driver for a ride. Returns true only if THIS ride now
+   * owns the reservation (SET NX). A driver already reserved by another ride
+   * returns false so the caller skips to the next candidate.
+   */
+  static async reserveDriver(driverId: string, rideId: string): Promise<boolean> {
+    const res = await redis.set(this.reservedKey(driverId), rideId, 'EX', this.RESERVATION_TTL_SECONDS, 'NX');
+    return res === 'OK';
+  }
+
+  /** Who currently holds the reservation for this driver (or null). */
+  static async getReservationOwner(driverId: string): Promise<string | null> {
+    return await redis.get(this.reservedKey(driverId));
+  }
+
+  /**
+   * Whether a driver has a fresh heartbeat (their availability key is still
+   * alive). This is the same gate findNearbyDrivers applies after the GEO query,
+   * exposed for reuse/testing. An offline or stale-heartbeat driver returns false
+   * even if their app still shows "online".
+   */
+  static async isDriverAvailable(driverId: string): Promise<boolean> {
+    return (await redis.get(`${this.DRIVER_AVAILABILITY_PREFIX}${driverId}`)) === 'true';
+  }
+
+  /**
+   * Release a driver's reservation. When rideId is given, releases ONLY if that
+   * ride still owns it (ownership-checked, atomic via Lua). When omitted, forces
+   * release. Returns true if a key was actually removed.
+   */
+  static async releaseDriver(driverId: string, rideId?: string): Promise<boolean> {
+    const key = this.reservedKey(driverId);
+    if (!rideId) {
+      const n = await redis.del(key);
+      return Number(n) > 0;
+    }
+    const n = await redis.eval(this.RELEASE_IF_OWNER, 1, key, rideId) as number;
+    return Number(n) === 1;
+  }
+
+  /**
+   * From a candidate list, drop drivers currently reserved by a DIFFERENT ride.
+   * Drivers that are free, or already reserved by forRideId, are kept.
+   */
+  static async filterUnreserved(driverIds: string[], forRideId: string): Promise<string[]> {
+    if (driverIds.length === 0) return [];
+    const vals = await redis.mget(...driverIds.map(id => this.reservedKey(id)));
+    return driverIds.filter((_, i) => vals[i] == null || vals[i] === forRideId);
+  }
+
+  // ===================== Per-passenger active-ride guard =====================
+  // Prevents ONE passenger from opening two concurrent rides. Redis NX makes the
+  // check-and-set atomic even for two requests that arrive at the same instant;
+  // the DB check (in the caller) covers state that outlives Redis. Scoped per
+  // passenger — never blocks other passengers. Long TTL is only a backstop; the
+  // key is released explicitly on every ride terminal.
+  private static readonly PASSENGER_ACTIVE_PREFIX = 'passenger:active:';
+  static readonly PASSENGER_ACTIVE_TTL_SECONDS = 3 * 60 * 60; // 3h backstop
+
+  static passengerActiveKey(passengerId: string): string {
+    return `${this.PASSENGER_ACTIVE_PREFIX}${passengerId}`;
+  }
+
+  /** Atomically claim the single active-ride slot for a passenger. */
+  static async acquirePassengerActive(passengerId: string, rideId: string): Promise<boolean> {
+    const res = await redis.set(this.passengerActiveKey(passengerId), rideId, 'EX', this.PASSENGER_ACTIVE_TTL_SECONDS, 'NX');
+    return res === 'OK';
+  }
+
+  static async getPassengerActive(passengerId: string): Promise<string | null> {
+    return await redis.get(this.passengerActiveKey(passengerId));
+  }
+
+  /** Release the passenger's active-ride slot (ownership-checked when rideId given). */
+  static async releasePassengerActive(passengerId: string, rideId?: string): Promise<boolean> {
+    const key = this.passengerActiveKey(passengerId);
+    if (!rideId) {
+      const n = await redis.del(key);
+      return Number(n) > 0;
+    }
+    const n = await redis.eval(this.RELEASE_IF_OWNER, 1, key, rideId) as number;
+    return Number(n) === 1;
+  }
 }

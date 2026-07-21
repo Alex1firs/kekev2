@@ -10,6 +10,10 @@
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- Full-screen incoming-ride alert that wakes the lock screen (like a call). -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT"/>
+    <!-- Reschedule the local ride channel / notifications after reboot. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
     <application
         android:label="keke_driver"
         android:name="${applicationName}"

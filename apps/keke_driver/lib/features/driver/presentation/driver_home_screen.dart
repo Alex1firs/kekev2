@@ -13,6 +13,7 @@ import '../application/driver_controller.dart';
 import '../domain/driver_profile.dart';
 import '../domain/driver_state.dart';
 import 'driver_profile_screen.dart';
+import 'diagnostics_screen.dart';
 import 'earnings_screen.dart';
 import 'widgets/battery_optimization_sheet.dart';
 import 'widgets/incoming_request_card.dart';
@@ -480,6 +481,13 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
           ),
           const SizedBox(width: 8),
 
+          // Connection diagnostics button
+          _HeaderIconButton(
+            icon: Icons.wifi_tethering,
+            onTap: () => Navigator.push(context,
+                MaterialPageRoute(builder: (_) => const DiagnosticsScreen())),
+          ),
+          const SizedBox(width: 6),
           // Wallet / earnings button
           _HeaderIconButton(
             icon: Icons.account_balance_wallet_outlined,
@@ -515,7 +523,8 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
     return Padding(
       padding: const EdgeInsets.only(top: 6),
       child: GestureDetector(
-        onTap: BatteryOptimizationService.openSettings,
+        onTap: () => Navigator.push(context,
+            MaterialPageRoute(builder: (_) => const DiagnosticsScreen())),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
           decoration: BoxDecoration(

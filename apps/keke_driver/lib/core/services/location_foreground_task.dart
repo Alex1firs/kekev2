@@ -1,6 +1,8 @@
+import 'dart:io';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:dio/dio.dart';
+import 'reliability_log.dart';
 
 // Keys used to hand the heartbeat context from the main isolate (where auth
 // lives) to the foreground-service isolate (which has no access to Riverpod).
@@ -8,6 +10,12 @@ import 'package:dio/dio.dart';
 const String kHbUrlKey = 'hb_url';
 const String kHbTokenKey = 'hb_token';
 const String kHbUserKey = 'hb_user';
+const String kHbAppVersionKey = 'hb_app_version';
+// Shared keys the service isolate WRITES so the UI isolate can read freshness
+// for the diagnostics screen (saveData persists across isolates).
+const String kHbLastOkAtKey = 'hb_last_ok_at';       // epoch ms of last 2xx beat
+const String kHbLastLocAtKey = 'hb_last_loc_at';     // epoch ms of last usable fix
+const String kHbLastErrorKey = 'hb_last_error';      // last failure reason
 
 // Entry point for the foreground task — must be top-level and annotated.
 @pragma('vm:entry-point')
@@ -29,7 +37,7 @@ class _HeartbeatTaskHandler extends TaskHandler {
 
   @override
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
-    print('[FGS_HB] Service isolate started (${starter.name}).');
+    ReliabilityLog.log(RelEvent.fgsStarted, {'starter': starter.name});
     await _beat();
   }
 
@@ -41,20 +49,25 @@ class _HeartbeatTaskHandler extends TaskHandler {
 
   @override
   Future<void> onDestroy(DateTime timestamp) async {
-    print('[FGS_HB] Service isolate destroyed.');
+    ReliabilityLog.log(RelEvent.fgsStopped, {'isolate': 'service'});
   }
 
   Future<void> _beat() async {
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
     try {
       final url = await FlutterForegroundTask.getData<String>(key: kHbUrlKey);
       final token = await FlutterForegroundTask.getData<String>(key: kHbTokenKey);
       final userId = await FlutterForegroundTask.getData<String>(key: kHbUserKey);
+      final appVersion =
+          await FlutterForegroundTask.getData<String>(key: kHbAppVersionKey) ?? 'unknown';
       if (url == null || token == null || userId == null) {
-        print('[FGS_HB] Missing heartbeat context (url/token/userId) — skipping.');
+        ReliabilityLog.log(RelEvent.heartbeatFailed, {'reason': 'missing_context'});
+        await FlutterForegroundTask.saveData(key: kHbLastErrorKey, value: 'missing_context');
         return;
       }
 
       Position? pos;
+      String locSource = 'current';
       try {
         // Low accuracy resolves quickly from cell/WiFi and avoids GPS cold-start
         // timeouts that would silently drop a beat.
@@ -64,23 +77,55 @@ class _HeartbeatTaskHandler extends TaskHandler {
         );
       } catch (_) {
         pos = await Geolocator.getLastKnownPosition();
+        locSource = 'last_known';
       }
       if (pos == null) {
-        print('[FGS_HB] No location available — skipping beat.');
+        ReliabilityLog.log(RelEvent.locationFailed, {'reason': 'no_fix'});
+        await FlutterForegroundTask.saveData(key: kHbLastErrorKey, value: 'no_location');
         return;
       }
+      // Reject an obviously unusable/old last-known fix (>5 min) — better to miss
+      // a beat than report a stale position as fresh.
+      final fixAgeMs = nowMs - pos.timestamp.millisecondsSinceEpoch;
+      if (locSource == 'last_known' && fixAgeMs > 5 * 60 * 1000) {
+        ReliabilityLog.log(RelEvent.locationFailed, {'reason': 'stale_last_known', 'ageMs': fixAgeMs});
+        await FlutterForegroundTask.saveData(key: kHbLastErrorKey, value: 'stale_location');
+        return;
+      }
+      await FlutterForegroundTask.saveData(key: kHbLastLocAtKey, value: nowMs.toString());
+      ReliabilityLog.log(RelEvent.locationObtained,
+          {'source': locSource, 'acc': pos.accuracy.round(), 'lat': pos.latitude, 'lng': pos.longitude});
 
       final res = await _dio.post(
         '$url/drivers/heartbeat',
-        data: {'driverId': userId, 'lat': pos.latitude, 'lng': pos.longitude},
+        // Richer payload: server ignores unknown fields today, but these make the
+        // heartbeat self-describing for diagnostics + future server-side use.
+        data: {
+          'driverId': userId,
+          'lat': pos.latitude,
+          'lng': pos.longitude,
+          'accuracy': pos.accuracy,
+          'speed': pos.speed,
+          'heading': pos.heading,
+          'locationTimestamp': pos.timestamp.toIso8601String(),
+          'sentAt': DateTime.now().toIso8601String(),
+          'source': 'foreground_service',
+          'appVersion': appVersion,
+          'platform': Platform.isAndroid ? 'android' : 'ios',
+        },
         options: Options(headers: {'Authorization': 'Bearer $token'}),
       );
-      // Proof line: visible in `adb logcat` even while the screen is locked.
-      print('[FGS_HB] beat OK (${res.statusCode}) lat=${pos.latitude} lng=${pos.longitude}');
+      await FlutterForegroundTask.saveData(key: kHbLastOkAtKey, value: nowMs.toString());
+      await FlutterForegroundTask.saveData(key: kHbLastErrorKey, value: '');
+      ReliabilityLog.log(RelEvent.heartbeatSent,
+          {'status': res.statusCode, 'src': locSource});
     } catch (e) {
       // Never throw from the service isolate — just miss this beat and retry
       // on the next interval.
-      print('[FGS_HB] beat FAILED: $e');
+      ReliabilityLog.log(RelEvent.heartbeatFailed, {'error': e.toString()});
+      try {
+        await FlutterForegroundTask.saveData(key: kHbLastErrorKey, value: e.toString());
+      } catch (_) {}
     }
   }
 }

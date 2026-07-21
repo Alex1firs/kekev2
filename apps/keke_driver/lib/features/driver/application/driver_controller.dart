@@ -7,8 +7,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:dio/dio.dart' as dio;
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import '../../../core/services/location_foreground_task.dart';
 import '../../../core/services/battery_optimization_service.dart';
+import '../../../core/services/reliability_log.dart';
 import '../../../core/storage/secure_storage.dart';
 import '../domain/chat_message.dart';
 import '../domain/driver_profile.dart';
@@ -854,6 +856,7 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
       );
       _heartbeatTimer?.cancel();
       _stopLocationForegroundService();
+      ReliabilityLog.log(RelEvent.offlineStopped, {'by': 'toggle'});
       if (_socketService != null) {
         _socketService!.emit('driver:offline', {'driverId': _userId});
       }
@@ -965,8 +968,19 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
         await FlutterForegroundTask.saveData(key: kHbUrlKey, value: EnvConfig.current.apiBaseUrl);
         await FlutterForegroundTask.saveData(key: kHbTokenKey, value: token);
         await FlutterForegroundTask.saveData(key: kHbUserKey, value: _userId);
+        // App version for the richer heartbeat payload (best-effort).
+        try {
+          final info = await PackageInfo.fromPlatform();
+          await FlutterForegroundTask.saveData(
+              key: kHbAppVersionKey, value: '${info.version}+${info.buildNumber}');
+        } catch (_) {}
       } catch (_) {}
     }
+    // Ensure background location ("Allow all the time") so the service isolate
+    // can fetch a fix while the app is backgrounded/locked. Best-effort — the
+    // service still works whileInUse when the FGS is running, but 'always' is
+    // the reliable setting; we escalate and log the outcome.
+    await _ensureBackgroundLocation();
     // Android 13+ needs runtime notification permission for the foreground
     // service to show its persistent notification (and stay reliable).
     try {
@@ -980,22 +994,53 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
       // of stacking a second start.
       if (await FlutterForegroundTask.isRunningService) {
         await FlutterForegroundTask.restartService();
+        ReliabilityLog.log(RelEvent.fgsRestarted, {'reason': 'go_online'});
       } else {
         await FlutterForegroundTask.startService(
           serviceId: 1001,
-          notificationTitle: 'KekeRide',
-          notificationText: 'KekeRide is online — accepting rides nearby.',
+          notificationTitle: 'KekeRide is online',
+          notificationText: 'Sharing location for ride requests.',
           callback: locationTaskCallback,
         );
+        ReliabilityLog.log(RelEvent.fgsStarted, {'starter': 'go_online'});
       }
-    } catch (_) {}
+    } catch (e) {
+      ReliabilityLog.log(RelEvent.fgsInterrupted, {'phase': 'start', 'error': e.toString()});
+    }
+  }
+
+  /// Escalate location permission toward "Allow all the time" (background).
+  /// Android 10 grants `always` directly from requestPermission; 11+ needs a
+  /// second request that routes the user to the background-location setting.
+  Future<void> _ensureBackgroundLocation() async {
+    if (!Platform.isAndroid) return;
+    try {
+      var perm = await Geolocator.checkPermission();
+      if (perm == LocationPermission.denied) {
+        perm = await Geolocator.requestPermission();
+      }
+      if (perm == LocationPermission.whileInUse) {
+        // Ask again to prompt for background ("all the time") where supported.
+        perm = await Geolocator.requestPermission();
+      }
+      if (perm == LocationPermission.always) {
+        ReliabilityLog.log(RelEvent.backgroundLocationGranted, {});
+      } else {
+        ReliabilityLog.log(RelEvent.backgroundLocationMissing, {'perm': perm.name});
+      }
+    } catch (e) {
+      ReliabilityLog.log(RelEvent.backgroundLocationMissing, {'error': e.toString()});
+    }
   }
 
   Future<void> _stopLocationForegroundService() async {
     if (!Platform.isAndroid) return;
     try {
       await FlutterForegroundTask.stopService();
-    } catch (_) {}
+      ReliabilityLog.log(RelEvent.fgsStopped, {'isolate': 'ui'});
+    } catch (e) {
+      ReliabilityLog.log(RelEvent.fgsInterrupted, {'phase': 'stop', 'error': e.toString()});
+    }
   }
 
   // --- Real Request Flow ---
@@ -1338,6 +1383,7 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
     // auth change) can't keep the heartbeat isolate posting with a stale token.
     // If the driver is still online, the fresh controller's auto-resume restarts it.
     _stopLocationForegroundService();
+    ReliabilityLog.log(RelEvent.logoutCleanup, {});
     _waitTimer?.cancel();
     _countdownTimer?.cancel();
     _heartbeatTimer?.cancel();

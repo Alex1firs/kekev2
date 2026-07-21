@@ -1,7 +1,7 @@
 name: keke_driver
 description: "Keke App v2 - Driver Application"
 publish_to: 'none'
-version: 1.0.6+17
+version: 1.0.6+20
 
 
 environment:
@@ -28,6 +28,12 @@ dependencies:
   webview_flutter: ^4.10.0
   google_fonts: ^6.2.1
   flutter_foreground_task: ^8.14.0
+  # Background-reliability hardening:
+  device_info_plus: ^10.1.0        # OEM/manufacturer + Android SDK detection
+  package_info_plus: ^8.0.0        # app version/build for heartbeat + diagnostics
+  connectivity_plus: ^6.0.0        # network status for diagnostics
+  flutter_local_notifications: ^17.2.2  # locked-screen ride-request ring
+  android_intent_plus: ^5.1.0      # OEM auto-start / protected-app settings intents
 
 dev_dependencies:
   flutter_test:

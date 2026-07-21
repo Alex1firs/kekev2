@@ -9,6 +9,7 @@ import '../../features/auth/presentation/verify_email_screen.dart';
 import '../../features/driver/presentation/onboarding_screen.dart';
 import '../../features/driver/presentation/status_info_screen.dart';
 import '../../features/driver/presentation/driver_home_screen.dart';
+import '../../features/driver/presentation/diagnostics_screen.dart';
 import 'auth_guard.dart';
 
 final rootNavigatorKey = GlobalKey<NavigatorState>();
@@ -67,6 +68,11 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         path: '/home',
         name: 'home',
         builder: (context, state) => const DriverHomeScreen(),
+      ),
+      GoRoute(
+        path: '/diagnostics',
+        name: 'diagnostics',
+        builder: (context, state) => const DiagnosticsScreen(),
       ),
     ],
   );

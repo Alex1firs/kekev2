@@ -3,18 +3,26 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import '../services/reliability_log.dart';
 
 /// Background message handler.
 ///
 /// MUST be a top-level (or static) function annotated with `vm:entry-point`
 /// because firebase_messaging runs it in a separate isolate. Firebase has to be
 /// re-initialised inside this isolate. For notification-type messages iOS/Android
-/// auto-display the alert on the lock screen; this handler is here so data-only
-/// payloads are still processed when the app is backgrounded or terminated.
+/// auto-display the alert on the lock screen (via the high-importance
+/// `keke_ride_requests` channel), so this handler must NOT display a second
+/// notification — it only records receipt for diagnostics. Data-only payloads
+/// are still processed here when the app is backgrounded or terminated.
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp();
-  print('[PUSH][BG] Background message: ${message.messageId} | data: ${message.data}');
+  ReliabilityLog.log(RelEvent.fcmReceived, {
+    'state': 'background',
+    'type': message.data['type'],
+    'rideId': message.data['rideId'],
+    'hasNotification': message.notification != null,
+  });
 }
 
 class NotificationService {
@@ -57,7 +65,13 @@ class NotificationService {
 
       // 4. Foreground + tap listeners.
       FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-        print('[PUSH] Foreground message: ${message.data}');
+        // Foreground: the in-app socket path shows the ride card + ring, so we
+        // do NOT display a notification here (avoids a duplicate alert).
+        ReliabilityLog.log(RelEvent.fcmReceived, {
+          'state': 'foreground',
+          'type': message.data['type'],
+          'rideId': message.data['rideId'],
+        });
       });
       FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
         print('[PUSH] Notification tapped (from background): ${message.data}');

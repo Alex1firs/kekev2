@@ -5,11 +5,15 @@ import 'core/routing/app_router.dart';
 import 'core/theme/app_theme.dart';
 import 'core/network/api_client.dart';
 import 'core/services/location_foreground_task.dart';
+import 'core/services/ride_notification_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   initForegroundTask();
-  
+  // Create the high-importance ride channel up front so the very first ride
+  // push renders as a loud heads-up over the lock screen.
+  await RideNotificationService.instance.initialize();
+
   final container = ProviderContainer();
   final notificationService = container.read(notificationServiceProvider('driver'));
   await notificationService.initialize();

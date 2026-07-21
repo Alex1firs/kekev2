@@ -52,6 +52,20 @@ android {
     buildTypes {
         release {
             signingConfig = signingConfigs.getByName("release")
+            // CRITICAL: R8 was renaming flutter_foreground_task's
+            // ForegroundTaskService (to e.g. `E2.a`) without keeping the manifest
+            // <service> declaration in sync, so the foreground service failed to
+            // start in release ("Unable to start service ... not found") — the
+            // heartbeat then died ~1-2min after the screen locked. Disabling
+            // minification keeps every plugin's manifest-referenced class name
+            // intact. Keep rules in proguard-rules.pro are a further safety net if
+            // shrinking is ever re-enabled.
+            isMinifyEnabled = false
+            isShrinkResources = false
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
 }

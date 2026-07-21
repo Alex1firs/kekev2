@@ -44,10 +44,15 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
-        <!-- Foreground service for persistent background location (flutter_foreground_task) -->
+        <!-- Foreground service for persistent background location.
+             flutter_foreground_task v8 renamed this class to `ForegroundService`
+             (was `ForegroundTaskService` in v6/v7). The name MUST match the class
+             the plugin starts, or Android reports "Unable to start service … not
+             found" and the background heartbeat/location never runs. -->
         <service
-            android:name="com.pravera.flutter_foreground_task.service.ForegroundTaskService"
+            android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
             android:foregroundServiceType="location"
+            android:exported="false"
             android:stopWithTask="false"/>
 
         <!-- Don't delete the meta-data below.

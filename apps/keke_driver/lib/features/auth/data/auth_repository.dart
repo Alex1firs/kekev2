@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/network/api_client.dart';
+import '../../../core/network/network_error.dart';
 
 class AuthRepository {
   final ApiClient _apiClient;
@@ -25,7 +26,9 @@ class AuthRepository {
           devOtp: data['otp'] as String?,
         );
       }
-      throw Exception(e.response?.data?['error']?.toString() ?? e.message ?? 'Login failed');
+      throw Exception(e.response?.data?['error']?.toString() ??
+          networkErrorMessage(e) ??
+          'Login failed');
     }
   }
 
@@ -44,7 +47,10 @@ class AuthRepository {
       if (e.response?.statusCode == 409) {
         throw EmailAlreadyRegisteredException(email: email);
       }
-      throw Exception(e.response?.data?['message']?.toString() ?? e.response?.data?['error']?.toString() ?? e.message ?? 'Signup failed');
+      throw Exception(e.response?.data?['message']?.toString() ??
+          e.response?.data?['error']?.toString() ??
+          networkErrorMessage(e) ??
+          'Signup failed');
     }
   }
 

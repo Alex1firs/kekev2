@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../config/env_config.dart';
 import '../storage/secure_storage.dart';
 import 'notification_service.dart';
+import 'retry_interceptor.dart';
 
 class ApiClient {
   final Dio _dio;
@@ -21,10 +22,16 @@ final dioProvider = Provider<Dio>((ref) {
   final dio = Dio(
     BaseOptions(
       baseUrl: env.apiBaseUrl,
-      connectTimeout: const Duration(seconds: 15),
-      receiveTimeout: const Duration(seconds: 15),
+      // Generous by desktop standards, deliberately: a TLS handshake on a
+      // congested Nigerian 3G cell regularly exceeds 15s, and a hard failure
+      // costs a driver the trip. RetryInterceptor covers the rest.
+      connectTimeout: const Duration(seconds: 20),
+      receiveTimeout: const Duration(seconds: 30),
+      sendTimeout: const Duration(seconds: 30),
     ),
   );
+
+  dio.interceptors.add(RetryInterceptor(dio));
 
   dio.interceptors.add(
     InterceptorsWrapper(

@@ -494,13 +494,19 @@ class TripOperationHUD extends ConsumerWidget {
             icon: Icons.phone_rounded,
             color: AppColors.success,
             onTap: () async {
-              final phone = state.activeRequest?.passengerPhone;
-              if (phone == null || phone.isEmpty) {
+              String phone = state.activeRequest?.passengerPhone ?? '';
+              if (phone.isEmpty) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
                       content: Text("Passenger's phone number is unavailable")),
                 );
                 return;
+              }
+              phone = phone.replaceAll(RegExp(r'\s+'), '');
+              if (phone.startsWith('+234')) {
+                phone = '0${phone.substring(4)}';
+              } else if (phone.startsWith('234')) {
+                phone = '0${phone.substring(3)}';
               }
               final uri = Uri(scheme: 'tel', path: phone);
               if (await canLaunchUrl(uri)) await launchUrl(uri);

@@ -3,12 +3,15 @@
  *
  * Sits beside Live Riders (which monitors driver presence) and does not touch it.
  *
- * Realtime design: the server pushes `admin:dispatch_event` per event and
- * `admin:ride_snapshot` per status change, and this module applies them
- * INCREMENTALLY to an in-memory index. A full `/live-requests` fetch happens on
- * section entry, on reconnect, and as a slow safety reconcile — never per event.
- * The previous pattern (refetch everything on every ride:status_update) does not
- * survive a busy evening.
+ * Realtime design: the server pushes `admin:dispatch_event` per event, and this
+ * module applies them INCREMENTALLY to an in-memory index. A full
+ * `/live-requests` fetch happens on section entry, on reconnect, and as a slow
+ * safety reconcile — never per event. The previous pattern (refetch everything
+ * on every ride:status_update) does not survive a busy evening.
+ *
+ * Deltas are ignored entirely while the section is off-screen: events reach every
+ * admin socket regardless of the page being viewed, and re-syncing for a page
+ * nobody is looking at burns a tight admin request budget for nothing.
  *
  * Honesty rules enforced in this file:
  *   - Delivery state is rendered from the strongest recorded signal only. There
@@ -29,6 +32,8 @@ let lrSelectedRideId = null;
 let lrLastServerTime = null;
 let lrStreamConnected = false;
 let lrRole = null;
+/** rideId -> last fetched detail payload. */
+const lrDetailCache = new Map();
 
 /** Cap per-ride live event retention so a long search cannot grow unbounded. */
 const LR_MAX_EVENTS_PER_RIDE = 400;
@@ -169,6 +174,10 @@ async function fetchAdminRole() {
 
 /** Section entry. Full sync once, then live deltas. */
 async function enterLiveRequests() {
+    // Nothing is buffered while the section is off-screen, so start from a clean
+    // slate rather than replaying whatever a previous visit left behind.
+    lrLiveEvents.clear();
+    lrDetailCache.clear();
     await fetchAdminRole();
     await fetchLiveRequests();
     toggleLiveRequestsStream();
@@ -198,8 +207,17 @@ function toggleLiveRequestsStream() {
  * Only the counters this event genuinely proves are advanced; nothing here can
  * upgrade a delivery state by inference.
  */
+/** True only while an operator is actually looking at the monitor. */
+function lrIsActive() {
+    return typeof currentSection !== 'undefined' && currentSection === 'live-requests';
+}
+
 function applyDispatchEvent(ev) {
     if (!ev || !ev.rideId) return;
+    // Events stream to every admin socket regardless of the page being viewed.
+    // Buffering and re-syncing off-screen wastes a tight request budget and
+    // grows the event map without bound in a dashboard left open all day.
+    if (!lrIsActive()) return;
 
     const list = lrLiveEvents.get(ev.rideId) || [];
     list.push(ev);
@@ -250,6 +268,7 @@ function applyDispatchEvent(ev) {
 /** Status transitions pushed for rides we already hold. */
 function applyRideStatusUpdate(payload) {
     if (!payload || !payload.rideId) return;
+    if (!lrIsActive()) return; // see applyDispatchEvent
     const row = lrIndex.get(payload.rideId);
     if (!row) {
         // Unknown ride entering an active state → sync it in.
@@ -472,8 +491,6 @@ function lrDrawMap(row) {
 }
 
 // ── detail drawer ──────────────────────────────────────────────────────────
-
-const lrDetailCache = new Map();
 
 async function openRequestDrawer(rideId) {
     lrSelectedRideId = rideId;

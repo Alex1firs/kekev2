@@ -2,20 +2,25 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 class SoundService {
-  final AudioPlayer _player = AudioPlayer();
+  AudioPlayer? _player;
+
+  // Built on first use: constructing an AudioPlayer touches platform channels,
+  // so doing it eagerly would drag the whole audio stack into anything that
+  // merely holds a SoundService.
+  AudioPlayer get _audio => _player ??= AudioPlayer();
 
   Future<void> playAlert() async {
     try {
-      await _player.stop();
+      await _audio.stop();
       // 'keke_ring.wav' must be in assets/sounds/
-      await _player.play(AssetSource('sounds/keke_ring.wav'));
+      await _audio.play(AssetSource('sounds/keke_ring.wav'));
     } catch (e) {
       print('[SOUND_ERROR] Failed to play alert sound: $e');
     }
   }
 
-  Future<void> dispose() {
-    return _player.dispose();
+  Future<void> dispose() async {
+    await _player?.dispose();
   }
 }
 

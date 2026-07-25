@@ -1,4 +1,5 @@
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'booking_notice.dart';
 import 'chat_message.dart';
 
 enum BookingStep {
@@ -34,6 +35,20 @@ class BookingState {
   final List<LatLng> activeRoutePolyline; // Explicit accurate paths
 
   final String? errorMessage;
+
+  /// Structured outcome of the last ride request (no driver, expired, network
+  /// failure, …). Carries its own copy and tone so the UI never has to guess
+  /// whether a message is an availability notice or a real error.
+  final BookingNotice? notice;
+
+  /// Which dispatch round the current search is on (1-based). Round >= 2 shows
+  /// the "Still searching nearby…" copy.
+  final int searchRound;
+
+  /// How many times the passenger has searched for this pickup/destination
+  /// pair. Reported with the outcome event.
+  final int searchAttempts;
+
   final Map<String, dynamic>? assignedDriver;
   final String paymentMethod;
   
@@ -88,6 +103,9 @@ class BookingState {
     this.assignedDriver,
     this.paymentMethod = 'cash',
     this.errorMessage,
+    this.notice,
+    this.searchRound = 1,
+    this.searchAttempts = 0,
     this.rideId,
     this.assignedDriverLocation,
     this.lastLocationUpdate,
@@ -127,6 +145,10 @@ class BookingState {
     Map<String, dynamic>? assignedDriver,
     String? paymentMethod,
     String? errorMessage,
+    BookingNotice? notice,
+    bool clearNotice = false,
+    int? searchRound,
+    int? searchAttempts,
     String? rideId,
     bool clearAssignedDriver = false,
     bool clearRideId = false,
@@ -174,6 +196,9 @@ class BookingState {
       assignedDriver: clearAssignedDriver ? null : (assignedDriver ?? this.assignedDriver),
       paymentMethod: paymentMethod ?? this.paymentMethod,
       errorMessage: clearErrorMessage ? null : (errorMessage ?? this.errorMessage),
+      notice: clearNotice ? null : (notice ?? this.notice),
+      searchRound: searchRound ?? this.searchRound,
+      searchAttempts: searchAttempts ?? this.searchAttempts,
       rideId: clearRideId ? null : (rideId ?? this.rideId),
       assignedDriverLocation: assignedDriverLocation ?? this.assignedDriverLocation,
       lastLocationUpdate: lastLocationUpdate ?? this.lastLocationUpdate,

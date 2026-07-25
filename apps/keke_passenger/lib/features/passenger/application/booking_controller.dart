@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import '../domain/booking_notice.dart';
 import '../domain/booking_state.dart';
 import '../data/map_repository.dart';
 import '../../../core/network/socket_service.dart';
@@ -14,11 +15,13 @@ import 'package:jwt_decoder/jwt_decoder.dart';
 import '../../../core/network/notification_service.dart';
 import '../domain/chat_message.dart';
 import '../../../core/services/sound_service.dart';
+import '../../../core/services/analytics_service.dart';
 
 class BookingController extends StateNotifier<BookingState> {
   final MapRepository _mapRepo;
   SocketService? _socketService;
   final ApiClient? _apiClient;
+  final AnalyticsService _analytics;
   final String passengerId;
   final String firstName;
   final String lastName;
@@ -28,6 +31,7 @@ class BookingController extends StateNotifier<BookingState> {
   Timer? _searchTimeoutTimer;
   Timer? _nearbyPollingTimer;
   Timer? _errorClearTimer;
+  Timer? _noticeClearTimer;
   StreamSubscription? _socketSubscription;
   StreamSubscription? _notificationSubscription;
   final NotificationService _notificationService;
@@ -36,7 +40,7 @@ class BookingController extends StateNotifier<BookingState> {
 
   void setWalletRefreshCallback(void Function() cb) => _onWalletRefreshNeeded = cb;
 
-  BookingController(this._mapRepo, SocketService? initialSocket, this._apiClient, this._notificationService, this._soundService, this.passengerId, this.firstName, this.lastName) : super(const BookingState()) {
+  BookingController(this._mapRepo, SocketService? initialSocket, this._apiClient, this._notificationService, this._soundService, this._analytics, this.passengerId, this.firstName, this.lastName) : super(const BookingState()) {
     _socketService = initialSocket;
     _initializeMap();
     if (_socketService != null) _listenToSocket();
@@ -97,6 +101,7 @@ class BookingController extends StateNotifier<BookingState> {
             assignedDriver: data['driverDetails'],
             pickupCode: data['pickupCode']?.toString(),
             clearErrorMessage: true,
+            clearNotice: true,
           );
           _stopWatchdog();
           _soundService.playAlert();
@@ -142,7 +147,11 @@ class BookingController extends StateNotifier<BookingState> {
           print('[PASSENGER_SYNC] Ride cancelled. Resetting state.');
           _searchTimeoutTimer?.cancel();
           _stopWatchdog();
-          _resetBookingState();
+          _reportOutcome(RideOutcome.passengerCancelled,
+              dispatchResult: 'passenger_cancelled');
+          _resetBookingState(
+              notice: BookingNotice.of(RideOutcome.passengerCancelled));
+          _scheduleNoticeClear(seconds: 8);
           break;
         case 'ride:finished':
           print('[PASSENGER_SYNC] Ride finished. Showing receipt.');
@@ -154,9 +163,21 @@ class BookingController extends StateNotifier<BookingState> {
         case 'ride:failed':
           _searchTimeoutTimer?.cancel();
           _stopWatchdog();
-          state = state.copyWith(
-            step: BookingStep.previewEstimate,
-            errorMessage: data['message']?.toString() ?? 'No drivers available right now — please try again.',
+          // Newer servers say WHY (no eligible driver vs. nobody accepted vs.
+          // expired). Older ones send only a message — those get the
+          // conservative "nobody accepted" reading, which is the common case.
+          final failOutcome =
+              RideOutcomeWire.fromCode(data['code']?.toString()) ??
+                  RideOutcome.noDriverAccepted;
+          _endSearchWith(
+            failOutcome,
+            dispatchResult: data['dispatchResult']?.toString() ?? 'unspecified',
+          );
+          break;
+        case 'ride:error':
+          _handleServerError(
+            code: data['code']?.toString(),
+            message: data['message']?.toString(),
           );
           break;
         case 'driver:location_update':
@@ -212,7 +233,7 @@ class BookingController extends StateNotifier<BookingState> {
     });
   }
 
-  void _resetBookingState() {
+  void _resetBookingState({BookingNotice? notice}) {
     // Construct cleanly so all receipt/ride fields truly reset to null defaults.
     state = BookingState(
       step: BookingStep.selectingDestination,
@@ -220,6 +241,7 @@ class BookingController extends StateNotifier<BookingState> {
       pickupLocation: state.pickupLocation,
       pickupAddress: 'Locating...',
       paymentMethod: state.paymentMethod,
+      notice: notice,
     );
     _stopWatchdog();
     // Re-detect current location — the passenger is now at the trip destination,
@@ -315,7 +337,8 @@ class BookingController extends StateNotifier<BookingState> {
       } catch (e) {
         print('Active ride recovery failed: $e');
         state = state.copyWith(
-          errorMessage: 'Could not restore your active ride. Please check your connection.',
+          notice: BookingNotice.of(RideOutcome.serverFailed,
+              dispatchResult: 'active_ride_recovery_failed'),
         );
       }
     }
@@ -369,6 +392,14 @@ class BookingController extends StateNotifier<BookingState> {
 
   void confirmPickup() {
     if (state.pickupLocation == null) return;
+    // Reached from the fare screen via "Change pickup point" — the destination
+    // is still set, so go straight back to the (re-priced) estimate instead of
+    // dumping the passenger on the home panel.
+    if (state.destinationLocation != null) {
+      state = state.copyWith(step: BookingStep.previewEstimate);
+      _calculateFare();
+      return;
+    }
     state = state.copyWith(step: BookingStep.selectingDestination);
   }
 
@@ -385,7 +416,11 @@ class BookingController extends StateNotifier<BookingState> {
   }
 
   void cancelPickupEdit() {
-    state = state.copyWith(step: BookingStep.selectingDestination);
+    state = state.copyWith(
+      step: state.destinationLocation != null
+          ? BookingStep.previewEstimate
+          : BookingStep.selectingDestination,
+    );
   }
 
   void enterPickupMapSelection() {
@@ -433,7 +468,8 @@ class BookingController extends StateNotifier<BookingState> {
   }
 
   Future<void> _calculateFare() async {
-    state = state.copyWith(clearErrorMessage: true, estimatedFareAmount: null);
+    state = state.copyWith(
+        clearErrorMessage: true, clearNotice: true, estimatedFareAmount: null);
 
     try {
       final estimate = await _mapRepo.calculateRouteAndFare(state.pickupLocation!, state.destinationLocation!);
@@ -444,18 +480,41 @@ class BookingController extends StateNotifier<BookingState> {
         activeRoutePolyline: List<LatLng>.from(estimate['polyline']),
       );
     } catch (e) {
-      state = state.copyWith(errorMessage: 'Couldn\'t calculate your route — try a different destination.');
+      // Couldn't route between these two points — an unusable pickup/destination
+      // pair, which is a real failure and keeps the red treatment.
+      state = state.copyWith(
+        notice: BookingNotice.of(RideOutcome.invalidRoute,
+            dispatchResult: 'route_calculation_failed'),
+      );
     }
   }
 
-  void requestRide() {
+  /// First attempt for this pickup/destination pair.
+  void requestRide() => _dispatchRequest(isRetry: false);
+
+  /// "Search Again" from the no-driver notice. Same request, second round —
+  /// the searching screen switches to its "Still searching nearby…" copy.
+  /// Purely passenger-driven; no automatic redispatch happens here.
+  void searchAgain() => _dispatchRequest(isRetry: true);
+
+  /// "Change pickup point" from the notice — hands the passenger the existing
+  /// map-based pickup picker instead of silently retrying the same spot.
+  void changePickupPoint() {
+    clearNotice();
+    enterPickupMapSelection();
+  }
+
+  void _dispatchRequest({required bool isRetry}) {
     if (_socketService == null) {
-      state = state.copyWith(errorMessage: 'Not connected to server — please restart the app and try again.');
+      _showRequestBlocked(RideOutcome.serverFailed);
       return;
     }
-    if (state.pickupLocation == null || state.destinationLocation == null) return;
+    if (state.pickupLocation == null || state.destinationLocation == null) {
+      _showRequestBlocked(RideOutcome.invalidRoute);
+      return;
+    }
     if (!_socketService!.isConnected) {
-      state = state.copyWith(errorMessage: 'No connection — please check your internet and try again.');
+      _showRequestBlocked(RideOutcome.networkFailed);
       return;
     }
 
@@ -478,11 +537,32 @@ class BookingController extends StateNotifier<BookingState> {
       'fare': state.estimatedFareAmount,
     });
     
+    final attempts = state.searchAttempts + 1;
     state = state.copyWith(
       step: BookingStep.searching,
       rideId: rideId,
+      searchAttempts: attempts,
+      searchRound: isRetry ? 2 : 1,
+      clearErrorMessage: true,
+      clearNotice: true,
+    );
+    _analytics.logSearchStarted(
+      rideId: rideId,
+      searchAttempts: attempts,
+      searchRound: state.searchRound,
     );
     _startWatchdog();
+  }
+
+  /// The request never left the device (no socket, no data, bad coordinates).
+  /// Stays on the fare screen and shows an error-toned notice — these are real
+  /// failures, not availability outcomes.
+  void _showRequestBlocked(RideOutcome outcome) {
+    _reportOutcome(outcome, dispatchResult: 'not_dispatched');
+    _noticeClearTimer?.cancel();
+    state = state.copyWith(
+      notice: BookingNotice.of(outcome, dispatchResult: 'not_dispatched'),
+    );
   }
 
   Future<void> syncStatus() async {
@@ -583,11 +663,11 @@ class BookingController extends StateNotifier<BookingState> {
       if (mounted && state.step == BookingStep.searching) {
         print('[WATCHDOG] Search timed out — rolling back to estimate.');
         _stopWatchdog();
-        state = state.copyWith(
-          step: BookingStep.previewEstimate,
-          clearRideId: true,
-          errorMessage: 'No drivers available right now — please try again.',
-        );
+        // The server never told us how dispatch ended (it usually beats us to
+        // it with ride:failed) — this is specifically an expiry, not a
+        // statement about driver availability.
+        _endSearchWith(RideOutcome.requestExpired,
+            dispatchResult: 'client_watchdog_timeout');
       }
     });
   }
@@ -645,6 +725,69 @@ class BookingController extends StateNotifier<BookingState> {
     _errorClearTimer = Timer(Duration(seconds: seconds), () {
       if (mounted) state = state.copyWith(clearErrorMessage: true);
     });
+  }
+
+  /// Dismisses the current outcome notice (passenger acted on it, or it aged out).
+  void clearNotice() {
+    _noticeClearTimer?.cancel();
+    if (mounted) state = state.copyWith(clearNotice: true);
+  }
+
+  void _scheduleNoticeClear({int seconds = 8}) {
+    _noticeClearTimer?.cancel();
+    _noticeClearTimer = Timer(Duration(seconds: seconds), () {
+      if (mounted) state = state.copyWith(clearNotice: true);
+    });
+  }
+
+  // ── Ride outcome plumbing ──────────────────────────────────────────────
+  //
+  // Every way a request can end without a driver funnels through here, so the
+  // passenger-facing copy, the visual tone and the analytics event all come
+  // from one place and can never drift apart.
+
+  void _reportOutcome(RideOutcome outcome, {String? dispatchResult}) {
+    _analytics.logRideOutcome(
+      rideId: state.rideId,
+      outcome: outcome,
+      dispatchResult: dispatchResult,
+      searchAttempts: state.searchAttempts,
+    );
+  }
+
+  /// Terminal end of a search: log it, drop back to the fare screen and show
+  /// the matching notice. Does NOT re-dispatch — retry is the passenger's call.
+  void _endSearchWith(RideOutcome outcome, {String? dispatchResult}) {
+    _reportOutcome(outcome, dispatchResult: dispatchResult);
+    _noticeClearTimer?.cancel();
+    state = state.copyWith(
+      step: BookingStep.previewEstimate,
+      clearRideId: true,
+      clearErrorMessage: true,
+      notice: BookingNotice.of(outcome, dispatchResult: dispatchResult),
+    );
+  }
+
+  /// A `ride:error` from the server. While searching this is terminal (the
+  /// request never got off the ground — e.g. the passenger already has a live
+  /// ride, which previously left the search spinning until the 90s watchdog).
+  /// Outside a search it's a transient notice that must not disturb the step.
+  void _handleServerError({String? code, String? message}) {
+    final outcome =
+        RideOutcomeWire.fromCode(code) ?? RideOutcome.serverFailed;
+    print('[PASSENGER] Server error: code=$code message=$message '
+        '→ ${outcome.code}');
+
+    if (state.step == BookingStep.searching) {
+      _searchTimeoutTimer?.cancel();
+      _stopWatchdog();
+      _endSearchWith(outcome, dispatchResult: 'server_rejected');
+      return;
+    }
+    _reportOutcome(outcome, dispatchResult: 'server_rejected');
+    state = state.copyWith(
+        notice: BookingNotice.of(outcome, dispatchResult: 'server_rejected'));
+    _scheduleNoticeClear();
   }
 
   Future<void> triggerSos(String reason) async {
@@ -745,6 +888,7 @@ class BookingController extends StateNotifier<BookingState> {
     _searchTimeoutTimer?.cancel();
     _nearbyPollingTimer?.cancel();
     _errorClearTimer?.cancel();
+    _noticeClearTimer?.cancel();
     _socketSubscription?.cancel();
     _notificationSubscription?.cancel();
     super.dispose();
@@ -773,8 +917,9 @@ final bookingControllerProvider = StateNotifierProvider<BookingController, Booki
   final socketService = ref.read(socketServiceProvider);
   final notificationService = ref.read(notificationServiceProvider('passenger'));
   final soundService = ref.read(soundServiceProvider);
-  
-  final controller = BookingController(mapRepo, socketService, apiClient, notificationService, soundService, passId, fname, lname);
+  final analytics = ref.read(analyticsServiceProvider);
+
+  final controller = BookingController(mapRepo, socketService, apiClient, notificationService, soundService, analytics, passId, fname, lname);
 
   controller.setWalletRefreshCallback(
     () => ref.read(walletControllerProvider.notifier).refresh(),

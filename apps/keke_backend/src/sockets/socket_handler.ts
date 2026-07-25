@@ -108,7 +108,7 @@ const Schemas = {
 function validate<T>(schema: z.ZodSchema<T>, data: unknown, socket: Socket): T | null {
     const result = schema.safeParse(data);
     if (!result.success) {
-        socket.emit('ride:error', { message: 'Invalid request data' });
+        socket.emit('ride:error', { code: 'INVALID_REQUEST', message: 'Invalid request data' });
         return null;
     }
     return result.data;
@@ -365,7 +365,7 @@ export class SocketHandler {
                     log.error('Failed to persist ride record:', err);
                     // Don't leak the passenger's active-ride slot if creation failed.
                     await DispatchService.releasePassengerActive(passengerId, rideId);
-                    socket.emit('ride:error', { message: 'Failed to create ride. Please try again.' });
+                    socket.emit('ride:error', { code: 'INTERNAL_ERROR', message: 'Failed to create ride. Please try again.' });
                     return;
                 }
 
@@ -384,7 +384,15 @@ export class SocketHandler {
                     if (err?.message === 'dispatch_timeout') {
                         try {
                             await AppDataSource.getRepository(Ride).update(rideId, { status: 'failed' as any });
-                            this.io.to(`ride:${rideId}`).emit('ride:failed', { message: 'No drivers available nearby' });
+                            // `code`/`dispatchResult` let the passenger app tell an
+                            // expiry apart from a genuine no-driver outcome. `message`
+                            // stays for older clients that only read it.
+                            this.io.to(`ride:${rideId}`).emit('ride:failed', {
+                                code: 'REQUEST_EXPIRED',
+                                dispatchResult: 'dispatch_timeout',
+                                driversRung: this.activeDispatches.get(rideId)?.size ?? 0,
+                                message: 'No drivers available nearby',
+                            });
                             if (passengerId) {
                                 NotificationService.sendToUser(passengerId, UserRole.PASSENGER, 'No Driver Found',
                                     "We couldn't find a nearby driver. Please try again.", {
@@ -423,12 +431,12 @@ export class SocketHandler {
                     const rideRepo = AppDataSource.getRepository(Ride);
                     const ride = await rideRepo.findOne({ where: { rideId: data.rideId } });
 
-                    if (!ride) return socket.emit('ride:error', { message: 'Ride not found' });
-                    if (ride.passengerId !== data.passengerId) return socket.emit('ride:error', { message: 'Unauthorized cancellation attempt' });
+                    if (!ride) return socket.emit('ride:error', { code: 'RIDE_NOT_FOUND', message: 'Ride not found' });
+                    if (ride.passengerId !== data.passengerId) return socket.emit('ride:error', { code: 'FORBIDDEN', message: 'Unauthorized cancellation attempt' });
 
                     const cancellable = ['searching', 'accepted', 'arrived'] as any[];
                     if (!cancellable.includes(ride.status)) {
-                        return socket.emit('ride:error', { message: 'Ride cannot be canceled at this stage' });
+                        return socket.emit('ride:error', { code: 'INVALID_STATE', message: 'Ride cannot be canceled at this stage' });
                     }
 
                     await rideRepo.update(data.rideId, { status: 'canceled' as any, completedAt: new Date() });
@@ -1029,7 +1037,19 @@ export class SocketHandler {
         const finalRide = await finalRepo.findOne({ where: { rideId } });
         if (finalRide && finalRide.status !== 'canceled' as any && !await this.isRideAssigned(rideId)) {
             await finalRepo.update(rideId, { status: 'failed' as any });
-            this.io.to(`ride:${rideId}`).emit('ride:failed', { message: 'No drivers available nearby' });
+            // Distinguish "nobody was eligible to ring" from "we rang drivers and
+            // none accepted" — the passenger sees different copy for each. Read
+            // before releaseRideReservations/clearDispatch wipe the set below.
+            const driversRung = this.activeDispatches.get(rideId)?.size ?? 0;
+            const outcome = driversRung > 0
+                ? { code: 'NO_DRIVER_ACCEPTED', dispatchResult: 'drivers_rung_none_accepted' }
+                : { code: 'NO_ELIGIBLE_DRIVER',  dispatchResult: 'no_eligible_drivers' };
+            rlog('dispatch_outcome', { rideId, ...outcome, driversRung });
+            this.io.to(`ride:${rideId}`).emit('ride:failed', {
+                ...outcome,
+                driversRung,
+                message: 'No drivers available nearby',
+            });
             if (finalRide.passengerId) {
                 NotificationService.sendToUser(finalRide.passengerId, UserRole.PASSENGER, 'No Driver Found',
                     "We couldn't find a nearby driver. Please try again.", {

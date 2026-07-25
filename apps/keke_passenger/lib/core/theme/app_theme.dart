@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -25,6 +26,13 @@ class AppColors {
   static const Color warning       = Color(0xFFD97706);
   static const Color warningLight  = Color(0xFFFEF3C7);
 
+  // Informational — availability/neutral notices that are NOT failures.
+  // Red is reserved for real errors. Contrast on `infoSurface`:
+  // info 4.8:1 · charcoal 16:1 · darkGray 9.6:1 — all AA or better.
+  static const Color info          = Color(0xFFB45309); // amber-700
+  static const Color infoSurface   = Color(0xFFFFFBEB); // cream, amber-50
+  static const Color infoBorder    = Color(0xFFFDE68A); // amber-200
+
   // Surfaces
   static const Color surface       = Color(0xFFFFFFFF);
   static const Color surfaceVariant = Color(0xFFF9FAFB);
@@ -32,7 +40,14 @@ class AppColors {
 }
 
 class AppTextStyles {
-  static TextStyle get _base => GoogleFonts.plusJakartaSans();
+  /// Test-only escape hatch. GoogleFonts resolves Plus Jakarta Sans over the
+  /// network, which is unavailable under `flutter test` — golden tests set this
+  /// to a locally registered family so snapshots render real glyphs.
+  @visibleForTesting
+  static TextStyle? debugFontOverride;
+
+  static TextStyle get _base =>
+      debugFontOverride ?? GoogleFonts.plusJakartaSans();
 
   static TextStyle display({Color? color, FontWeight? weight}) =>
       _base.copyWith(fontSize: 32, fontWeight: weight ?? FontWeight.bold, color: color ?? AppColors.charcoal, height: 1.2);

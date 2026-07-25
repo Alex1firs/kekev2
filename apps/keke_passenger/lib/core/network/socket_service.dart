@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:socket_io_client/socket_io_client.dart' as IO;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../config/env_config.dart';
@@ -8,7 +9,7 @@ class SocketService {
   final String _role;
   final String _userId;
   String? _activeRideId;
-  
+
   final _controller = StreamController<Map<String, dynamic>>.broadcast();
   Stream<Map<String, dynamic>> get events => _controller.stream;
 
@@ -18,7 +19,27 @@ class SocketService {
     _initSocket();
   }
 
-  bool get isConnected => _socket?.connected == true;
+  /// Test seam: a service with no real socket. Connectivity is fixed by
+  /// [connected], inbound events come from [injectEvent], and outbound ones are
+  /// recorded in [sentEvents] instead of hitting the network.
+  @visibleForTesting
+  SocketService.offline({bool connected = true})
+      : _role = 'passenger',
+        _userId = 'test-passenger',
+        _token = '',
+        _forcedConnected = connected;
+
+  bool? _forcedConnected;
+
+  /// Outbound emits captured by [SocketService.offline]. Always empty in prod.
+  @visibleForTesting
+  final List<({String event, dynamic data})> sentEvents = [];
+
+  /// Pushes an inbound event into [events] as if the server had sent it.
+  @visibleForTesting
+  void injectEvent(Map<String, dynamic> event) => _controller.add(event);
+
+  bool get isConnected => _forcedConnected ?? (_socket?.connected == true);
 
   void updateActiveRide(String? rideId) {
     _activeRideId = rideId;
@@ -79,6 +100,10 @@ class SocketService {
   }
 
   void emit(String event, dynamic data) {
+    if (_forcedConnected != null) {
+      sentEvents.add((event: event, data: data));
+      return;
+    }
     _socket?.emit(event, data);
   }
 

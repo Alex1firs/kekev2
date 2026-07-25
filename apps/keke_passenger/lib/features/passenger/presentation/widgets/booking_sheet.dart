@@ -10,6 +10,8 @@ import '../../application/booking_controller.dart';
 import '../../application/wallet_controller.dart';
 import '../destination_search_screen.dart';
 import '../wallet_screen.dart';
+import 'booking_notice_card.dart';
+import 'searching_panel.dart';
 import 'ride_chat_panel.dart';
 import 'ride_receipt_sheet.dart';
 import 'sos_sheet.dart';
@@ -290,6 +292,13 @@ class BookingSheet extends ConsumerWidget {
         ),
         const SizedBox(height: 14),
 
+        // Outcomes that land back here — cancelled request, blocked because a
+        // ride is already live, failed active-ride recovery.
+        if (state.notice != null) ...[
+          BookingNoticeCard(notice: state.notice!),
+          const SizedBox(height: 14),
+        ],
+
         // ── Hero destination tap target
         GestureDetector(
           onTap: () async {
@@ -515,9 +524,10 @@ class BookingSheet extends ConsumerWidget {
 
   Widget _buildFarePanel(
       BuildContext context, WidgetRef ref, BookingState state) {
-    if (state.errorMessage != null && state.estimatedFareAmount == null) {
+    // No fare AND a notice → the route itself failed; nothing to price yet.
+    if (state.notice != null && state.estimatedFareAmount == null) {
       return _ErrorState(
-        message: state.errorMessage!,
+        message: state.notice!.body,
         onRetry: () =>
             ref.read(bookingControllerProvider.notifier).retreatToPickup(),
       );
@@ -652,12 +662,28 @@ class BookingSheet extends ConsumerWidget {
           const SizedBox(height: 12),
         ],
 
-        _PrimaryButton(
-          label: 'Request Keke',
-          icon: Icons.electric_rickshaw,
-          onTap: () =>
-              ref.read(bookingControllerProvider.notifier).requestRide(),
-        ),
+        // Outcome of the last request (drivers busy, expired, network down…).
+        if (state.notice != null) ...[
+          BookingNoticeCard(
+            notice: state.notice!,
+            onSearchAgain: () =>
+                ref.read(bookingControllerProvider.notifier).searchAgain(),
+            onChangePickup: () => ref
+                .read(bookingControllerProvider.notifier)
+                .changePickupPoint(),
+          ),
+          const SizedBox(height: 12),
+        ],
+
+        // "Search Again" on the notice card IS the request action — don't offer
+        // two primary buttons that do the same thing.
+        if (!(state.notice?.canSearchAgain ?? false))
+          _PrimaryButton(
+            label: 'Request Keke',
+            icon: Icons.electric_rickshaw,
+            onTap: () =>
+                ref.read(bookingControllerProvider.notifier).requestRide(),
+          ),
       ],
     );
   }
@@ -666,42 +692,12 @@ class BookingSheet extends ConsumerWidget {
 
   Widget _buildSearchingPanel(
       BuildContext context, WidgetRef ref, BookingState state) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (state.errorMessage != null) ...[
-          const SizedBox(height: 4),
-          _InlineError(message: state.errorMessage!),
-          const SizedBox(height: 12),
-        ],
-
-        const SizedBox(height: 8),
-        const _KekeSearchAnimation(),
-        const SizedBox(height: 20),
-
-        Text('Finding your Keke…', style: AppTextStyles.title()),
-        const SizedBox(height: 6),
-        Text(
-          'Connecting to nearby Keke drivers in Awka',
-          style: AppTextStyles.bodySmall(color: AppColors.midGray),
-          textAlign: TextAlign.center,
-        ),
-        const SizedBox(height: 28),
-
-        OutlinedButton(
-          style: OutlinedButton.styleFrom(
-            foregroundColor: AppColors.error,
-            side: const BorderSide(color: AppColors.error),
-            minimumSize: const Size(double.infinity, 50),
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-          ),
-          onPressed: () =>
-              ref.read(bookingControllerProvider.notifier).cancelBooking(),
-          child: const Text('Cancel Request'),
-        ),
-        const SizedBox(height: 4),
-      ],
+    return SearchingPanel(
+      searchRound: state.searchRound,
+      transientMessage: state.errorMessage,
+      notice: state.notice,
+      onCancel: () =>
+          ref.read(bookingControllerProvider.notifier).cancelBooking(),
     );
   }
 
@@ -1282,114 +1278,6 @@ class _ErrorState extends StatelessWidget {
             _PrimaryButton(label: 'Try Again', onTap: onRetry),
           ],
         ),
-      ),
-    );
-  }
-}
-
-// ── Searching animation ────────────────────────────────────────────────────
-
-class _KekeSearchAnimation extends StatefulWidget {
-  const _KekeSearchAnimation();
-
-  @override
-  State<_KekeSearchAnimation> createState() => _KekeSearchAnimationState();
-}
-
-class _KekeSearchAnimationState extends State<_KekeSearchAnimation>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _ctrl;
-
-  @override
-  void initState() {
-    super.initState();
-    _ctrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1600),
-    )..repeat();
-  }
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 80,
-      height: 80,
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          // Outer ring
-          AnimatedBuilder(
-            animation: _ctrl,
-            builder: (_, __) {
-              final t = _ctrl.value;
-              return Opacity(
-                opacity: (1 - t).clamp(0.0, 1.0),
-                child: Transform.scale(
-                  scale: 0.5 + t * 0.8,
-                  child: Container(
-                    width: 80,
-                    height: 80,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: AppColors.primary.withOpacity(0.3),
-                        width: 2,
-                      ),
-                    ),
-                  ),
-                ),
-              );
-            },
-          ),
-          // Middle ring
-          AnimatedBuilder(
-            animation: _ctrl,
-            builder: (_, __) {
-              final t = ((_ctrl.value + 0.35) % 1.0);
-              return Opacity(
-                opacity: (1 - t).clamp(0.0, 1.0),
-                child: Transform.scale(
-                  scale: 0.5 + t * 0.8,
-                  child: Container(
-                    width: 80,
-                    height: 80,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: AppColors.primary.withOpacity(0.45),
-                        width: 2,
-                      ),
-                    ),
-                  ),
-                ),
-              );
-            },
-          ),
-          // Center icon
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: AppColors.primary,
-              shape: BoxShape.circle,
-              boxShadow: [
-                BoxShadow(
-                  color: AppColors.primary.withOpacity(0.4),
-                  blurRadius: 12,
-                  offset: const Offset(0, 3),
-                ),
-              ],
-            ),
-            child: const Icon(Icons.electric_rickshaw,
-                color: AppColors.charcoal, size: 24),
-          ),
-        ],
       ),
     );
   }

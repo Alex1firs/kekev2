@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:keke_passenger/core/network/api_client.dart';
 import 'package:keke_passenger/core/network/notification_service.dart';
 import 'package:keke_passenger/core/network/socket_service.dart';
 import 'package:keke_passenger/core/services/analytics_service.dart';
@@ -13,6 +14,34 @@ import 'package:keke_passenger/features/passenger/domain/booking_state.dart';
 /// Onitsha — deliberately not Awka, mirroring the reported case.
 const _pickup = LatLng(6.1631, 6.7872);
 const _destination = LatLng(6.1584, 6.7837);
+
+/// Captures the nearby-Keke feed requests the controller makes, and lets a test
+/// decide what the server returns — including failing, to prove markers age out
+/// rather than lingering when the connection drops.
+class _FakeNearbyApi {
+  final List<String> requestedRideIds = [];
+  List<Map<String, dynamic>> markers = [];
+  int? eligibleCount;
+  bool shouldFail = false;
+
+  Map<String, dynamic> respond(String rideId) => {
+        'rideId': rideId,
+        'dispatchRound': 1,
+        'searchRadiusKm': 2.0,
+        'markers': markers,
+        'eligibleCount': eligibleCount ?? markers.length,
+        'approximateRadiusMeters': 120,
+        'refreshAfterMs': 8000,
+      };
+}
+
+Map<String, dynamic> _marker(String key) => {
+      'key': key,
+      'lat': 6.21,
+      'lng': 7.05,
+      'expiresAt':
+          DateTime.now().add(const Duration(seconds: 20)).millisecondsSinceEpoch,
+    };
 
 class _FakeMapRepository extends MapRepository {
   _FakeMapRepository() : super(Dio());
@@ -57,15 +86,52 @@ void main() {
   late BookingController controller;
   late List<(String, Map<String, Object?>)> events;
 
+  late _FakeNearbyApi nearbyApi;
+
+  /// ApiClient whose only live route is the nearby-Keke feed. Every other call
+  /// (active-ride recovery, browse polling) fails fast, which is what the
+  /// no-ApiClient variant used to achieve by passing null.
+  ApiClient _stubApiClient(_FakeNearbyApi api) {
+    final dio = Dio(BaseOptions(baseUrl: 'http://test.local/api/v1'));
+    dio.interceptors.add(InterceptorsWrapper(
+      onRequest: (options, handler) {
+        // No active ride to recover — the normal case for a fresh booking.
+        if (options.path == '/rides/active/passenger') {
+          return handler.resolve(Response(
+            requestOptions: options,
+            statusCode: 200,
+            data: const <String, dynamic>{},
+          ));
+        }
+        final match = RegExp(r'^/rides/(.+)/nearby-kekes$').firstMatch(options.path);
+        if (match != null && !api.shouldFail) {
+          api.requestedRideIds.add(match.group(1)!);
+          return handler.resolve(Response(
+            requestOptions: options,
+            statusCode: 200,
+            data: api.respond(match.group(1)!),
+          ));
+        }
+        if (match != null) api.requestedRideIds.add(match.group(1)!);
+        return handler.reject(
+          DioException(requestOptions: options, message: 'offline'),
+          true,
+        );
+      },
+    ));
+    return ApiClient(dio);
+  }
+
   /// Builds a controller sitting on the fare screen with a priced route, i.e.
   /// exactly where a passenger is when they tap "Request Keke".
   Future<void> arrangeAtFareScreen({bool connected = true}) async {
     socket = SocketService.offline(connected: connected);
     events = [];
+    nearbyApi = _FakeNearbyApi();
     controller = BookingController(
       _FakeMapRepository(),
       socket,
-      null, // no ApiClient — skips active-ride recovery and nearby polling
+      _stubApiClient(nearbyApi),
       _FakeNotificationService(),
       _SilentSoundService(),
       AnalyticsService(sink: (e, p) => events.add((e, p))),
@@ -445,6 +511,217 @@ void main() {
       expect(controller.state.rideId, isNot(firstRideId));
       expect(
           socket.sentEvents.where((e) => e.event == 'ride:request').length, 2);
+    });
+  });
+
+  group('nearby-Keke markers during searching', () {
+    /// The feed is fetched asynchronously; give it a turn to land.
+    Future<void> settleFeed() async {
+      for (var i = 0; i < 6; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+    }
+
+    test('markers are requested for the searching ride and rendered', () async {
+      await arrangeAtFareScreen();
+      nearbyApi.markers = [_marker('k1'), _marker('k2')];
+      nearbyApi.eligibleCount = 4;
+
+      controller.requestRide();
+      final rideId = controller.state.rideId!;
+      await settleFeed();
+
+      expect(nearbyApi.requestedRideIds, contains(rideId));
+      expect(controller.state.nearbyKekes.kekes.map((k) => k.key), ['k1', 'k2']);
+      // Honest count survives the display cap.
+      expect(controller.state.nearbyKekes.eligibleCount, 4);
+    });
+
+    test('an empty eligible pool produces no markers at all', () async {
+      await arrangeAtFareScreen();
+      nearbyApi.markers = [];
+
+      controller.requestRide();
+      await settleFeed();
+
+      expect(controller.state.nearbyKekes.kekes, isEmpty);
+      expect(controller.state.nearbyKekes.eligibleCount, 0);
+      expect(controller.state.nearbyKekes.shortLabel, 'Checking for Kekes nearby…');
+    });
+
+    test('a driver accepting clears every unrelated nearby marker', () async {
+      await arrangeAtFareScreen();
+      nearbyApi.markers = [_marker('k1'), _marker('k2')];
+      controller.requestRide();
+      await settleFeed();
+      expect(controller.state.nearbyKekes.kekes, isNotEmpty);
+
+      socket.injectEvent({
+        'event': 'ride:assigned',
+        'driverDetails': {'firstName': 'Chidi'},
+        'pickupCode': 'AB12',
+      });
+      await settleFeed();
+
+      expect(controller.state.step, BookingStep.confirmed);
+      expect(controller.state.nearbyKekes.kekes, isEmpty,
+          reason: 'only the assigned driver may remain on the map');
+      expect(controller.state.nearbyKekes.eligibleCount, 0);
+    });
+
+    test('no further marker requests are made after acceptance', () async {
+      await arrangeAtFareScreen();
+      nearbyApi.markers = [_marker('k1')];
+      controller.requestRide();
+      await settleFeed();
+
+      socket.injectEvent({
+        'event': 'ride:assigned',
+        'driverDetails': {'firstName': 'Chidi'},
+      });
+      await settleFeed();
+      final callsAtAcceptance = nearbyApi.requestedRideIds.length;
+
+      await Future<void>.delayed(
+          BookingController.searchingKekeRefresh + const Duration(milliseconds: 60));
+      expect(nearbyApi.requestedRideIds.length, callsAtAcceptance);
+    });
+
+    test('passenger cancellation removes the markers', () async {
+      await arrangeAtFareScreen();
+      nearbyApi.markers = [_marker('k1')];
+      controller.requestRide();
+      await settleFeed();
+      expect(controller.state.nearbyKekes.kekes, isNotEmpty);
+
+      socket.injectEvent({'event': 'ride:cancelled'});
+      await settleFeed();
+
+      expect(controller.state.nearbyKekes.kekes, isEmpty);
+    });
+
+    test('a no-driver outcome removes the markers', () async {
+      await arrangeAtFareScreen();
+      nearbyApi.markers = [_marker('k1')];
+      controller.requestRide();
+      await settleFeed();
+
+      socket.injectEvent({'event': 'ride:failed', 'code': 'NO_DRIVER_ACCEPTED'});
+      await settleFeed();
+
+      expect(controller.state.step, BookingStep.previewEstimate);
+      expect(controller.state.nearbyKekes.kekes, isEmpty,
+          reason: 'the search is over — the map must not still promise supply');
+    });
+
+    test('round two refreshes the marker set for the wider search area', () async {
+      await arrangeAtFareScreen();
+      nearbyApi.markers = [_marker('near')];
+      controller.requestRide();
+      await settleFeed();
+      final callsBefore = nearbyApi.requestedRideIds.length;
+
+      // Round two reaches further out and finds an additional Keke.
+      nearbyApi.markers = [_marker('near'), _marker('far')];
+      socket.injectEvent({
+        'event': 'ride:dispatch_round',
+        'rideId': controller.state.rideId,
+        'dispatchRound': 2,
+      });
+      await settleFeed();
+
+      expect(nearbyApi.requestedRideIds.length, greaterThan(callsBefore),
+          reason: 'the wider area must be fetched immediately, not one interval later');
+      expect(controller.state.nearbyKekes.kekes.map((k) => k.key), ['near', 'far']);
+      // The round-one driver who is still eligible was NOT torn down.
+      expect(controller.state.nearbyKekes.kekes.first.key, 'near');
+    });
+
+    test('a driver no longer eligible in round two disappears', () async {
+      await arrangeAtFareScreen();
+      nearbyApi.markers = [_marker('went_busy'), _marker('still_free')];
+      controller.requestRide();
+      await settleFeed();
+
+      nearbyApi.markers = [_marker('still_free')];
+      socket.injectEvent({
+        'event': 'ride:dispatch_round',
+        'rideId': controller.state.rideId,
+        'dispatchRound': 2,
+      });
+      await settleFeed();
+
+      expect(controller.state.nearbyKekes.kekes.map((k) => k.key), ['still_free']);
+    });
+
+    test('a realtime/network failure ages markers out instead of freezing them',
+        () async {
+      await arrangeAtFareScreen();
+      // Markers that expire almost immediately, as they would after a long
+      // disconnection.
+      nearbyApi.markers = [
+        {
+          'key': 'about_to_expire',
+          'lat': 6.21,
+          'lng': 7.05,
+          'expiresAt': DateTime.now()
+              .subtract(const Duration(seconds: 1))
+              .millisecondsSinceEpoch,
+        },
+      ];
+      controller.requestRide();
+      await settleFeed();
+
+      // Connection drops; the next refresh fails.
+      nearbyApi.shouldFail = true;
+      socket.injectEvent({'event': 'socket:reconnected'});
+      await settleFeed();
+
+      expect(controller.state.nearbyKekes.kekes, isEmpty,
+          reason: 'unverifiable supply must not stay on the map');
+    });
+
+    test('a failed refresh keeps still-valid markers rather than blanking', () async {
+      await arrangeAtFareScreen();
+      nearbyApi.markers = [_marker('valid')];
+      controller.requestRide();
+      await settleFeed();
+      expect(controller.state.nearbyKekes.kekes, hasLength(1));
+
+      nearbyApi.shouldFail = true;
+      socket.injectEvent({'event': 'socket:reconnected'});
+      await settleFeed();
+
+      // Within its expiry window, so it stays — no flicker on a transient blip.
+      expect(controller.state.nearbyKekes.kekes.map((k) => k.key), ['valid']);
+    });
+
+    test('a late response for a previous ride cannot repopulate a new one',
+        () async {
+      await arrangeAtFareScreen();
+      nearbyApi.markers = [_marker('old')];
+      controller.requestRide();
+      final firstRideId = controller.state.rideId;
+      await settleFeed();
+
+      socket.injectEvent({'event': 'ride:failed', 'code': 'NO_DRIVER_ACCEPTED'});
+      await settleFeed();
+      expect(controller.state.nearbyKekes.kekes, isEmpty);
+
+      controller.searchAgain();
+      expect(controller.state.rideId, isNot(firstRideId));
+      // Markers start empty for the new ride, not inherited from the old one.
+      expect(controller.state.nearbyKekes.kekes, isEmpty);
+    });
+
+    test('markers are never fetched outside a search', () async {
+      await arrangeAtFareScreen();
+      nearbyApi.markers = [_marker('k1')];
+
+      // Sitting on the fare screen, no request made yet.
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(nearbyApi.requestedRideIds, isEmpty);
+      expect(controller.state.nearbyKekes.kekes, isEmpty);
     });
   });
 

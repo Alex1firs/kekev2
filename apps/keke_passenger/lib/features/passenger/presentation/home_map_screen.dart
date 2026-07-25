@@ -10,6 +10,7 @@ import '../application/booking_controller.dart';
 import '../application/wallet_controller.dart';
 import '../domain/booking_state.dart';
 import 'widgets/booking_sheet.dart';
+import 'widgets/nearby_keke_layer.dart';
 import 'wallet_screen.dart';
 import 'trip_history_screen.dart';
 import 'profile_screen.dart';
@@ -26,20 +27,32 @@ class _HomeMapScreenState extends ConsumerState<HomeMapScreen> {
   GoogleMapController? _mapController;
   BitmapDescriptor? _kekeMarkerIcon;
   BitmapDescriptor? _driverMarkerIcon;
+  BitmapDescriptor? _nearbyKekeIcon;
   bool _hasFitToDriver = false;
 
   LatLng? _animatedDriverPos;
   Timer? _animTimer;
 
+  /// Owns the nearby-Keke marker animation so adds/moves/removals are smooth and
+  /// nothing ticks while the marker set is stable.
+  late final NearbyKekeLayer _nearbyLayer;
+
   @override
   void initState() {
     super.initState();
+    _nearbyLayer = NearbyKekeLayer()..addListener(_onNearbyLayerTick);
     _loadKekeMarkers();
+  }
+
+  void _onNearbyLayerTick() {
+    if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
     _animTimer?.cancel();
+    _nearbyLayer.removeListener(_onNearbyLayerTick);
+    _nearbyLayer.dispose();
     super.dispose();
   }
 
@@ -65,15 +78,51 @@ class _HomeMapScreenState extends ConsumerState<HomeMapScreen> {
 
   Future<void> _loadKekeMarkers() async {
     final results = await Future.wait([
-      _makeKekeAssetMarker(68),                      // nearby idle drivers
+      _makeKekeAssetMarker(68),                      // nearby idle drivers (browse)
       _makeKekeAssetMarker(84, highlight: true),     // assigned driver (yellow border)
+      _makeNearbyKekeDot(),                          // available Keke while searching
     ]);
     if (mounted) {
       setState(() {
         _kekeMarkerIcon = results[0];
         _driverMarkerIcon = results[1];
+        _nearbyKekeIcon = results[2];
       });
     }
+  }
+
+  /// Subtle branded Keke dot for pre-assignment nearby markers.
+  ///
+  /// Deliberately quieter and smaller than the assigned-driver card: it stands
+  /// for approximate, anonymous availability, so it must not read as a located
+  /// vehicle the passenger can identify or follow. Drawn as a vector so it stays
+  /// crisp and cheap (no image decode per marker).
+  Future<BitmapDescriptor> _makeNearbyKekeDot() async {
+    const size = 46.0;
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    const c = Offset(size / 2, size / 2);
+
+    // Soft halo — signals "approximate area", not a precise point.
+    canvas.drawCircle(c, size / 2, Paint()..color = const Color(0x1FF59E0B));
+    canvas.drawCircle(c, size * 0.32, Paint()..color = const Color(0x3DF59E0B));
+    // Solid amber core with a white ring for contrast on any basemap.
+    canvas.drawCircle(c, size * 0.21, Paint()..color = Colors.white);
+    canvas.drawCircle(c, size * 0.17, Paint()..color = AppColors.primary);
+    canvas.drawCircle(
+      c,
+      size * 0.21,
+      Paint()
+        ..color = const Color(0x33000000)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.0,
+    );
+
+    final img = await recorder
+        .endRecording()
+        .toImage(size.toInt(), size.toInt());
+    final bytes = await img.toByteData(format: ui.ImageByteFormat.png);
+    return BitmapDescriptor.bytes(bytes!.buffer.asUint8List());
   }
 
   Future<BitmapDescriptor> _makeKekeAssetMarker(double markerW, {bool highlight = false}) async {
@@ -181,6 +230,21 @@ class _HomeMapScreenState extends ConsumerState<HomeMapScreen> {
     ref.listen(bookingControllerProvider.select((s) => s.step), (prev, next) {
       if (next != BookingStep.confirmed) _hasFitToDriver = false;
     });
+
+    // Nearby-Keke markers: only ever fed while searching. Leaving `searching`
+    // for ANY reason (acceptance, cancellation, no-driver outcome) clears them
+    // immediately, so unrelated supply never lingers next to an assigned driver.
+    ref.listen(
+      bookingControllerProvider.select((s) => (s.step, s.nearbyKekes)),
+      (prev, next) {
+        final (step, feed) = next;
+        if (step == BookingStep.searching) {
+          _nearbyLayer.update(feed.kekes);
+        } else if (prev?.$1 == BookingStep.searching) {
+          _nearbyLayer.clear();
+        }
+      },
+    );
 
     ref.listen(bookingControllerProvider.select((s) => s.step), (prev, next) {
       if (prev != BookingStep.selectingPickup &&
@@ -368,6 +432,16 @@ class _HomeMapScreenState extends ConsumerState<HomeMapScreen> {
           zIndex: 1,
         ));
       }
+    }
+
+    // Available Kekes while dispatch is searching. Anonymous, approximated, and
+    // only ever what the server confirmed is genuinely dispatch-eligible — the
+    // layer draws nothing when there is no eligible supply.
+    if (state.step == BookingStep.searching) {
+      markers.addAll(_nearbyLayer.markers(
+        icon: _nearbyKekeIcon ??
+            BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange),
+      ));
     }
 
     if (state.assignedDriverLocation != null &&

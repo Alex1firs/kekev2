@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../core/theme/app_theme.dart';
 import '../../domain/booking_notice.dart';
+import '../../domain/nearby_keke.dart';
 import 'booking_notice_card.dart';
 
 /// The "looking for a driver" sheet panel.
@@ -19,6 +20,9 @@ class SearchingPanel extends StatelessWidget {
   /// A non-terminal notice to surface above the animation, if any.
   final BookingNotice? notice;
 
+  /// Nearby availability, so the reassurance does not depend on seeing the map.
+  final NearbyKekeFeed nearbyKekes;
+
   final VoidCallback onCancel;
 
   const SearchingPanel({
@@ -27,6 +31,7 @@ class SearchingPanel extends StatelessWidget {
     this.searchRound = 1,
     this.transientMessage,
     this.notice,
+    this.nearbyKekes = NearbyKekeFeed.empty,
   });
 
   @override
@@ -71,7 +76,15 @@ class SearchingPanel extends StatelessWidget {
             ),
           ),
         ),
-        const SizedBox(height: 28),
+        const SizedBox(height: 14),
+
+        // Accessibility-safe alternative to the map markers: the same truthful
+        // availability information as text, announced on change. A passenger
+        // using a screen reader, or one who simply cannot see the map behind the
+        // sheet, gets the identical signal.
+        _NearbyAvailability(feed: nearbyKekes),
+
+        const SizedBox(height: 20),
 
         Semantics(
           button: true,
@@ -91,6 +104,66 @@ class SearchingPanel extends StatelessWidget {
         ),
         const SizedBox(height: 4),
       ],
+    );
+  }
+}
+
+/// Text equivalent of the nearby-Keke map markers.
+///
+/// Reports the server's honest eligible count — which may exceed the number of
+/// markers drawn, since those are capped for privacy — and never claims a driver
+/// has been contacted about this ride.
+class _NearbyAvailability extends StatelessWidget {
+  final NearbyKekeFeed feed;
+  const _NearbyAvailability({required this.feed});
+
+  @override
+  Widget build(BuildContext context) {
+    final hasSupply = feed.eligibleCount > 0;
+
+    return Semantics(
+      container: true,
+      liveRegion: true,
+      label: feed.accessibilitySummary,
+      excludeSemantics: true,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: hasSupply ? AppColors.infoSurface : AppColors.paleGray,
+          borderRadius: BorderRadius.circular(11),
+          border: Border.all(
+            color: hasSupply ? AppColors.infoBorder : AppColors.border,
+          ),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              hasSupply ? Icons.electric_rickshaw : Icons.location_searching,
+              size: 15,
+              color: hasSupply ? AppColors.info : AppColors.midGray,
+            ),
+            const SizedBox(width: 7),
+            Flexible(
+              child: Text(
+                feed.shortLabel,
+                textAlign: TextAlign.center,
+                style: AppTextStyles.caption(
+                  color: hasSupply ? AppColors.darkGray : AppColors.midGray,
+                  weight: FontWeight.w600,
+                ),
+              ),
+            ),
+            if (hasSupply && feed.approximateRadiusMeters > 0) ...[
+              const SizedBox(width: 6),
+              Text(
+                '· approximate',
+                style: AppTextStyles.caption(color: AppColors.lightGray),
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 }

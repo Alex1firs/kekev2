@@ -696,6 +696,7 @@ class BookingSheet extends ConsumerWidget {
       searchRound: state.searchRound,
       transientMessage: state.errorMessage,
       notice: state.notice,
+      nearbyKekes: state.nearbyKekes,
       onCancel: () =>
           ref.read(bookingControllerProvider.notifier).cancelBooking(),
     );

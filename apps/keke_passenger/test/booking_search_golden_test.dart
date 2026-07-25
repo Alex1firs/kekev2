@@ -6,8 +6,10 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:keke_passenger/core/theme/app_theme.dart';
 import 'package:keke_passenger/features/passenger/domain/booking_notice.dart';
+import 'package:keke_passenger/features/passenger/domain/nearby_keke.dart';
 import 'package:keke_passenger/features/passenger/presentation/widgets/booking_notice_card.dart';
 import 'package:keke_passenger/features/passenger/presentation/widgets/searching_panel.dart';
 
@@ -20,6 +22,9 @@ import 'package:keke_passenger/features/passenger/presentation/widgets/searching
 /// [AppTextStyles.debugFontOverride] points the styles at it, so GoogleFonts is
 /// never asked and the snapshots show real glyphs rather than boxes.
 const _goldenFontFamily = 'GoldenTestFont';
+
+/// Fixed so snapshots are byte-stable across runs.
+final _fixedExpiry = DateTime.utc(2030, 1, 1);
 
 Future<void> _installTestFont() async {
   const candidates = [
@@ -80,6 +85,25 @@ void main() {
 
     await expectLater(find.byType(SearchingPanel),
         matchesGoldenFile('goldens/searching_round2.png'));
+  });
+
+  testWidgets('golden: searching with nearby Kekes available', (tester) async {
+    _sizeViewport(tester, 400);
+    await tester.pumpWidget(_frame(SearchingPanel(
+      onCancel: () {},
+      nearbyKekes: NearbyKekeFeed(
+        kekes: [
+          NearbyKeke(key: 'a', position: const LatLng(6.21, 7.05), expiresAt: _fixedExpiry),
+          NearbyKeke(key: 'b', position: const LatLng(6.22, 7.06), expiresAt: _fixedExpiry),
+        ],
+        eligibleCount: 3,
+        approximateRadiusMeters: 120,
+      ),
+    )));
+    await tester.pump(const Duration(milliseconds: 400));
+
+    await expectLater(find.byType(SearchingPanel),
+        matchesGoldenFile('goldens/searching_with_nearby.png'));
   });
 
   const cards = <String, RideOutcome>{

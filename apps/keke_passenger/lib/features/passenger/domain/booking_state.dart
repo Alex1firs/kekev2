@@ -1,6 +1,7 @@
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'booking_notice.dart';
 import 'chat_message.dart';
+import 'nearby_keke.dart';
 
 enum BookingStep {
   loading,
@@ -58,6 +59,10 @@ class BookingState {
   final List<ChatMessage> chatMessages;
   final List<LatLng> nearbyDrivers;
 
+  /// Anonymous, approximated nearby Kekes for the map while a request searches.
+  /// Empty means genuinely no eligible supply — it is never padded.
+  final NearbyKekeFeed nearbyKekes;
+
   // Live tracking fields — populated during confirmed/arrived states
   final String? pickupCode;
   final double? etaMinutes;
@@ -111,6 +116,7 @@ class BookingState {
     this.lastLocationUpdate,
     this.chatMessages = const [],
     this.nearbyDrivers = const [],
+    this.nearbyKekes = NearbyKekeFeed.empty,
     this.pickupCode,
     this.etaMinutes,
     this.distanceToPickupMeters,
@@ -157,6 +163,8 @@ class BookingState {
     DateTime? lastLocationUpdate,
     List<ChatMessage>? chatMessages,
     List<LatLng>? nearbyDrivers,
+    NearbyKekeFeed? nearbyKekes,
+    bool clearNearbyKekes = false,
     String? pickupCode,
     bool clearPickupCode = false,
     double? etaMinutes,
@@ -204,6 +212,9 @@ class BookingState {
       lastLocationUpdate: lastLocationUpdate ?? this.lastLocationUpdate,
       chatMessages: chatMessages ?? this.chatMessages,
       nearbyDrivers: nearbyDrivers ?? this.nearbyDrivers,
+      nearbyKekes: clearNearbyKekes
+          ? NearbyKekeFeed.empty
+          : (nearbyKekes ?? this.nearbyKekes),
       pickupCode: clearPickupCode ? null : (pickupCode ?? this.pickupCode),
       etaMinutes: clearEta ? null : (etaMinutes ?? this.etaMinutes),
       distanceToPickupMeters: clearEta ? null : (distanceToPickupMeters ?? this.distanceToPickupMeters),

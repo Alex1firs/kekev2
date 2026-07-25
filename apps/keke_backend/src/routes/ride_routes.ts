@@ -9,6 +9,7 @@ import { authMiddleware, AuthRequest } from "../middleware/auth_middleware";
 import { errBody, ErrorCode } from "../utils/errors";
 import { In } from "typeorm";
 import { SettingService } from "../services/setting_service";
+import { NearbyKekeFeedService } from "../services/nearby_keke_feed_service";
 
 
 const router = Router();
@@ -110,6 +111,57 @@ router.get("/history/passenger", authMiddleware, async (req: AuthRequest, res: R
     } catch (err: any) {
         console.error('[RIDES] Passenger history error:', err?.message);
         return res.status(500).json(errBody(ErrorCode.INTERNAL_ERROR, "We couldn't load your trip history. Please try again."));
+    }
+});
+
+/**
+ * GET /api/v1/rides/:rideId/nearby-kekes
+ *
+ * Read-only, privacy-safe map feed of genuinely dispatch-eligible Kekes near a
+ * SEARCHING ride, for passenger reassurance while dispatch works.
+ *
+ * Returns anonymous, approximated marker positions and an honest count. No
+ * driver id, name, phone, plate, rating, photo, heading or history — and no
+ * indication of whether any particular driver was offered the ride. The search
+ * area comes from the server's own dispatch context, so a client cannot widen it.
+ *
+ * Only the ride's passenger may read it, and only while the ride is searching:
+ * once a driver accepts, the assigned-driver tracking flow takes over and this
+ * returns 409 so the app stops showing unrelated supply.
+ */
+router.get("/:rideId/nearby-kekes", authMiddleware, async (req: AuthRequest, res: Response) => {
+    try {
+        const userId = req.user!.userId;
+        const { rideId } = req.params;
+
+        const ride = await AppDataSource.getRepository(Ride).findOne({
+            where: { rideId: rideId as string },
+        });
+
+        if (!ride) {
+            return res.status(404).json(errBody(ErrorCode.RIDE_NOT_FOUND, "Ride not found."));
+        }
+        // Passenger only: a driver has no reason to enumerate nearby competitors.
+        if (ride.passengerId !== userId) {
+            return res.status(403).json(errBody(ErrorCode.FORBIDDEN, "Access denied."));
+        }
+        if ((ride.status as unknown as string) !== "searching") {
+            return res.status(409).json(
+                errBody(ErrorCode.VALIDATION_ERROR, "Ride is not searching."),
+            );
+        }
+
+        const feed = await NearbyKekeFeedService.forSearchingRide({
+            rideId: ride.rideId,
+            pickupLat: Number(ride.pickupLat),
+            pickupLng: Number(ride.pickupLng),
+            paymentMode: ride.paymentMode as unknown as string,
+        });
+
+        return res.json(feed);
+    } catch (err: any) {
+        console.error('[RIDE] nearby-kekes error:', err?.message);
+        return res.status(500).json(errBody(ErrorCode.INTERNAL_ERROR, "Failed to load nearby Kekes."));
     }
 });
 

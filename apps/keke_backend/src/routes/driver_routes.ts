@@ -12,6 +12,7 @@ import path from "path";
 import fs from "fs";
 import sharp from "sharp";
 import { DispatchService } from "../services/dispatch_service";
+import { NearbyKekeFeedService } from "../services/nearby_keke_feed_service";
 import { SmileIdService } from "../services/smile_id_service";
 
 const router = Router();
@@ -313,7 +314,16 @@ router.get("/availability/check", authMiddleware, async (req: AuthRequest, res: 
 
 /**
  * GET /api/v1/drivers/nearby
- * Get nearby active drivers with their coordinates.
+ * Nearby available Kekes for the browse/idle map, before a ride exists.
+ *
+ * Goes through the same eligibility and privacy pipeline as the searching-ride
+ * feed: previously this returned EXACT coordinates for every heartbeat-fresh
+ * driver, including suspended drivers, drivers mid-ride and drivers already
+ * reserved for someone else's request — i.e. supply the passenger could not
+ * actually get, at doorstep precision.
+ *
+ * `drivers` keeps its original `{lat,lng}` shape so existing app builds continue
+ * to work; positions are now approximated and ineligible drivers are gone.
  */
 router.get("/nearby", authMiddleware, async (req: AuthRequest, res: Response) => {
     try {
@@ -325,15 +335,22 @@ router.get("/nearby", authMiddleware, async (req: AuthRequest, res: Response) =>
             return res.status(400).json(errBody(ErrorCode.VALIDATION_ERROR, "Valid lat and lng query parameters are required."));
         }
 
-        const drivers = await DispatchService.getNearbyActiveDriversWithLocations(lat, lng, radius);
-        
-        // Return only coordinates to the client for privacy
-        const locations = drivers.map(d => ({
-            lat: d.lat,
-            lng: d.lng
-        }));
+        const feed = await NearbyKekeFeedService.forBrowsing({
+            viewerId: req.user!.userId,
+            lat,
+            lng,
+            radiusKm: radius,
+        });
 
-        res.json({ drivers: locations });
+        res.json({
+            // Legacy shape, unchanged for older clients.
+            drivers: feed.markers.map(m => ({ lat: m.lat, lng: m.lng })),
+            // Newer clients use these for stable, non-flickering markers.
+            markers: feed.markers,
+            eligibleCount: feed.eligibleCount,
+            approximateRadiusMeters: feed.approximateRadiusMeters,
+            refreshAfterMs: feed.refreshAfterMs,
+        });
     } catch (err: any) {
         console.error('[DRIVER] Fetch nearby error:', err?.message);
         res.status(500).json(errBody(ErrorCode.INTERNAL_ERROR, "Failed to fetch nearby drivers."));

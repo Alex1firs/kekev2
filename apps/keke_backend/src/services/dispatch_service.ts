@@ -251,6 +251,58 @@ export class DispatchService {
     return driverIds.filter((_, i) => vals[i] == null || vals[i] === forRideId);
   }
 
+  // ===================== Searching-ride context (read-only mirror) ===========
+  // The orchestrator publishes which round and radius tier a searching ride is
+  // currently on. The passenger's nearby-Keke map feed reads it so its markers
+  // reflect the SAME search area dispatch is actually working, instead of a
+  // second, independently-chosen radius.
+  //
+  // Server-side state on purpose: a client cannot widen its own search area by
+  // asking for a bigger radius. Writing it changes no dispatch behaviour.
+  private static readonly SEARCH_CONTEXT_PREFIX = 'ride:search_context:';
+  private static readonly SEARCH_CONTEXT_TTL_SECONDS = 180;
+
+  static searchContextKey(rideId: string): string {
+    return `${this.SEARCH_CONTEXT_PREFIX}${rideId}`;
+  }
+
+  static async publishSearchContext(ctx: {
+    rideId: string;
+    dispatchRound: number;
+    radiusKm: number;
+    lat: number;
+    lng: number;
+    updatedAt: number;
+  }): Promise<void> {
+    await redis.set(
+      this.searchContextKey(ctx.rideId),
+      JSON.stringify(ctx),
+      'EX',
+      this.SEARCH_CONTEXT_TTL_SECONDS,
+    );
+  }
+
+  static async getSearchContext(rideId: string): Promise<{
+    rideId: string;
+    dispatchRound: number;
+    radiusKm: number;
+    lat: number;
+    lng: number;
+    updatedAt: number;
+  } | null> {
+    const raw = await redis.get(this.searchContextKey(rideId));
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+
+  static async clearSearchContext(rideId: string): Promise<void> {
+    await redis.del(this.searchContextKey(rideId));
+  }
+
   // ===================== Per-passenger active-ride guard =====================
   // Prevents ONE passenger from opening two concurrent rides. Redis NX makes the
   // check-and-set atomic even for two requests that arrive at the same instant;

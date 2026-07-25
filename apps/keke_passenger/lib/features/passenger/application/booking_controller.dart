@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import '../domain/booking_notice.dart';
 import '../domain/booking_state.dart';
+import '../domain/nearby_keke.dart';
 import '../data/map_repository.dart';
 import '../../../core/network/socket_service.dart';
 import '../../../core/network/socket_provider.dart';
@@ -37,6 +38,7 @@ class BookingController extends StateNotifier<BookingState> {
   Timer? _nearbyPollingTimer;
   Timer? _errorClearTimer;
   Timer? _noticeClearTimer;
+  Timer? _searchingKekeTimer;
   StreamSubscription? _socketSubscription;
   StreamSubscription? _notificationSubscription;
   final NotificationService _notificationService;
@@ -116,19 +118,30 @@ class BookingController extends StateNotifier<BookingState> {
             'explicitRejectCount': (data['explicitRejectCount'] as num?)?.toInt(),
           });
           _startWatchdog();
+          // Round two searches a wider area: refresh markers now rather than
+          // waiting out the interval, so the map matches the new search area.
+          // Existing markers are kept until the response lands, so drivers who
+          // are still eligible do not blink out and back in.
+          _fetchSearchingKekes();
           break;
         case 'socket:reconnected':
           print('[PASSENGER_SYNC] Socket reconnected. Triggering redundant healing...');
           syncStatus();
+          // Markers may have aged out while offline — rebuild from live truth.
+          if (state.step == BookingStep.searching) _fetchSearchingKekes();
           break;
         case 'ride:assigned':
           _searchTimeoutTimer?.cancel();
+          // A driver is ours: every unrelated nearby marker goes at once, and the
+          // existing assigned-driver tracking flow takes over the map.
+          _stopSearchingKekeFeed(clearMarkers: false);
           state = state.copyWith(
             step: BookingStep.confirmed,
             assignedDriver: data['driverDetails'],
             pickupCode: data['pickupCode']?.toString(),
             clearErrorMessage: true,
             clearNotice: true,
+            clearNearbyKekes: true,
           );
           _stopWatchdog();
           _soundService.playAlert();
@@ -262,6 +275,9 @@ class BookingController extends StateNotifier<BookingState> {
   }
 
   void _resetBookingState({BookingNotice? notice}) {
+    // Cancellation / completion: the searching marker feed stops here too.
+    // Rebuilding BookingState below drops nearbyKekes back to empty.
+    _stopSearchingKekeFeed(clearMarkers: false);
     // Construct cleanly so all receipt/ride fields truly reset to null defaults.
     state = BookingState(
       step: BookingStep.selectingDestination,
@@ -317,6 +333,9 @@ class BookingController extends StateNotifier<BookingState> {
   Future<void> _initializeMap() async {
     final defaultLocation = const LatLng(6.1264, 6.7876); // Awka fallback
     final userLocation = await _mapRepo.getCurrentLocation();
+    // The provider can be disposed while location or recovery is still in
+    // flight (fast app exit, auth change). Writing state afterwards throws.
+    if (!mounted) return;
     final center = userLocation ?? defaultLocation;
 
     state = state.copyWith(
@@ -330,6 +349,7 @@ class BookingController extends StateNotifier<BookingState> {
     if (_apiClient != null && passengerId != 'unknown') {
       try {
         final response = await _apiClient!.dio.get('/rides/active/passenger');
+        if (!mounted) return;
         final data = response.data;
         if (data != null && data['rideId'] != null) {
           final rideId = data['rideId'];
@@ -360,10 +380,17 @@ class BookingController extends StateNotifier<BookingState> {
           if (state.pickupLocation != null && state.destinationLocation != null) {
             _calculateFare();
           }
+          // A recovered still-searching ride gets its marker feed back too
+          // (cold start from a notification, or app relaunch mid-search).
+          if (restoredStep == BookingStep.searching) {
+            _startWatchdog();
+            _startSearchingKekeFeed();
+          }
           return; // Skip default search if recovered
         }
       } catch (e) {
         print('Active ride recovery failed: $e');
+        if (!mounted) return;
         state = state.copyWith(
           notice: BookingNotice.of(RideOutcome.serverFailed,
               dispatchResult: 'active_ride_recovery_failed'),
@@ -371,6 +398,7 @@ class BookingController extends StateNotifier<BookingState> {
       }
     }
 
+    if (!mounted) return;
     _triggerReverseGeocode(center, isPickup: true);
     
     // Fetch drivers now that we have a location
@@ -580,6 +608,7 @@ class BookingController extends StateNotifier<BookingState> {
       searchRound: state.searchRound,
     );
     _startWatchdog();
+    _startSearchingKekeFeed();
   }
 
   /// The request never left the device (no socket, no data, bad coordinates).
@@ -625,20 +654,89 @@ class BookingController extends StateNotifier<BookingState> {
     }
   }
 
+  /// Controlled refresh cadence for nearby-Keke markers while a ride is
+  /// searching. Deliberately NOT per-heartbeat: before a driver has accepted,
+  /// the passenger gets a periodic approximate picture of supply, never
+  /// second-by-second tracking of anyone.
+  static const Duration searchingKekeRefresh = Duration(seconds: 8);
+
+  /// Pre-request browse cadence (unchanged).
+  static const Duration _browseNearbyRefresh = Duration(seconds: 10);
+
+  static const _browseSteps = {
+    BookingStep.selectingPickup,
+    BookingStep.selectingDestination,
+    BookingStep.previewEstimate,
+    BookingStep.idle,
+  };
+
   void _startNearbyPolling() {
     _nearbyPollingTimer?.cancel();
-    
+
     // Fetch immediately on start
     _fetchNearbyDrivers();
-    
-    _nearbyPollingTimer = Timer.periodic(const Duration(seconds: 10), (_) {
-      if (state.step == BookingStep.selectingPickup || 
-          state.step == BookingStep.selectingDestination || 
-          state.step == BookingStep.previewEstimate || 
-          state.step == BookingStep.idle) {
+
+    _nearbyPollingTimer = Timer.periodic(_browseNearbyRefresh, (_) {
+      if (_browseSteps.contains(state.step)) {
         _fetchNearbyDrivers();
       }
     });
+  }
+
+  // ── Nearby-Keke markers during searching ────────────────────────────────
+
+  /// Begin the searching-state marker feed. Read-only: it asks the server which
+  /// Kekes are genuinely dispatch-eligible for THIS ride and draws nothing else.
+  void _startSearchingKekeFeed() {
+    _searchingKekeTimer?.cancel();
+    _fetchSearchingKekes();
+    _searchingKekeTimer = Timer.periodic(searchingKekeRefresh, (_) {
+      if (state.step != BookingStep.searching) {
+        _stopSearchingKekeFeed();
+        return;
+      }
+      _fetchSearchingKekes();
+    });
+  }
+
+  /// Stop the feed and clear the markers. Called on acceptance, cancellation,
+  /// failure and disposal — a marker must never outlive the search it described.
+  void _stopSearchingKekeFeed({bool clearMarkers = true}) {
+    _searchingKekeTimer?.cancel();
+    _searchingKekeTimer = null;
+    if (clearMarkers && mounted && !state.nearbyKekes.isEmpty) {
+      state = state.copyWith(clearNearbyKekes: true);
+    }
+  }
+
+  Future<void> _fetchSearchingKekes() async {
+    final rideId = state.rideId;
+    if (_apiClient == null || rideId == null) return;
+    if (state.step != BookingStep.searching) return;
+
+    try {
+      final response = await _apiClient!.dio.get('/rides/$rideId/nearby-kekes');
+      if (!mounted || state.step != BookingStep.searching) return;
+      // A response for a previous ride must never repopulate this one's map.
+      if (state.rideId != rideId) return;
+
+      final data = response.data;
+      if (data is! Map) return;
+      final feed = NearbyKekeFeed.fromJson(
+        Map<String, dynamic>.from(data),
+        now: DateTime.now(),
+      );
+      state = state.copyWith(nearbyKekes: feed);
+    } catch (e) {
+      // Offline or the ride is no longer searching. Do NOT keep drawing supply
+      // we can't confirm: age the existing markers out by their expiry instead.
+      print('[NEARBY_KEKE] refresh failed: $e');
+      if (!mounted) return;
+      final pruned = state.nearbyKekes.prunedAt(DateTime.now());
+      if (pruned != state.nearbyKekes) {
+        state = state.copyWith(nearbyKekes: pruned);
+      }
+    }
   }
 
   Future<void> _fetchNearbyDrivers() async {
@@ -826,10 +924,14 @@ class BookingController extends StateNotifier<BookingState> {
     _reportOutcome(outcome,
         dispatchResult: dispatchResult, dispatchEvidence: dispatchEvidence);
     _noticeClearTimer?.cancel();
+    // The search is over — stop the marker feed and drop its markers, so the
+    // map never shows supply for a ride that is no longer being dispatched.
+    _stopSearchingKekeFeed(clearMarkers: false);
     state = state.copyWith(
       step: BookingStep.previewEstimate,
       clearRideId: true,
       clearErrorMessage: true,
+      clearNearbyKekes: true,
       notice: BookingNotice.of(outcome, dispatchResult: dispatchResult),
     );
   }
@@ -955,6 +1057,7 @@ class BookingController extends StateNotifier<BookingState> {
     _nearbyPollingTimer?.cancel();
     _errorClearTimer?.cancel();
     _noticeClearTimer?.cancel();
+    _searchingKekeTimer?.cancel();
     _socketSubscription?.cancel();
     _notificationSubscription?.cancel();
     super.dispose();

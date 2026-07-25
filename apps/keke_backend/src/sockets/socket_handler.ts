@@ -11,6 +11,7 @@ import {
     EligibilityResult,
 } from '../services/dispatch_orchestrator';
 import { loadDispatchConfig } from '../config/dispatch_config';
+import { DriverEligibilityService } from '../services/driver_eligibility_service';
 import { User, UserRole } from '../models/User';
 import { AppDataSource } from '../config/data_source';
 import { Ride } from '../models/Ride';
@@ -989,65 +990,15 @@ export class SocketHandler {
 
             isDriverAvailable: (driverId) => DispatchService.isDriverAvailable(driverId),
 
-            filterEligible: async (driverIds: string[]): Promise<EligibilityResult> => {
-                const rejected: Array<{ driverId: string; reason: string }> = [];
-                let eligible = [...driverIds];
-
-                // Drivers who already said no to THIS ride (in-memory exclusions,
-                // authoritative across reconnects within the ride's lifetime).
-                const exclusions = this.rideExclusions.get(rideId);
-                if (exclusions && exclusions.size > 0) {
-                    eligible = eligible.filter((id) => {
-                        if (!exclusions.has(id)) return true;
-                        rejected.push({ driverId: id, reason: 'explicit_rejector' });
-                        return false;
-                    });
-                }
-
-                // Suspended / rejected drivers must never receive requests.
-                if (eligible.length > 0) {
-                    const profiles = await AppDataSource.getRepository(DriverProfile).findBy(
-                        eligible.map((id) => ({ userId: id })),
-                    );
-                    const blocked = new Set(
-                        profiles.filter((p) => p.status === 'suspended' || p.status === 'rejected').map((p) => p.userId),
-                    );
-                    if (blocked.size > 0) {
-                        eligible = eligible.filter((id) => {
-                            if (!blocked.has(id)) return true;
-                            rejected.push({ driverId: id, reason: 'driver_suspended_or_rejected' });
-                            return false;
-                        });
-                    }
-                }
-
-                // Cash rides: strip debt-blocked drivers.
-                if (isCash && eligible.length > 0) {
-                    const cashOk = new Set(await WalletService.filterCashEligibleDrivers(eligible));
-                    eligible = eligible.filter((id) => {
-                        if (cashOk.has(id)) return true;
-                        rejected.push({ driverId: id, reason: 'cash_debt_blocked' });
-                        return false;
-                    });
-                }
-
-                // A driver already on an active ride must never be double-assigned.
-                if (eligible.length > 0) {
-                    const busy = await AppDataSource.getRepository(Ride).find({
-                        where: { driverId: In(eligible), status: In(['accepted', 'arrived', 'in_progress'] as any[]) },
-                    });
-                    if (busy.length > 0) {
-                        const busyIds = new Set(busy.map((r) => r.driverId));
-                        eligible = eligible.filter((id) => {
-                            if (!busyIds.has(id)) return true;
-                            rejected.push({ driverId: id, reason: 'already_on_active_ride' });
-                            return false;
-                        });
-                    }
-                }
-
-                return { eligible, rejected };
-            },
+            // Shared with the passenger's nearby-Keke map feed (see
+            // DriverEligibilityService) so a marker can never represent supply
+            // dispatch would refuse. Dispatch additionally passes this ride's
+            // explicit rejectors; the map feed deliberately does not.
+            filterEligible: (driverIds: string[]): Promise<EligibilityResult> =>
+                DriverEligibilityService.filter(driverIds, {
+                    isCash,
+                    excluded: this.rideExclusions.get(rideId),
+                }),
 
             getRideStatus: async (id: string) => {
                 const ride = await AppDataSource.getRepository(Ride).findOne({ where: { rideId: id } });

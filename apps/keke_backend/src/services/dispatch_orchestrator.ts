@@ -305,6 +305,21 @@ export class DispatchOrchestrator {
         dispatchRound: round,
       });
 
+      // Mirror the live search area for the passenger's read-only nearby-Keke
+      // feed. Purely informational — nothing in dispatch reads it back.
+      try {
+        await DispatchService.publishSearchContext({
+          rideId: run.rideId,
+          dispatchRound: round,
+          radiusKm,
+          lat: pickup.lat,
+          lng: pickup.lng,
+          updatedAt: this.ports.now(),
+        });
+      } catch {
+        /* the map feed falls back to the ride's own pickup + first tier */
+      }
+
       const offered = await this.dispatchTier(run, round, radiusKm, pickup);
 
       if (run.isAborted) return run.stopReason ?? 'aborted';
@@ -514,6 +529,12 @@ export class DispatchOrchestrator {
 
   private finish(run: DispatchRun, stopReason: DispatchStopReason): DispatchResult {
     run.evidence.endRound(this.ports.now());
+
+    // The ride is no longer searching: drop the mirrored search area so no
+    // marker feed can keep serving supply for a finished search.
+    void DispatchService.clearSearchContext(run.rideId).catch(() => {
+      /* TTL is the backstop */
+    });
 
     if (stopReason === 'lifetime_exceeded') run.evidence.markLifetimeExpired();
 

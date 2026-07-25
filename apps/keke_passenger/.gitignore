@@ -43,3 +43,6 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Golden-test failure diffs (regenerated on every failing run)
+/test/failures/

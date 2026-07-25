@@ -33,5 +33,13 @@ String? networkErrorMessage(DioException e) {
       return e.error is SocketException
           ? 'No internet connection. Turn on mobile data or Wi-Fi and try again.'
           : null;
+    default:
+      // Dio adds DioExceptionType members in minor releases — 5.11.0 added
+      // transformTimeout. pubspec.lock is gitignored, so CI resolves a newer
+      // dio than any developer machine and this switch silently stops being
+      // exhaustive, which is a COMPILE error, not a warning. That is exactly
+      // what broke the iOS driver build. Falling through to null keeps the
+      // caller's own message and keeps the build green on any dio 5.x.
+      return null;
   }
 }

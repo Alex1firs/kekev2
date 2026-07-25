@@ -85,6 +85,54 @@ export class DispatchService {
   }
 
   /**
+   * Nearest-first available drivers WITH their distance from the pickup point.
+   *
+   * Same heartbeat gate as findNearbyDrivers; the distance is carried through so
+   * dispatch can log how far each candidate actually was.
+   */
+  static async findNearbyDriversWithDistance(
+    lat: number,
+    lng: number,
+    radiusKm: number,
+    limit: number = 10,
+  ): Promise<Array<{ driverId: string; distanceKm: number | null }>> {
+    let nearby: Array<[string, string]> = [];
+    try {
+      nearby = (await redis.georadius(
+        this.DRIVER_GEO_KEY,
+        lng,
+        lat,
+        radiusKm,
+        'km',
+        'WITHDIST',
+        'ASC',
+        'COUNT',
+        limit * 2,
+      )) as unknown as Array<[string, string]>;
+    } catch {
+      // WITHDIST unsupported (some Redis-compatible backends) — fall back to the
+      // plain query and report unknown distances rather than failing dispatch.
+      const ids = await this.findNearbyDrivers(lat, lng, radiusKm, limit);
+      return ids.map((driverId) => ({ driverId, distanceKm: null }));
+    }
+
+    if (!nearby || nearby.length === 0) return [];
+
+    const ids = nearby.map((entry) => (Array.isArray(entry) ? entry[0] : (entry as unknown as string)));
+    const availability = await redis.mget(...ids.map((id) => `${this.DRIVER_AVAILABILITY_PREFIX}${id}`));
+
+    const out: Array<{ driverId: string; distanceKm: number | null }> = [];
+    for (let i = 0; i < ids.length; i++) {
+      if (availability[i] !== 'true') continue;
+      const entry = nearby[i];
+      const raw = Array.isArray(entry) ? parseFloat(entry[1]) : NaN;
+      out.push({ driverId: ids[i], distanceKm: Number.isFinite(raw) ? raw : null });
+      if (out.length >= limit) break;
+    }
+    return out;
+  }
+
+  /**
    * Find available drivers within radius, returning their locations
    */
   static async getNearbyActiveDriversWithLocations(lat: number, lng: number, radiusKm: number, limit: number = 20): Promise<Array<{driverId: string, lat: number, lng: number}>> {

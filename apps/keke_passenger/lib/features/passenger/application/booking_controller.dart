@@ -17,6 +17,11 @@ import '../domain/chat_message.dart';
 import '../../../core/services/sound_service.dart';
 import '../../../core/services/analytics_service.dart';
 
+/// How long the passenger app waits for ANY server verdict on a search before
+/// giving up on its own. Must exceed the server's total search lifetime across
+/// all dispatch rounds; see the note in [BookingController._startWatchdog].
+const Duration _searchWatchdogTimeout = Duration(seconds: 150);
+
 class BookingController extends StateNotifier<BookingState> {
   final MapRepository _mapRepo;
   SocketService? _socketService;
@@ -88,6 +93,28 @@ class BookingController extends StateNotifier<BookingState> {
       switch (event) {
         case 'ride:searching':
           state = state.copyWith(step: BookingStep.searching);
+          _startWatchdog();
+          break;
+        case 'ride:dispatch_round':
+          // The server started another automatic dispatch round on the SAME ride.
+          // Nothing is re-sent from here — this only advances the copy the
+          // passenger is reading, and re-arms the watchdog for the new round.
+          final round = (data['dispatchRound'] as num?)?.toInt();
+          if (round == null || round <= state.searchRound) break;
+          print('[PASSENGER_SYNC] Dispatch round $round started for ${state.rideId}');
+          state = state.copyWith(
+            step: BookingStep.searching,
+            searchRound: round,
+            clearErrorMessage: true,
+            clearNotice: true,
+          );
+          _analytics.log('passenger_dispatch_round', {
+            'rideId': state.rideId,
+            'dispatchRound': round,
+            'totalRounds': (data['totalRounds'] as num?)?.toInt(),
+            'offersSentCount': (data['offersSentCount'] as num?)?.toInt(),
+            'explicitRejectCount': (data['explicitRejectCount'] as num?)?.toInt(),
+          });
           _startWatchdog();
           break;
         case 'socket:reconnected':
@@ -172,6 +199,7 @@ class BookingController extends StateNotifier<BookingState> {
           _endSearchWith(
             failOutcome,
             dispatchResult: data['dispatchResult']?.toString() ?? 'unspecified',
+            dispatchEvidence: _dispatchEvidenceOf(data),
           );
           break;
         case 'ride:error':
@@ -658,8 +686,13 @@ class BookingController extends StateNotifier<BookingState> {
         _stopWatchdog();
       }
     });
-    // Auto-rollback if no driver found within 90 seconds
-    _searchTimeoutTimer = Timer(const Duration(seconds: 90), () {
+    // Client-side backstop only. The server owns the real search budget
+    // (DISPATCH_MAX_SEARCH_LIFETIME_MS, 110s across both dispatch rounds) and
+    // reports the true outcome via ride:failed. This timer must therefore sit
+    // comfortably BEYOND that, or it would cut a legitimate round two short and
+    // report an expiry the server never decided. It re-arms on every round
+    // transition, so it only fires if the server goes silent entirely.
+    _searchTimeoutTimer = Timer(_searchWatchdogTimeout, () {
       if (mounted && state.step == BookingStep.searching) {
         print('[WATCHDOG] Search timed out — rolling back to estimate.');
         _stopWatchdog();
@@ -746,19 +779,52 @@ class BookingController extends StateNotifier<BookingState> {
   // passenger-facing copy, the visual tone and the analytics event all come
   // from one place and can never drift apart.
 
-  void _reportOutcome(RideOutcome outcome, {String? dispatchResult}) {
+  /// Pulls the server's structured dispatch counts out of a ride:failed payload.
+  /// All fields are optional — an older server sends none of them.
+  Map<String, Object?> _dispatchEvidenceOf(Map<String, dynamic> data) {
+    const keys = [
+      'dispatchRound',
+      'roundsRun',
+      'eligibleDriverCount',
+      'reservedDriverCount',
+      'offersSentCount',
+      'explicitRejectCount',
+      'expiredOfferCount',
+      'deliveryFailureCount',
+      'acknowledgedCount',
+    ];
+    final out = <String, Object?>{};
+    for (final key in keys) {
+      final value = (data[key] as num?)?.toInt();
+      if (value != null) out[key] = value;
+    }
+    return out;
+  }
+
+  void _reportOutcome(
+    RideOutcome outcome, {
+    String? dispatchResult,
+    Map<String, Object?> dispatchEvidence = const {},
+  }) {
     _analytics.logRideOutcome(
       rideId: state.rideId,
       outcome: outcome,
       dispatchResult: dispatchResult,
       searchAttempts: state.searchAttempts,
+      searchRound: state.searchRound,
+      dispatchEvidence: dispatchEvidence,
     );
   }
 
   /// Terminal end of a search: log it, drop back to the fare screen and show
   /// the matching notice. Does NOT re-dispatch — retry is the passenger's call.
-  void _endSearchWith(RideOutcome outcome, {String? dispatchResult}) {
-    _reportOutcome(outcome, dispatchResult: dispatchResult);
+  void _endSearchWith(
+    RideOutcome outcome, {
+    String? dispatchResult,
+    Map<String, Object?> dispatchEvidence = const {},
+  }) {
+    _reportOutcome(outcome,
+        dispatchResult: dispatchResult, dispatchEvidence: dispatchEvidence);
     _noticeClearTimer?.cancel();
     state = state.copyWith(
       step: BookingStep.previewEstimate,

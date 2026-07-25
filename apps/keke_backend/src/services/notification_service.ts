@@ -7,6 +7,24 @@ import { redis } from '../config/redis';
 import path from 'path';
 import fs from 'fs';
 
+/**
+ * What actually happened to a push. Dispatch needs this to tell a delivered
+ * offer apart from one that silently went nowhere — the old void return made
+ * every send look equally successful.
+ */
+export interface PushResult {
+    /** A send was attempted (there was at least one active token and Firebase was up). */
+    attempted: boolean;
+    /** Active device tokens found for the user. */
+    tokenCount: number;
+    /** Tokens Firebase accepted. */
+    successCount: number;
+    /** Tokens Firebase rejected. */
+    failureCount: number;
+    /** Present when nothing was attempted, or the multicast threw. */
+    reason?: 'no_active_tokens' | 'push_disabled' | 'deduplicated' | 'send_failed';
+}
+
 export class NotificationService {
     private static initialized = false;
 
@@ -41,9 +59,12 @@ export class NotificationService {
     }
 
     /**
-     * Send push notification to all active devices of a user
+     * Send a push to all active devices of a user.
+     *
+     * Returns a [[PushResult]] describing what happened. Existing callers ignore
+     * the return value and are unaffected; dispatch uses it as delivery evidence.
      */
-    static async sendToUser(userId: string, role: UserRole, title: string, body: string, data: any = {}) {
+    static async sendToUser(userId: string, role: UserRole, title: string, body: string, data: any = {}): Promise<PushResult> {
         if (!this.initialized) this.initialize();
 
         const tokenRepo = AppDataSource.getRepository(DeviceToken);
@@ -53,7 +74,7 @@ export class NotificationService {
 
         if (activeTokens.length === 0) {
             console.log(`[NOTIFICATION_LOG] No active tokens for user ${userId} (${role})`);
-            return;
+            return { attempted: false, tokenCount: 0, successCount: 0, failureCount: 0, reason: 'no_active_tokens' };
         }
 
         const tokens = activeTokens.map(t => t.token);
@@ -64,13 +85,17 @@ export class NotificationService {
         if (rideId && type) {
             const dedupKey = `notif:${userId}:${type}:${rideId}`;
             const already = await redis.get(dedupKey);
-            if (already) return;
+            if (already) {
+                return { attempted: false, tokenCount: tokens.length, successCount: 0, failureCount: 0, reason: 'deduplicated' };
+            }
             await redis.setex(dedupKey, 2, '1');
         }
 
         console.log(`[NOTIFICATION_SEND] To ${userId} | Title: ${title} | Body: ${body} | Tokens: ${tokens.length}`);
 
-        if (!this.initialized) return;
+        if (!this.initialized) {
+            return { attempted: false, tokenCount: tokens.length, successCount: 0, failureCount: 0, reason: 'push_disabled' };
+        }
 
         const customSoundTypes = ['NEW_REQUEST', 'RIDE_ASSIGNED', 'RIDE_ARRIVED'];
         const sound = customSoundTypes.includes(type) ? 'keke_ring.wav' : 'default';
@@ -136,8 +161,22 @@ export class NotificationService {
                     console.log(`[NOTIFICATION_CLEANUP] Deactivated ${invalidTokens.length} stale tokens.`);
                 }
             }
+
+            return {
+                attempted: true,
+                tokenCount: tokens.length,
+                successCount: response.successCount,
+                failureCount: response.failureCount,
+            };
         } catch (error) {
             console.error('[NOTIFICATION_ERROR] Failed to send multicast message:', error);
+            return {
+                attempted: true,
+                tokenCount: tokens.length,
+                successCount: 0,
+                failureCount: tokens.length,
+                reason: 'send_failed',
+            };
         }
     }
 }

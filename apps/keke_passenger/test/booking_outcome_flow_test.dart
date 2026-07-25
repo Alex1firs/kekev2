@@ -290,6 +290,164 @@ void main() {
     });
   });
 
+  group('server-driven redispatch rounds', () {
+    test('ride:dispatch_round switches to round-two copy without re-requesting',
+        () async {
+      await arrangeAtFareScreen();
+      controller.requestRide();
+      final rideId = controller.state.rideId;
+      expect(controller.state.searchRound, 1);
+
+      socket.injectEvent({
+        'event': 'ride:dispatch_round',
+        'rideId': rideId,
+        'dispatchRound': 2,
+        'totalRounds': 2,
+        'reason': 'auto_redispatch',
+        'offersSentCount': 1,
+        'explicitRejectCount': 0,
+      });
+      await Future<void>.delayed(Duration.zero);
+
+      // Copy advances…
+      expect(controller.state.step, BookingStep.searching);
+      expect(controller.state.searchRound, 2);
+      expect(SearchingCopy.of(controller.state.searchRound).primary,
+          'Still searching nearby…');
+      expect(SearchingCopy.of(controller.state.searchRound).supporting,
+          'We\'re checking again for an available Keke driver.');
+
+      // …but the ride is untouched: same id, no second booking request, and no
+      // extra search attempt counted against the passenger.
+      expect(controller.state.rideId, rideId);
+      expect(controller.state.searchAttempts, 1);
+      expect(
+          socket.sentEvents.where((e) => e.event == 'ride:request').length, 1);
+    });
+
+    test('a stale or duplicate round event cannot move the copy backwards',
+        () async {
+      await arrangeAtFareScreen();
+      controller.requestRide();
+      socket.injectEvent({
+        'event': 'ride:dispatch_round',
+        'rideId': controller.state.rideId,
+        'dispatchRound': 2,
+      });
+      await Future<void>.delayed(Duration.zero);
+      expect(controller.state.searchRound, 2);
+
+      // Re-delivered after a socket heal, and a bogus round 1.
+      socket.injectEvent({
+        'event': 'ride:dispatch_round',
+        'rideId': controller.state.rideId,
+        'dispatchRound': 2,
+      });
+      socket.injectEvent({
+        'event': 'ride:dispatch_round',
+        'rideId': controller.state.rideId,
+        'dispatchRound': 1,
+      });
+      await Future<void>.delayed(Duration.zero);
+
+      expect(controller.state.searchRound, 2);
+      expect(
+          events.where((e) => e.$1 == 'passenger_dispatch_round').length, 1,
+          reason: 'the duplicate must not be logged twice');
+    });
+
+    test('a round event with no round number is ignored', () async {
+      await arrangeAtFareScreen();
+      controller.requestRide();
+      socket.injectEvent({'event': 'ride:dispatch_round', 'rideId': 'x'});
+      await Future<void>.delayed(Duration.zero);
+
+      expect(controller.state.searchRound, 1);
+      expect(controller.state.step, BookingStep.searching);
+    });
+
+    test('an outcome after round two reports the round and server counts',
+        () async {
+      await arrangeAtFareScreen();
+      controller.requestRide();
+      socket.injectEvent({
+        'event': 'ride:dispatch_round',
+        'rideId': controller.state.rideId,
+        'dispatchRound': 2,
+      });
+      await Future<void>.delayed(Duration.zero);
+
+      socket.injectEvent({
+        'event': 'ride:failed',
+        'code': 'NO_DRIVER_ACCEPTED',
+        'dispatchResult': 'offers_delivered_none_accepted',
+        'dispatchRound': 2,
+        'roundsRun': 2,
+        'eligibleDriverCount': 3,
+        'reservedDriverCount': 3,
+        'offersSentCount': 2,
+        'explicitRejectCount': 1,
+        'expiredOfferCount': 1,
+        'deliveryFailureCount': 1,
+        'acknowledgedCount': 2,
+      });
+      await Future<void>.delayed(Duration.zero);
+
+      expect(controller.state.notice!.outcome, RideOutcome.noDriverAccepted);
+      final outcome =
+          events.lastWhere((e) => e.$1 == 'passenger_ride_outcome').$2;
+      expect(outcome['searchRound'], 2);
+      expect(outcome['offersSentCount'], 2);
+      expect(outcome['explicitRejectCount'], 1);
+      expect(outcome['expiredOfferCount'], 1);
+      expect(outcome['deliveryFailureCount'], 1);
+      expect(outcome['acknowledgedCount'], 2);
+      expect(outcome['eligibleDriverCount'], 3);
+    });
+
+    test('an older server sending no counts still yields a clean outcome',
+        () async {
+      await arrangeAtFareScreen();
+      controller.requestRide();
+      socket.injectEvent({
+        'event': 'ride:failed',
+        'code': 'NO_DRIVER_ACCEPTED',
+        'message': 'No drivers available nearby',
+      });
+      await Future<void>.delayed(Duration.zero);
+
+      final outcome =
+          events.lastWhere((e) => e.$1 == 'passenger_ride_outcome').$2;
+      expect(outcome['outcomeCode'], 'NO_DRIVER_ACCEPTED');
+      // Absent fields are omitted rather than logged as nulls.
+      expect(outcome.containsKey('offersSentCount'), isFalse);
+      expect(controller.state.notice!.title, 'Drivers are currently busy');
+    });
+
+    test('Search Again after two server rounds is still attempt two', () async {
+      await arrangeAtFareScreen();
+      controller.requestRide();
+      socket.injectEvent({
+        'event': 'ride:dispatch_round',
+        'rideId': controller.state.rideId,
+        'dispatchRound': 2,
+      });
+      await Future<void>.delayed(Duration.zero);
+      socket.injectEvent({'event': 'ride:failed', 'code': 'NO_DRIVER_ACCEPTED'});
+      await Future<void>.delayed(Duration.zero);
+
+      final firstRideId = controller.state.rideId;
+      controller.searchAgain();
+
+      // A manual retry is a NEW ride request (and a new ride id) — distinct from
+      // the server's automatic second round on the same ride.
+      expect(controller.state.searchAttempts, 2);
+      expect(controller.state.rideId, isNot(firstRideId));
+      expect(
+          socket.sentEvents.where((e) => e.event == 'ride:request').length, 2);
+    });
+  });
+
   group('assignment clears the notice', () {
     test('a driver accepting wipes any leftover outcome notice', () async {
       await arrangeAtFareScreen();

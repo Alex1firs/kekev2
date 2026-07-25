@@ -382,6 +382,14 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
         countdown: 30,
       );
 
+      // Tell the server this offer actually reached the device and is now on
+      // screen. Dispatch uses it as delivery evidence — a socket emit that the
+      // transport accepted is not proof the driver ever saw the request.
+      _socketService?.emit('ride:offer_ack', {
+        'rideId': request.id,
+        'driverId': _userId,
+      });
+
       _startCountdown();
       _soundService.playRequestSound();
     } catch (e) {

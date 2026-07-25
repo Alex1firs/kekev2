@@ -3,6 +3,14 @@ import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 import { DispatchService } from '../services/dispatch_service';
 import { NotificationService } from '../services/notification_service';
+import {
+    DispatchOrchestrator,
+    DispatchRun,
+    DispatchPorts,
+    OfferDelivery,
+    EligibilityResult,
+} from '../services/dispatch_orchestrator';
+import { loadDispatchConfig } from '../config/dispatch_config';
 import { User, UserRole } from '../models/User';
 import { AppDataSource } from '../config/data_source';
 import { Ride } from '../models/Ride';
@@ -122,6 +130,13 @@ export class SocketHandler {
     // was disconnected (e.g. phone locked) can have the offer re-delivered on
     // reconnect instead of silently missing it.
     private dispatchPayloads: Map<string, any> = new Map();
+    // Live multi-round dispatch runs, keyed by rideId. Holds each ride's evidence
+    // ledger and its abort handle, so rejections/acks/acceptance/cancellation all
+    // feed the same run the round loop is reading.
+    private dispatchRuns:     Map<string, DispatchRun>  = new Map();
+    // Every timer a ride's dispatch created, so nothing is left armed when the
+    // run ends for any reason.
+    private dispatchTimers:   Map<string, Set<NodeJS.Timeout>> = new Map();
     private driverRideMap:    Map<string, string>       = new Map();
     // Pending driver-initiated early-end confirmations, keyed by rideId. If the
     // passenger doesn't confirm/reject within the window the ride completes with
@@ -373,39 +388,20 @@ export class SocketHandler {
                 log.info(`Starting dispatch for ride ${rideId}`);
                 this.io.to('admin').emit('ride:status_update', { rideId, status: 'searching' });
 
-                const DISPATCH_TIMEOUT_MS = Number(process.env.DISPATCH_TIMEOUT_MS) || 55_000;
-                Promise.race([
-                    this.startDispatchLoop(rideId, pickupLat, pickupLng, request),
-                    new Promise<void>((_, reject) =>
-                        setTimeout(() => reject(new Error('dispatch_timeout')), DISPATCH_TIMEOUT_MS)
-                    ),
-                ]).catch(async (err: any) => {
-                    log.error(JSON.stringify({ level: 'error', event: 'dispatch_failed', rideId, error: err?.message }));
-                    if (err?.message === 'dispatch_timeout') {
-                        try {
-                            await AppDataSource.getRepository(Ride).update(rideId, { status: 'failed' as any });
-                            // `code`/`dispatchResult` let the passenger app tell an
-                            // expiry apart from a genuine no-driver outcome. `message`
-                            // stays for older clients that only read it.
-                            this.io.to(`ride:${rideId}`).emit('ride:failed', {
-                                code: 'REQUEST_EXPIRED',
-                                dispatchResult: 'dispatch_timeout',
-                                driversRung: this.activeDispatches.get(rideId)?.size ?? 0,
-                                message: 'No drivers available nearby',
-                            });
-                            if (passengerId) {
-                                NotificationService.sendToUser(passengerId, UserRole.PASSENGER, 'No Driver Found',
-                                    "We couldn't find a nearby driver. Please try again.", {
-                                    type: 'NO_DRIVER', rideId, intent: 'retry',
-                                });
-                            }
-                        } catch (_) {}
-                        // Release the drivers this ride was ringing + the passenger's slot.
-                        await this.releaseRideReservations(rideId, 'dispatch_timeout');
+                // Multi-round dispatch owns its own lifetime ceiling and abort
+                // handling (see startDispatchLoop), so there is no outer race that
+                // could leave an abandoned loop still ringing drivers after the
+                // passenger has already been told the search ended.
+                this.startDispatchLoop(rideId, pickupLat, pickupLng, request).catch(async (err: any) => {
+                    log.error(JSON.stringify({ level: 'error', event: 'dispatch_crashed', rideId, error: err?.message }));
+                    try {
+                        await this.releaseRideReservations(rideId, 'dispatch_crashed');
                         if (passengerId) await DispatchService.releasePassengerActive(passengerId, rideId);
-                        this.rideExclusions.delete(rideId);
-                        this.clearDispatch(rideId);
-                    }
+                    } catch (_) { /* best effort */ }
+                    this.clearDispatchTimers(rideId);
+                    this.dispatchRuns.delete(rideId);
+                    this.rideExclusions.delete(rideId);
+                    this.clearDispatch(rideId);
                 });
             });
 
@@ -440,6 +436,22 @@ export class SocketHandler {
                     }
 
                     await rideRepo.update(data.rideId, { status: 'canceled' as any, completedAt: new Date() });
+
+                    // Abort dispatch NOW so no further round can start and any
+                    // in-flight offer window stops waiting. Without this, a
+                    // cancellation landing mid-round-one would still be followed by
+                    // an automatic round two.
+                    const cancelledRun = this.dispatchRuns.get(data.rideId);
+                    if (cancelledRun) {
+                        cancelledRun.abort('cancelled');
+                        rlog('dispatch_cancelled', {
+                            rideId: data.rideId,
+                            dispatchRound: cancelledRun.evidence.round,
+                            summary: cancelledRun.evidence.summary(false),
+                        });
+                    }
+                    this.clearDispatchTimers(data.rideId);
+
                     this.io.to('admin').emit('ride:status_update', { rideId: data.rideId, status: 'canceled' });
                     this.broadcastToRide(data.rideId, 'ride:cancelled', { rideId: data.rideId });
 
@@ -472,6 +484,7 @@ export class SocketHandler {
                     await this.releaseRideReservations(data.rideId, 'passenger_cancel');
                     if (ride.driverId) await DispatchService.releaseDriver(ride.driverId, data.rideId);
                     await DispatchService.releasePassengerActive(data.passengerId, data.rideId);
+                    this.dispatchRuns.delete(data.rideId);
                     this.rideExclusions.delete(data.rideId);
                     this.clearDispatch(data.rideId);
                     log.info(`Ride ${data.rideId} canceled by passenger ${data.passengerId}`);
@@ -587,6 +600,20 @@ export class SocketHandler {
                     // race-safe (the DB row was flipped before this release).
                     const resOwner = await DispatchService.getReservationOwner(data.driverId);
                     rlog('assign', { rideId: data.rideId, driverId: data.driverId, reservationOwner: resOwner, ownershipMatched: resOwner === data.rideId });
+                    // Stop ALL dispatch activity for this ride immediately — the
+                    // in-flight offer window is abandoned rather than run out, and
+                    // no further round can start.
+                    const acceptedRun = this.dispatchRuns.get(data.rideId);
+                    if (acceptedRun) {
+                        acceptedRun.noteAcceptance(data.driverId);
+                        rlog('acceptance', {
+                            rideId: data.rideId,
+                            driverId: data.driverId,
+                            dispatchRound: acceptedRun.evidence.round,
+                            summary: acceptedRun.evidence.summary(false),
+                        });
+                    }
+                    this.clearDispatchTimers(data.rideId);
                     await this.releaseRideReservations(data.rideId, 'assigned');
                     this.rideExclusions.delete(data.rideId);
                     this.clearDispatch(data.rideId);
@@ -596,11 +623,38 @@ export class SocketHandler {
                 }
             });
 
+            // --- Driver Offer Acknowledgement (newer driver builds only) ---
+            // Device-level proof the offer arrived, as opposed to the transport
+            // merely accepting it. Absent from older APKs, hence "where available".
+            socket.on('ride:offer_ack', async (raw) => {
+                const data = validate(Schemas.rideDriverAction, raw, socket);
+                if (!data) return;
+                const run = this.dispatchRuns.get(data.rideId);
+                if (!run) return;
+                run.noteAcknowledgement(data.driverId);
+                rlog('offer_acknowledged', {
+                    rideId: data.rideId,
+                    driverId: data.driverId,
+                    dispatchRound: run.evidence.round,
+                });
+            });
+
             // --- Driver Reject ---
             socket.on('ride:reject', async (raw) => {
                 const data = validate(Schemas.rideDriverAction, raw, socket);
                 if (!data) return;
                 this.rideExclusions.get(data.rideId)?.add(data.driverId);
+                // Feed the evidence ledger: an explicit "no" is distinct from an
+                // offer that simply expired, and excludes this driver from round two.
+                const rejectRun = this.dispatchRuns.get(data.rideId);
+                if (rejectRun) {
+                    rejectRun.noteRejection(data.driverId);
+                    rlog('driver_rejected', {
+                        rideId: data.rideId,
+                        driverId: data.driverId,
+                        dispatchRound: rejectRun.evidence.round,
+                    });
+                }
                 // Release the reservation right away so this driver can immediately
                 // be rung by another waiting ride (ownership-checked).
                 try {
@@ -921,147 +975,289 @@ export class SocketHandler {
         });
     }
 
-    private async startDispatchLoop(rideId: string, lat: number, lng: number, payload: any) {
-        // Gradual expansion, nearest tier first. Env-tunable, e.g. "2,3.5,5".
-        const radiuses = (process.env.DISPATCH_RADIUS_TIERS_KM || '2,3.5,5')
-            .split(',').map(s => parseFloat(s.trim())).filter(n => Number.isFinite(n) && n > 0);
+    /**
+     * Build the orchestrator ports for one ride. Each port is the real
+     * production implementation; the orchestrator itself stays free of
+     * socket.io/Postgres/FCM so its round logic can be unit-tested.
+     */
+    private dispatchPorts(rideId: string, payload: any, run: () => DispatchRun | undefined): DispatchPorts {
         const isCash = payload.isCash === true;
+
+        return {
+            findNearby: (lat, lng, radiusKm, limit) =>
+                DispatchService.findNearbyDriversWithDistance(lat, lng, radiusKm, limit),
+
+            isDriverAvailable: (driverId) => DispatchService.isDriverAvailable(driverId),
+
+            filterEligible: async (driverIds: string[]): Promise<EligibilityResult> => {
+                const rejected: Array<{ driverId: string; reason: string }> = [];
+                let eligible = [...driverIds];
+
+                // Drivers who already said no to THIS ride (in-memory exclusions,
+                // authoritative across reconnects within the ride's lifetime).
+                const exclusions = this.rideExclusions.get(rideId);
+                if (exclusions && exclusions.size > 0) {
+                    eligible = eligible.filter((id) => {
+                        if (!exclusions.has(id)) return true;
+                        rejected.push({ driverId: id, reason: 'explicit_rejector' });
+                        return false;
+                    });
+                }
+
+                // Suspended / rejected drivers must never receive requests.
+                if (eligible.length > 0) {
+                    const profiles = await AppDataSource.getRepository(DriverProfile).findBy(
+                        eligible.map((id) => ({ userId: id })),
+                    );
+                    const blocked = new Set(
+                        profiles.filter((p) => p.status === 'suspended' || p.status === 'rejected').map((p) => p.userId),
+                    );
+                    if (blocked.size > 0) {
+                        eligible = eligible.filter((id) => {
+                            if (!blocked.has(id)) return true;
+                            rejected.push({ driverId: id, reason: 'driver_suspended_or_rejected' });
+                            return false;
+                        });
+                    }
+                }
+
+                // Cash rides: strip debt-blocked drivers.
+                if (isCash && eligible.length > 0) {
+                    const cashOk = new Set(await WalletService.filterCashEligibleDrivers(eligible));
+                    eligible = eligible.filter((id) => {
+                        if (cashOk.has(id)) return true;
+                        rejected.push({ driverId: id, reason: 'cash_debt_blocked' });
+                        return false;
+                    });
+                }
+
+                // A driver already on an active ride must never be double-assigned.
+                if (eligible.length > 0) {
+                    const busy = await AppDataSource.getRepository(Ride).find({
+                        where: { driverId: In(eligible), status: In(['accepted', 'arrived', 'in_progress'] as any[]) },
+                    });
+                    if (busy.length > 0) {
+                        const busyIds = new Set(busy.map((r) => r.driverId));
+                        eligible = eligible.filter((id) => {
+                            if (!busyIds.has(id)) return true;
+                            rejected.push({ driverId: id, reason: 'already_on_active_ride' });
+                            return false;
+                        });
+                    }
+                }
+
+                return { eligible, rejected };
+            },
+
+            getRideStatus: async (id: string) => {
+                const ride = await AppDataSource.getRepository(Ride).findOne({ where: { rideId: id } });
+                return ride ? (ride.status as unknown as string) : null;
+            },
+
+            isRideAssigned: (id: string) => this.isRideAssigned(id),
+
+            sendOffer: async (driverId: string, round: number): Promise<OfferDelivery> => {
+                // Enrich once per offer so a re-offered driver still gets the
+                // current pickup code and passenger phone.
+                const enriched = await this.buildOfferPayload(rideId, payload, round);
+                this.dispatchPayloads.set(rideId, enriched);
+
+                // Track the offer so a reconnecting driver can have it re-delivered.
+                const notified = this.activeDispatches.get(rideId) ?? new Set<string>();
+                notified.add(driverId);
+                this.activeDispatches.set(rideId, notified);
+
+                // Socket delivery: only counts if the driver actually has a live
+                // socket in their room right now.
+                let socketDelivered = false;
+                try {
+                    const sockets = await this.io.in(`driver:${driverId}`).fetchSockets();
+                    socketDelivered = sockets.length > 0;
+                } catch (err) {
+                    log.warn(`[DISPATCH] socket presence check failed for ${driverId}`);
+                }
+                this.io.to(`driver:${driverId}`).emit('ride:request', enriched);
+
+                // Push delivery, awaited so its result is real evidence.
+                let pushSuccessCount = 0;
+                let pushReason: string | undefined;
+                try {
+                    const push = await NotificationService.sendToUser(
+                        driverId,
+                        UserRole.DRIVER,
+                        'New Ride Request',
+                        'You have a new request nearby!',
+                        { type: 'NEW_REQUEST', rideId, intent: 'booking', dispatchRound: String(round) },
+                    );
+                    pushSuccessCount = push.successCount;
+                    if (push.successCount === 0) pushReason = push.reason ?? 'push_no_success';
+                } catch (err: any) {
+                    pushReason = `push_threw:${err?.message ?? 'unknown'}`;
+                }
+
+                const delivered = socketDelivered || pushSuccessCount > 0;
+                return {
+                    delivered,
+                    socketDelivered,
+                    pushSuccessCount,
+                    reason: delivered ? undefined : (pushReason ?? 'no_socket_no_push'),
+                };
+            },
+
+            emitToRide: (id: string, event: string, data: Record<string, unknown>) => {
+                this.io.to(`ride:${id}`).emit(event, data);
+            },
+
+            log: (event: string, fields: Record<string, unknown>) => rlog(event, fields),
+
+            now: () => Date.now(),
+
+            sleep: (ms: number) => {
+                const active = run();
+                if (!active) return new Promise<void>((resolve) => setTimeout(resolve, ms));
+                if (active.isAborted) return Promise.resolve();
+                // Resolves on timeout OR when the run is woken (accept, cancel,
+                // all offers answered) — so dispatch reacts immediately instead
+                // of sitting out the rest of the offer window.
+                return new Promise<void>((resolve) => {
+                    let settled = false;
+                    const done = () => {
+                        if (settled) return;
+                        settled = true;
+                        clearTimeout(timer);
+                        resolve();
+                    };
+                    const timer = setTimeout(done, ms);
+                    this.dispatchTimers.get(rideId)?.add(timer);
+                    active.onWake(done);
+                });
+            },
+        };
+    }
+
+    /** Offer payload for a driver: the request plus per-ride enrichment. */
+    private async buildOfferPayload(rideId: string, payload: any, round: number): Promise<any> {
+        const passengerUser = payload.passengerId
+            ? await AppDataSource.getRepository(User).findOne({ where: { id: payload.passengerId } })
+            : null;
+        const rideRecord = await AppDataSource.getRepository(Ride).findOne({ where: { rideId } });
+        return {
+            ...payload,
+            passengerPhone: toLocalDialable(passengerUser?.phone) ?? null,
+            pickupCode: rideRecord?.pickupCode ?? null,
+            dispatchRound: round,
+        };
+    }
+
+    /**
+     * Run controlled multi-round dispatch for a ride, then resolve the passenger
+     * outcome. ONE ride record throughout: rounds never insert a ride, never
+     * re-quote a fare and never touch payment, so a second round cannot produce a
+     * duplicate ride or a duplicate charge.
+     */
+    private async startDispatchLoop(rideId: string, lat: number, lng: number, payload: any) {
+        const config = loadDispatchConfig();
+        const orchestrator = new DispatchOrchestrator(this.dispatchPorts(rideId, payload, () => this.dispatchRuns.get(rideId)), config);
+        const run = orchestrator.createRun(rideId);
+
+        this.dispatchRuns.set(rideId, run);
+        this.dispatchTimers.set(rideId, new Set());
         this.activeDispatches.set(rideId, new Set());
 
-        for (const radius of radiuses) {
-            const rideRepo = AppDataSource.getRepository(Ride);
-            const dbRide = await rideRepo.findOne({ where: { rideId } });
-            if (!dbRide || dbRide.status === 'canceled' as any) {
-                await this.releaseRideReservations(rideId, 'ride_gone_or_canceled');
-                this.clearDispatch(rideId);
-                return;
-            }
-            if (await this.isRideAssigned(rideId)) {
-                // Accepted elsewhere — the accept handler owns reservation cleanup.
-                this.clearDispatch(rideId);
-                return;
-            }
+        // Hard ceiling on the whole search. Unlike the previous Promise.race this
+        // ABORTS the run rather than abandoning a still-running loop, so no
+        // dispatch activity survives the deadline.
+        const lifetimeTimer = setTimeout(() => {
+            const active = this.dispatchRuns.get(rideId);
+            if (!active || active.isAborted) return;
+            rlog('search_lifetime_exceeded', { rideId, maxSearchLifetimeMs: config.maxSearchLifetimeMs });
+            active.evidence.markLifetimeExpired();
+            active.abort('lifetime_exceeded');
+        }, config.maxSearchLifetimeMs);
+        this.dispatchTimers.get(rideId)!.add(lifetimeTimer);
 
-            log.info(`Searching in ${radius}km radius for ride ${rideId} (${isCash ? 'cash' : 'wallet'})`);
-            this.io.to(`ride:${rideId}`).emit('ride:searching', { radius });
-
-            const nearbyDrivers = await DispatchService.findNearbyDrivers(lat, lng, radius);
-            const exclusions = this.rideExclusions.get(rideId) || new Set();
-            let eligible = nearbyDrivers.filter(id => !exclusions.has(id));
-
-            // Filter out suspended/rejected drivers — they must not receive ride requests
-            if (eligible.length > 0) {
-                const profiles = await AppDataSource.getRepository(DriverProfile).findBy(
-                    eligible.map(id => ({ userId: id }))
-                );
-                const blockedIds = new Set(
-                    profiles
-                        .filter(p => p.status === 'suspended' || p.status === 'rejected')
-                        .map(p => p.userId)
-                );
-                if (blockedIds.size > 0) {
-                    eligible = eligible.filter(id => !blockedIds.has(id));
-                    log.info(`[DISPATCH] Filtered ${blockedIds.size} suspended/rejected drivers for ride ${rideId}`);
-                }
-            }
-
-            // For cash rides, strip out debt-blocked drivers before dispatching
-            if (isCash && eligible.length > 0) {
-                eligible = await WalletService.filterCashEligibleDrivers(eligible);
-                log.info(`[DISPATCH] Cash ride ${rideId}: ${eligible.length} eligible after debt filter at ${radius}km`);
-            }
-
-            // Exclude drivers already on an active ride (busy). A busy driver must
-            // not receive new requests and must never be double-assigned.
-            if (eligible.length > 0) {
-                const busy = await AppDataSource.getRepository(Ride).find({
-                    where: { driverId: In(eligible), status: In(['accepted', 'arrived', 'in_progress'] as any[]) },
-                });
-                if (busy.length > 0) {
-                    const busyIds = new Set(busy.map(r => r.driverId));
-                    eligible = eligible.filter(id => !busyIds.has(id));
-                    log.info(`[DISPATCH] Filtered ${busyIds.size} busy drivers for ride ${rideId}`);
-                    for (const id of busyIds) rlog('eligibility_reject', { rideId, driverId: id, reason: 'already_on_active_ride' });
-                }
-            }
-
-            // Candidates we haven't already rung for THIS ride (radius expansion
-            // reaches NEW nearby drivers instead of re-ringing the same ones).
-            const alreadyNotified = this.activeDispatches.get(rideId) || new Set();
-            const candidates = eligible.filter(id => !alreadyNotified.has(id));
-
-            // ATOMIC RESERVATION: reserve each candidate (SET NX) BEFORE ringing so
-            // two concurrent rides can never ring/assign the same driver. A driver
-            // reserved by another ride is skipped immediately so we try the next
-            // eligible one rather than waiting.
-            const freeCandidates = await DispatchService.filterUnreserved(candidates, rideId);
-            const targetDrivers: string[] = [];
-            for (const driverId of freeCandidates) {
-                const won = await DispatchService.reserveDriver(driverId, rideId);
-                if (won) {
-                    targetDrivers.push(driverId);
-                    rlog('reserve', { rideId, driverId, result: 'acquired', ttlSec: DispatchService.RESERVATION_TTL_SECONDS });
-                } else {
-                    const reservedBy = await DispatchService.getReservationOwner(driverId);
-                    rlog('reserve', { rideId, driverId, result: 'skipped_reserved', reservedBy });
-                }
-            }
-
-            if (targetDrivers.length > 0) {
-                const notifiedSet = this.activeDispatches.get(rideId) || new Set();
-                // Fetch passenger phone once for this dispatch batch
-                const passengerUser = await AppDataSource.getRepository(User).findOne({ where: { id: payload.passengerId } });
-                const rideRecord = await AppDataSource.getRepository(Ride).findOne({ where: { rideId } });
-                const enrichedPayload = { ...payload, passengerPhone: toLocalDialable(passengerUser?.phone) ?? null, pickupCode: rideRecord?.pickupCode ?? null };
-                // Remember the payload so a driver who reconnects mid-dispatch can
-                // have this exact offer re-delivered (see the 'join' handler).
-                this.dispatchPayloads.set(rideId, enrichedPayload);
-                for (const driverId of targetDrivers) {
-                    notifiedSet.add(driverId);
-                    this.io.to(`driver:${driverId}`).emit('ride:request', enrichedPayload);
-                    NotificationService.sendToUser(driverId, UserRole.DRIVER, 'New Ride Request', 'You have a new request nearby!', {
-                        type: 'NEW_REQUEST', rideId: payload.rideId, intent: 'booking',
-                    });
-                    rlog('ring', { rideId, driverId, radiusKm: radius });
-                }
-                this.activeDispatches.set(rideId, notifiedSet);
-                await new Promise(resolve => setTimeout(resolve, 15000));
-            } else {
-                rlog('no_target', { rideId, radiusKm: radius, eligibleCount: eligible.length, candidateCount: candidates.length });
-                await new Promise(resolve => setTimeout(resolve, 3000));
-            }
+        let result: Awaited<ReturnType<DispatchOrchestrator['run']>> | null = null;
+        try {
+            result = await orchestrator.run(run, { lat, lng });
+        } catch (err: any) {
+            log.error(JSON.stringify({ level: 'error', event: 'dispatch_failed', rideId, error: err?.message }));
+        } finally {
+            this.clearDispatchTimers(rideId);
         }
 
-        // Dispatch exhausted all tiers — mark ride as failed and clean up
-        const finalRepo = AppDataSource.getRepository(Ride);
-        const finalRide = await finalRepo.findOne({ where: { rideId } });
-        if (finalRide && finalRide.status !== 'canceled' as any && !await this.isRideAssigned(rideId)) {
-            await finalRepo.update(rideId, { status: 'failed' as any });
-            // Distinguish "nobody was eligible to ring" from "we rang drivers and
-            // none accepted" — the passenger sees different copy for each. Read
-            // before releaseRideReservations/clearDispatch wipe the set below.
-            const driversRung = this.activeDispatches.get(rideId)?.size ?? 0;
-            const outcome = driversRung > 0
-                ? { code: 'NO_DRIVER_ACCEPTED', dispatchResult: 'drivers_rung_none_accepted' }
-                : { code: 'NO_ELIGIBLE_DRIVER',  dispatchResult: 'no_eligible_drivers' };
-            rlog('dispatch_outcome', { rideId, ...outcome, driversRung });
-            this.io.to(`ride:${rideId}`).emit('ride:failed', {
-                ...outcome,
-                driversRung,
-                message: 'No drivers available nearby',
-            });
-            if (finalRide.passengerId) {
-                NotificationService.sendToUser(finalRide.passengerId, UserRole.PASSENGER, 'No Driver Found',
-                    "We couldn't find a nearby driver. Please try again.", {
-                    type: 'NO_DRIVER', rideId, intent: 'retry',
-                });
-                // Ride is terminal — free the passenger's single active-ride slot.
-                await DispatchService.releasePassengerActive(finalRide.passengerId, rideId);
+        try {
+            if (result && result.stopReason !== 'accepted' && result.stopReason !== 'assigned_elsewhere') {
+                await this.finalizeUnsuccessfulDispatch(rideId, result);
             }
-            await this.releaseRideReservations(rideId, 'dispatch_exhausted');
+        } finally {
+            // Release everything this ride was holding, whatever the outcome.
+            await this.releaseRideReservations(rideId, `dispatch_${result?.stopReason ?? 'error'}`);
+            this.dispatchRuns.delete(rideId);
             this.rideExclusions.delete(rideId);
             this.clearDispatch(rideId);
         }
+    }
+
+    /**
+     * No driver took the ride. Mark it failed and tell the passenger WHY, using
+     * the dispatch evidence rather than candidate-set size.
+     */
+    private async finalizeUnsuccessfulDispatch(
+        rideId: string,
+        result: Awaited<ReturnType<DispatchOrchestrator['run']>>,
+    ): Promise<void> {
+        const rideRepo = AppDataSource.getRepository(Ride);
+        const ride = await rideRepo.findOne({ where: { rideId } });
+
+        // Cancelled or already taken → the owning handler already told the
+        // passenger; emitting a failure here would contradict it.
+        if (!ride) return;
+        if ((ride.status as unknown as string) !== 'searching') return;
+        if (await this.isRideAssigned(rideId)) return;
+
+        const outcome = result.outcome ?? { code: 'NO_ELIGIBLE_DRIVER' as const, dispatchResult: 'unknown' };
+        await rideRepo.update(rideId, { status: 'failed' as any });
+
+        rlog('dispatch_outcome', {
+            rideId,
+            stopReason: result.stopReason,
+            code: outcome.code,
+            dispatchResult: outcome.dispatchResult,
+            summary: result.summary,
+        });
+
+        this.io.to(`ride:${rideId}`).emit('ride:failed', {
+            code: outcome.code,
+            dispatchResult: outcome.dispatchResult,
+            ...DispatchOrchestrator.publicPayload(result.summary),
+            // Retained from the earlier payload shape. Older passenger builds
+            // read `code`/`dispatchResult`/`message` and ignore the new counts,
+            // so they keep behaving correctly; `driversRung` now means
+            // genuinely-delivered offers rather than candidate-set membership.
+            driversRung: result.summary.driversRung,
+            message: 'No drivers available nearby',
+        });
+        this.io.to('admin').emit('ride:status_update', { rideId, status: 'failed' });
+
+        if (ride.passengerId) {
+            NotificationService.sendToUser(
+                ride.passengerId,
+                UserRole.PASSENGER,
+                'No Driver Found',
+                "We couldn't find a nearby driver. Please try again.",
+                { type: 'NO_DRIVER', rideId, intent: 'retry' },
+            );
+            // Ride is terminal — free the passenger's single active-ride slot.
+            await DispatchService.releasePassengerActive(ride.passengerId, rideId);
+        }
+    }
+
+    /** Cancel and forget every timer this ride's dispatch created. */
+    private clearDispatchTimers(rideId: string): void {
+        const timers = this.dispatchTimers.get(rideId);
+        if (!timers) return;
+        for (const t of timers) clearTimeout(t);
+        this.dispatchTimers.delete(rideId);
     }
 
     /**

@@ -48,12 +48,16 @@ class AnalyticsService {
   }
 
   /// A search ended without an assigned driver. [dispatchResult] is the
-  /// server's account of what dispatch did, when it supplied one.
+  /// server's account of what dispatch did, when it supplied one, and
+  /// [dispatchEvidence] the per-round counts it reported (empty for older
+  /// servers that send no structured data).
   void logRideOutcome({
     required String? rideId,
     required RideOutcome outcome,
     required int searchAttempts,
     String? dispatchResult,
+    int? searchRound,
+    Map<String, Object?> dispatchEvidence = const {},
   }) {
     log('passenger_ride_outcome', {
       'rideId': rideId,
@@ -61,6 +65,8 @@ class AnalyticsService {
       'tone': BookingNotice.of(outcome).isError ? 'error' : 'info',
       'dispatchResult': dispatchResult,
       'searchAttempts': searchAttempts,
+      if (searchRound != null) 'searchRound': searchRound,
+      ...dispatchEvidence,
     });
   }
 }

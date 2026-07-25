@@ -39,6 +39,11 @@ class BookingController extends StateNotifier<BookingState> {
   Timer? _errorClearTimer;
   Timer? _noticeClearTimer;
   Timer? _searchingKekeTimer;
+
+  /// Raw route estimates from the last fare calculation, reported with the ride
+  /// request purely for admin/support visibility (never for pricing).
+  int? _estimatedDistanceMeters;
+  int? _estimatedDurationSeconds;
   StreamSubscription? _socketSubscription;
   StreamSubscription? _notificationSubscription;
   final NotificationService _notificationService;
@@ -529,6 +534,10 @@ class BookingController extends StateNotifier<BookingState> {
 
     try {
       final estimate = await _mapRepo.calculateRouteAndFare(state.pickupLocation!, state.destinationLocation!);
+      // Kept alongside the display strings so the numbers can be reported to the
+      // backend for operational monitoring.
+      _estimatedDistanceMeters = (estimate['distanceMeters'] as num?)?.round();
+      _estimatedDurationSeconds = (estimate['durationSeconds'] as num?)?.round();
       state = state.copyWith(
         estimatedDistance: estimate['distance'] as String,
         estimatedTime: estimate['time'] as String,
@@ -591,6 +600,14 @@ class BookingController extends StateNotifier<BookingState> {
       'destinationLat': state.destinationLocation!.latitude,
       'destinationLng': state.destinationLocation!.longitude,
       'fare': state.estimatedFareAmount,
+      // Operational telemetry for the admin Live Ride Requests monitor. These
+      // estimates were already computed for the fare screen but never sent, so
+      // support had no idea how long a trip was meant to take. Never used for
+      // pricing or dispatch — the server re-derives anything it charges on.
+      if (_estimatedDistanceMeters != null)
+        'estimatedDistanceM': _estimatedDistanceMeters,
+      if (_estimatedDurationSeconds != null)
+        'estimatedDurationSec': _estimatedDurationSeconds,
     });
     
     final attempts = state.searchAttempts + 1;

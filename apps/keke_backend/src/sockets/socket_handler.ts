@@ -12,6 +12,10 @@ import {
 } from '../services/dispatch_orchestrator';
 import { loadDispatchConfig } from '../config/dispatch_config';
 import { DriverEligibilityService } from '../services/driver_eligibility_service';
+import { DispatchMonitorService } from '../services/dispatch_monitor_service';
+import { DispatchMonitorQueryService } from '../services/dispatch_monitor_query_service';
+import { DispatchEventType } from '../models/DispatchEvent';
+import { projectDispatchEvent } from '../services/dispatch_event_projection';
 import { User, UserRole } from '../models/User';
 import { AppDataSource } from '../config/data_source';
 import { Ride } from '../models/Ride';
@@ -83,6 +87,12 @@ const Schemas = {
         destinationLng:     lng().optional(),
         pickupAddress:      z.string().max(300).optional(),
         destinationAddress: z.string().max(300).optional(),
+        // Operational telemetry for the admin monitor. Optional so older app
+        // builds keep validating; never used for pricing or dispatch decisions.
+        estimatedDistanceM:   z.number().int().min(0).max(500_000).optional(),
+        estimatedDurationSec: z.number().int().min(0).max(86_400).optional(),
+        appVersion:           z.string().max(32).optional(),
+        platform:             z.enum(['android', 'ios']).optional(),
     }),
     chatMessage: z.object({
         rideId:     id(),
@@ -179,6 +189,34 @@ export class SocketHandler {
 
     constructor(io: Server) {
         this.io = io;
+        // Admin monitoring receives dispatch events incrementally rather than
+        // re-fetching the world on every change.
+        DispatchMonitorService.setEmitter((event, payload) => {
+            this.io.to('admin').emit(event, payload);
+        });
+        // Live transient tier: for an in-flight ride the in-memory evidence ledger
+        // is authoritative for round and radius, so the monitor prefers it over
+        // the persisted projection (which can lag by a write).
+        DispatchMonitorQueryService.setLiveContextResolver((rideId) => {
+            const run = this.dispatchRuns.get(rideId);
+            if (!run) return null;
+            const summary = run.evidence.summary(false);
+            return {
+                dispatchRound: summary.dispatchRound,
+                radiusKm: (() => {
+                    // No Array.prototype.at under the es2020 target.
+                    const lastRound = summary.rounds.length ? summary.rounds[summary.rounds.length - 1] : null;
+                    const tiers = lastRound?.radiusTiersKm ?? [];
+                    return tiers.length ? tiers[tiers.length - 1] : null;
+                })(),
+                eligibleDriverCount: summary.eligibleDriverCount,
+                offersSentCount: summary.offersSentCount,
+                explicitRejectCount: summary.explicitRejectCount,
+                expiredOfferCount: summary.expiredOfferCount,
+                deliveryFailureCount: summary.deliveryFailureCount,
+                acknowledgedCount: summary.acknowledgedCount,
+            };
+        });
         this.setupHandlers();
     }
 
@@ -375,6 +413,8 @@ export class SocketHandler {
                         pickupAddress, destinationAddress, pickupLat, pickupLng,
                         destinationLat, destinationLng,
                         pickupCode,
+                        estimatedDistanceM: request.estimatedDistanceM ?? null,
+                        estimatedDurationSec: request.estimatedDurationSec ?? null,
                     });
                     await rideRepo.save(ride);
                 } catch (err) {
@@ -388,6 +428,21 @@ export class SocketHandler {
                 this.rideExclusions.set(rideId, new Set());
                 log.info(`Starting dispatch for ride ${rideId}`);
                 this.io.to('admin').emit('ride:status_update', { rideId, status: 'searching' });
+                // First row of the ride's admin timeline, so the request appears
+                // in Live Ride Requests the moment it is created.
+                DispatchMonitorService.record({
+                    rideId,
+                    eventType: DispatchEventType.RIDE_CREATED,
+                    dispatchRound: 1,
+                    detail: {
+                        paymentMode: isCash ? 'cash' : 'wallet',
+                        fare,
+                        estimatedDistanceM: request.estimatedDistanceM ?? null,
+                        estimatedDurationSec: request.estimatedDurationSec ?? null,
+                        appVersion: request.appVersion ?? null,
+                        platform: request.platform ?? null,
+                    },
+                });
 
                 // Multi-round dispatch owns its own lifetime ceiling and abort
                 // handling (see startDispatchLoop), so there is no outer race that
@@ -451,6 +506,16 @@ export class SocketHandler {
                             summary: cancelledRun.evidence.summary(false),
                         });
                     }
+                    DispatchMonitorService.record({
+                        rideId: data.rideId,
+                        eventType: DispatchEventType.RIDE_CANCELLED,
+                        dispatchRound: cancelledRun?.evidence.round ?? null,
+                        detail: {
+                            cancelledBy: 'passenger',
+                            statusBeforeCancel: ride.status,
+                            hadAssignedDriver: !!ride.driverId,
+                        },
+                    });
                     this.clearDispatchTimers(data.rideId);
 
                     this.io.to('admin').emit('ride:status_update', { rideId: data.rideId, status: 'canceled' });
@@ -614,6 +679,19 @@ export class SocketHandler {
                             summary: acceptedRun.evidence.summary(false),
                         });
                     }
+                    DispatchMonitorService.record({
+                        rideId: data.rideId,
+                        eventType: DispatchEventType.DRIVER_ACCEPTED,
+                        dispatchRound: acceptedRun?.evidence.round ?? null,
+                        driverId: data.driverId,
+                        detail: {
+                            // Time from request creation to assignment.
+                            timeToAssignmentMs: currentRide?.createdAt
+                                ? Date.now() - new Date(currentRide.createdAt).getTime()
+                                : null,
+                        },
+                        withFreshness: true,
+                    });
                     this.clearDispatchTimers(data.rideId);
                     await this.releaseRideReservations(data.rideId, 'assigned');
                     this.rideExclusions.delete(data.rideId);
@@ -638,6 +716,15 @@ export class SocketHandler {
                     driverId: data.driverId,
                     dispatchRound: run.evidence.round,
                 });
+                // The ONLY device-level proof we ever get. Recorded as exactly
+                // that: the app confirmed the offer rendered.
+                DispatchMonitorService.record({
+                    rideId: data.rideId,
+                    eventType: DispatchEventType.DEVICE_OFFER_ACK,
+                    dispatchRound: run.evidence.round,
+                    driverId: data.driverId,
+                    withFreshness: true,
+                });
             });
 
             // --- Driver Reject ---
@@ -656,6 +743,17 @@ export class SocketHandler {
                         dispatchRound: rejectRun.evidence.round,
                     });
                 }
+                // An explicit decline. `reasonCollected: false` is recorded
+                // deliberately: the reject payload carries no reason today, and
+                // the monitor must not imply one was given.
+                DispatchMonitorService.record({
+                    rideId: data.rideId,
+                    eventType: DispatchEventType.DRIVER_REJECTED,
+                    dispatchRound: rejectRun?.evidence.round ?? null,
+                    driverId: data.driverId,
+                    detail: { reasonCollected: false },
+                    withFreshness: true,
+                });
                 // Release the reservation right away so this driver can immediately
                 // be rung by another waiting ride (ownership-checked).
                 try {
@@ -1059,7 +1157,12 @@ export class SocketHandler {
                 this.io.to(`ride:${id}`).emit(event, data);
             },
 
-            log: (event: string, fields: Record<string, unknown>) => rlog(event, fields),
+            log: (event: string, fields: Record<string, unknown>) => {
+                rlog(event, fields);
+                // Same hook, second destination: the durable admin trail. A
+                // projection of these exact events — never a second ledger.
+                this.projectDispatchEvent(rideId, event, fields);
+            },
 
             now: () => Date.now(),
 
@@ -1084,6 +1187,17 @@ export class SocketHandler {
                 });
             },
         };
+    }
+
+    /**
+     * Fan one orchestrator log event out to the durable admin trail.
+     * The mapping itself lives in dispatch_event_projection.ts so it can be
+     * tested directly and audited in one place.
+     */
+    private projectDispatchEvent(rideId: string, event: string, fields: Record<string, any>): void {
+        for (const row of projectDispatchEvent(rideId, event, fields)) {
+            DispatchMonitorService.record(row);
+        }
     }
 
     /** Offer payload for a driver: the request plus per-ride enrichment. */

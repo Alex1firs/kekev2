@@ -11,3 +11,4 @@ export * from "./SavedLocation";
 export * from "./Setting";
 export * from "./SosAlert";
 export * from "./RideReview";
+export * from "./DispatchEvent";

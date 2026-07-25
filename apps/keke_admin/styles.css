@@ -665,3 +665,159 @@ body.authenticated .admin-container { display: flex; }
 .btn-mini:hover { background: rgba(255,255,255,0.16); }
 .live-actions { white-space: nowrap; }
 .live-groups .addr, #live-groups .addr { font-size: 11px; margin-top: 3px; max-width: 240px; }
+
+/* =============================================================================
+ * Live Ride Requests — dispatch lifecycle monitoring
+ *
+ * Status colours follow the operational meaning, not a generic severity ramp:
+ * an availability outcome ("no driver accepted") is amber/neutral, and red is
+ * reserved for genuine technical failure. Delivery-confidence colours are
+ * deliberately distinct from status colours so an operator never confuses
+ * "FCM accepted" with "ride accepted".
+ * ========================================================================== */
+
+.lr-banner {
+    display: flex; align-items: center; gap: 10px;
+    background: rgba(59, 130, 246, 0.10);
+    border: 1px solid rgba(59, 130, 246, 0.28);
+    color: #cfe0f5; border-radius: 10px;
+    padding: 10px 14px; margin-bottom: 16px; font-size: 13px;
+}
+.lr-banner i { color: #6ea8fe; }
+.lr-role-badge {
+    margin-left: auto; font-size: 11px; font-weight: 700; letter-spacing: .4px;
+    text-transform: uppercase; background: rgba(255,255,255,.07);
+    padding: 4px 10px; border-radius: 999px; color: #aab3c0;
+}
+
+/* Split view: list scrolls independently of a sticky map. */
+.lr-layout { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(320px, 1fr); gap: 16px; align-items: start; }
+@media (max-width: 1180px) { .lr-layout { grid-template-columns: 1fr; } }
+
+.lr-list-wrap { min-width: 0; }
+/* Bounded height keeps the DOM small and the page scroll predictable when a
+   busy evening produces dozens of concurrent requests. */
+.lr-list { display: flex; flex-direction: column; gap: 10px; max-height: calc(100vh - 260px); overflow-y: auto; padding-right: 4px; }
+
+.lr-map-wrap { position: sticky; top: 12px; }
+.lr-map { height: 460px; border-radius: 12px; border: 1px solid var(--border-color); background: #0b0f14; }
+.lr-map-legend {
+    display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px;
+    font-size: 12px; color: var(--text-secondary);
+}
+.lr-map-legend i { font-size: 9px; margin-right: 4px; }
+
+.lr-card {
+    background: var(--card-bg); border: 1px solid var(--border-color);
+    border-left: 3px solid var(--border-color);
+    border-radius: 12px; padding: 12px 14px; cursor: pointer;
+    transition: border-color .15s ease, transform .15s ease;
+}
+.lr-card:hover { border-color: #3d4757; transform: translateY(-1px); }
+.lr-card-selected { border-left-color: var(--accent-amber); background: #232935; }
+
+.lr-card-top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
+.lr-ride-id { margin-left: auto; font-family: ui-monospace, monospace; font-size: 11px; color: #78828f; }
+.lr-round, .lr-radius {
+    font-size: 11px; font-weight: 600; color: #aab3c0;
+    background: rgba(255,255,255,.06); padding: 2px 8px; border-radius: 999px;
+}
+
+.lr-badge {
+    font-size: 11px; font-weight: 700; letter-spacing: .3px;
+    padding: 3px 9px; border-radius: 999px; white-space: nowrap;
+}
+/* Searching = amber (working, not wrong). */
+.lr-st-searching  { background: rgba(245, 166, 35, .18);  color: #f5a623; }
+.lr-st-accepted   { background: rgba(46, 204, 113, .18);  color: #2ecc71; }
+.lr-st-arriving   { background: rgba(26, 188, 156, .18);  color: #1abc9c; }
+.lr-st-inprogress { background: rgba(52, 152, 219, .20);  color: #4aa3e8; }
+.lr-st-completed  { background: rgba(255,255,255,.08);    color: #9aa0ab; }
+/* Cancelled is neutral: a passenger changing their mind is not an error. */
+.lr-st-cancelled  { background: rgba(255,255,255,.08);    color: #9aa0ab; }
+/* No driver accepted = availability outcome, NOT a technical failure. */
+.lr-st-nodriver   { background: rgba(230, 126, 34, .16);  color: #e6a15c; }
+/* Reserved for real breakage. */
+.lr-st-error      { background: rgba(255, 77, 77, .18);   color: #ff6b6b; }
+.lr-stale-chip    { background: rgba(255, 77, 77, .14);   color: #ff8f8f; }
+.lr-flag          { background: rgba(245, 166, 35, .14);  color: #f5c37a; }
+
+.lr-card-route { display: flex; flex-direction: column; gap: 3px; font-size: 13px; color: var(--text-primary); margin-bottom: 8px; }
+.lr-card-route i { width: 12px; font-size: 9px; margin-right: 6px; }
+
+.lr-card-meta, .lr-card-dispatch {
+    display: flex; flex-wrap: wrap; gap: 6px 14px;
+    font-size: 12px; color: var(--text-secondary);
+}
+.lr-card-meta i { margin-right: 5px; opacity: .75; }
+.lr-card-dispatch {
+    margin-top: 8px; padding-top: 8px; border-top: 1px dashed rgba(255,255,255,.07);
+}
+.lr-card-dispatch span { background: rgba(255,255,255,.04); padding: 2px 8px; border-radius: 6px; }
+.lr-warn { color: #ff8f8f !important; background: rgba(255,77,77,.12) !important; }
+
+.lr-card-driver {
+    margin-top: 9px; padding-top: 8px; border-top: 1px solid rgba(46,204,113,.18);
+    display: flex; flex-wrap: wrap; gap: 10px; align-items: center; font-size: 12px; color: #b7c4b9;
+}
+.lr-card-driver i { color: #2ecc71; }
+
+.lr-empty { text-align: center; padding: 40px 16px; color: var(--text-secondary); }
+.lr-empty i { font-size: 28px; opacity: .4; display: block; margin-bottom: 10px; }
+
+/* ── Detail drawer ─────────────────────────────────────────────────────── */
+.lr-drawer {
+    position: fixed; top: 0; right: 0; width: min(760px, 96vw); height: 100vh;
+    background: #12161d; border-left: 1px solid var(--border-color);
+    box-shadow: -18px 0 44px rgba(0,0,0,.5); z-index: 900;
+    display: flex; flex-direction: column;
+}
+.lr-drawer.hidden { display: none; }
+.lr-drawer-head {
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+    padding: 16px 18px; border-bottom: 1px solid var(--border-color);
+}
+.lr-drawer-head h3 { font-family: ui-monospace, monospace; font-size: 15px; }
+.lr-drawer-sub { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 12px; }
+.lr-drawer-time { color: var(--text-secondary); }
+.lr-drawer-body { padding: 16px 18px 40px; overflow-y: auto; flex: 1; }
+
+.lr-drawer-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(215px, 1fr)); gap: 12px; }
+.lr-panel { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 10px; padding: 12px 14px; }
+.lr-panel h4 { font-size: 12px; text-transform: uppercase; letter-spacing: .5px; color: var(--text-secondary); margin-bottom: 10px; }
+.lr-panel h4 i { margin-right: 6px; }
+.lr-kv { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; padding: 3px 0; }
+.lr-kv span { color: var(--text-secondary); }
+.lr-kv b { color: var(--text-primary); text-align: right; word-break: break-word; }
+.lr-reveal { margin-top: 10px; width: 100%; font-size: 12px; }
+.lr-note { font-size: 11.5px; color: var(--text-secondary); margin-top: 10px; line-height: 1.55; }
+.lr-note-inline { font-size: 11px; color: #8b93a1; font-style: italic; }
+.lr-section-h { font-size: 12px; text-transform: uppercase; letter-spacing: .5px; color: var(--text-secondary); margin: 22px 0 10px; }
+.lr-section-h i { margin-right: 6px; }
+
+.lr-candidates { display: flex; flex-direction: column; gap: 8px; }
+.lr-cand { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 10px; padding: 10px 12px; }
+.lr-cand-head { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; font-size: 13px; }
+.lr-cand-id { font-family: ui-monospace, monospace; font-size: 10.5px; color: #6f7885; }
+.lr-cand-outcome { margin-left: auto; font-size: 11px; font-weight: 700; color: #c3cbd8; background: rgba(255,255,255,.06); padding: 2px 9px; border-radius: 999px; }
+.lr-cand-meta { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 7px; font-size: 11.5px; color: var(--text-secondary); }
+
+/* Delivery confidence — visually separate from ride status on purpose. */
+.lr-delivery { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 6px; }
+.lr-delivery i { margin-right: 5px; }
+.lr-dl-ack     { background: rgba(46,204,113,.16); color: #6fd89b; }
+.lr-dl-partial { background: rgba(148,163,184,.16); color: #b6c0cf; }
+.lr-dl-failed  { background: rgba(255,77,77,.16); color: #ff8f8f; }
+/* Unknown must look unknown — neither reassuring nor alarming. */
+.lr-dl-unknown { background: rgba(255,255,255,.05); color: #8b93a1; border: 1px dashed rgba(255,255,255,.14); }
+
+.lr-timeline { display: flex; flex-direction: column; gap: 2px; max-height: 340px; overflow-y: auto; background: #0e1218; border: 1px solid var(--border-color); border-radius: 10px; padding: 10px 12px; }
+.lr-tl-row { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,.04); }
+.lr-tl-time { font-family: ui-monospace, monospace; color: #6f7885; min-width: 66px; }
+.lr-tl-label { color: var(--text-primary); }
+.lr-tl-extra { margin-left: auto; color: var(--text-secondary); font-size: 11px; }
+.lr-tl-driver_accepted .lr-tl-label { color: #6fd89b; font-weight: 600; }
+.lr-tl-driver_rejected .lr-tl-label { color: #e6a15c; }
+.lr-tl-offer_delivery_failed .lr-tl-label { color: #ff8f8f; }
+.lr-tl-round_transition .lr-tl-label, .lr-tl-round_started .lr-tl-label { color: #f5c37a; font-weight: 600; }
+.lr-tl-device_offer_ack .lr-tl-label { color: #8fd0ff; }

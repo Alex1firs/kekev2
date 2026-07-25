@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Keke Admin | Dashboard</title>
-    <link rel="stylesheet" href="styles.css?v=3.8">
+    <link rel="stylesheet" href="styles.css?v=3.9">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 </head>
@@ -75,6 +75,12 @@
                 </li>
                 <li data-section="live-riders">
                     <i class="fas fa-satellite-dish"></i> <span>Live Riders</span>
+                </li>
+                <li data-section="live-requests">
+                    <i class="fas fa-route"></i> <span>Live Ride Requests</span>
+                </li>
+                <li data-section="driver-dispatch-metrics">
+                    <i class="fas fa-chart-simple"></i> <span>Dispatch Metrics</span>
                 </li>
                 <li data-section="sos-alerts" class="danger-nav">
                     <i class="fas fa-exclamation-triangle" style="color: #ff4d4d;"></i> <span style="color: #ff4d4d;">SOS Alerts</span>
@@ -291,6 +297,128 @@
                     <div id="live-groups"></div>
                 </section>
 
+                <!-- Live Ride Requests: dispatch lifecycle monitoring -->
+                <section id="live-requests" class="content-section hidden">
+                    <div class="lr-banner">
+                        <i class="fas fa-user-shield"></i>
+                        <span>Passenger and driver contact details are <strong>masked</strong>. Revealing them is recorded in the audit log.</span>
+                        <span id="lr-role-badge" class="lr-role-badge">—</span>
+                    </div>
+
+                    <div class="live-header">
+                        <div class="live-stats" id="lr-stats"></div>
+                        <div class="live-controls">
+                            <input type="text" id="lr-search" placeholder="Ride ID / passenger / area…" oninput="renderLiveRequests()">
+                            <select id="lr-status" onchange="renderLiveRequests()">
+                                <option value="all">All active</option>
+                                <option value="searching">Searching</option>
+                                <option value="accepted">Accepted</option>
+                                <option value="arrived">Arriving</option>
+                                <option value="in_progress">In progress</option>
+                            </select>
+                            <select id="lr-payment" onchange="renderLiveRequests()">
+                                <option value="all">Any payment</option>
+                                <option value="cash">Cash</option>
+                                <option value="wallet">Wallet</option>
+                            </select>
+                            <select id="lr-round" onchange="renderLiveRequests()">
+                                <option value="all">Any round</option>
+                                <option value="1">Round 1</option>
+                                <option value="2">Round 2</option>
+                            </select>
+                            <select id="lr-dispatch" onchange="renderLiveRequests()">
+                                <option value="all">Any dispatch state</option>
+                                <option value="no_offers">No offers sent yet</option>
+                                <option value="offered">Offers sent</option>
+                                <option value="rejected">Has rejections</option>
+                                <option value="expired">Has expiries</option>
+                                <option value="delivery_failed">Delivery failures</option>
+                                <option value="assigned">Assigned</option>
+                            </select>
+                            <input type="number" id="lr-fare-min" placeholder="Min ₦" style="width:90px" oninput="renderLiveRequests()">
+                            <input type="number" id="lr-fare-max" placeholder="Max ₦" style="width:90px" oninput="renderLiveRequests()">
+                            <label class="live-auto"><input type="checkbox" id="lr-live" checked onchange="toggleLiveRequestsStream()"> Live</label>
+                            <button class="btn-secondary" onclick="fetchLiveRequests()">Refresh</button>
+                            <span id="lr-updated" class="live-updated"></span>
+                        </div>
+                    </div>
+
+                    <div class="lr-layout">
+                        <div class="lr-list-wrap">
+                            <div id="lr-list" class="lr-list"></div>
+                        </div>
+                        <div class="lr-map-wrap">
+                            <div id="lr-map" class="lr-map"></div>
+                            <div class="lr-map-legend">
+                                <span><i class="fas fa-circle" style="color:#f5a623"></i> Pickup</span>
+                                <span><i class="fas fa-circle" style="color:#ff4d4d"></i> Destination</span>
+                                <span><i class="fas fa-circle" style="color:#7f8c9a"></i> Nearby eligible</span>
+                                <span><i class="fas fa-circle" style="color:#3498db"></i> Offer sent</span>
+                                <span><i class="fas fa-circle" style="color:#2ecc71"></i> Assigned</span>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Request detail drawer -->
+                <div id="lr-drawer" class="lr-drawer hidden">
+                    <div class="lr-drawer-head">
+                        <div>
+                            <h3 id="lr-drawer-title">Ride</h3>
+                            <span id="lr-drawer-sub" class="lr-drawer-sub"></span>
+                        </div>
+                        <button class="btn-secondary" onclick="closeRequestDrawer()"><i class="fas fa-times"></i></button>
+                    </div>
+                    <div id="lr-drawer-body" class="lr-drawer-body"></div>
+                </div>
+
+                <!-- Dispatch Metrics -->
+                <section id="driver-dispatch-metrics" class="content-section hidden">
+                    <div class="lr-banner">
+                        <i class="fas fa-circle-info"></i>
+                        <span>Descriptive metrics for operational follow-up. <strong>No automatic penalties</strong> are derived from these counts.</span>
+                    </div>
+                    <div class="live-controls" style="margin-bottom:14px">
+                        <select id="dm-window" onchange="fetchDispatchMetrics()">
+                            <option value="24">Last 24 hours</option>
+                            <option value="72">Last 3 days</option>
+                            <option value="168">Last 7 days</option>
+                            <option value="720">Last 30 days</option>
+                        </select>
+                        <input type="text" id="dm-search" placeholder="Driver name / plate…" oninput="renderDispatchMetrics()">
+                        <select id="dm-flag" onchange="renderDispatchMetrics()">
+                            <option value="all">All drivers</option>
+                            <option value="flagged">Needs follow-up</option>
+                            <option value="notification_delivery_help">Delivery problems</option>
+                            <option value="battery_or_network_help">Battery / network</option>
+                            <option value="ack_unsupported_or_app_update">App update needed</option>
+                            <option value="training_conversation">Training conversation</option>
+                        </select>
+                        <button class="btn-secondary" onclick="fetchDispatchMetrics()">Refresh</button>
+                        <span id="dm-updated" class="live-updated"></span>
+                    </div>
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Driver</th>
+                                    <th>Offers notified</th>
+                                    <th>Device ack</th>
+                                    <th>Accepted</th>
+                                    <th>Rejected</th>
+                                    <th>Expired</th>
+                                    <th>Delivery fails</th>
+                                    <th>Stale HB</th>
+                                    <th>Median resp.</th>
+                                    <th>Accept rate</th>
+                                    <th>Suggested follow-up</th>
+                                </tr>
+                            </thead>
+                            <tbody id="dm-list"></tbody>
+                        </table>
+                    </div>
+                </section>
+
                 <!-- History Section -->
                 <section id="history" class="content-section hidden">
                     <div class="table-container">
@@ -413,6 +541,7 @@
 
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="app.js?v=3.8"></script>
+    <script src="live_requests.js?v=1.0"></script>
+    <script src="app.js?v=3.9"></script>
 </body>
 </html>

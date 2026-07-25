@@ -70,6 +70,15 @@ export class Ride {
     @Column({ nullable: true, length: 4 })
     pickupCode!: string;
 
+    // Trip estimates the passenger app computes for its own fare screen. Sent
+    // for operational reporting only — never used for charging (see finalFare).
+    // Optional: older app builds omit them and the monitor shows "—".
+    @Column({ type: "int", nullable: true })
+    estimatedDistanceM!: number | null;
+
+    @Column({ type: "int", nullable: true })
+    estimatedDurationSec!: number | null;
+
     // --- Anti-fraud evidence (captured from the driver's live GPS at each
     // transition). All nullable/back-compatible. See RideIntegrityService. ---
     @Column({ type: "timestamp", nullable: true })

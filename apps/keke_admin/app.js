@@ -98,6 +98,7 @@ function switchSection(id) {
 
     currentSection = id;
     stopLiveRefresh(); // leaving any section halts the Live Riders poll
+    if (typeof stopLiveRequestsStream === 'function') stopLiveRequestsStream();
     if (sectionTitle) sectionTitle.innerText = id.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 
     if (id === 'drivers')       { fetchPendingDrivers(); fetchIncompleteDrivers(); }
@@ -108,6 +109,8 @@ function switchSection(id) {
     if (id === 'payouts')       fetchPayouts();
     if (id === 'history')       fetchRideHistory();
     if (id === 'live-riders')   { fetchLiveRiders(); toggleLiveAutoRefresh(); }
+    if (id === 'live-requests')  enterLiveRequests();
+    if (id === 'driver-dispatch-metrics') fetchDispatchMetrics();
     if (id === 'sos-alerts')    fetchSosAlerts();
     if (id === 'audit-log')     fetchAuditLog();
     if (id === 'settings')      fetchSettings();
@@ -1023,11 +1026,26 @@ function setupSocket() {
     socket.on('connect', () => {
         socket.emit('join', { userId: 'dashboard', role: 'admin' });
         updateApiStatus(true);
+        if (typeof setLiveRequestsStreamState === 'function') setLiveRequestsStreamState(true);
+        // Re-sync the monitor after any gap: incremental events that arrived
+        // while we were away were never delivered, so reconcile once.
+        if (currentSection === 'live-requests' && typeof fetchLiveRequests === 'function') {
+            fetchLiveRequests().catch(() => {});
+        }
     });
-    socket.on('disconnect', () => updateApiStatus(false));
+    socket.on('disconnect', () => {
+        updateApiStatus(false);
+        if (typeof setLiveRequestsStreamState === 'function') setLiveRequestsStreamState(false);
+    });
     socket.on('reconnect',  () => { updateApiStatus(true); init(); });
 
-    socket.on('ride:status_update', () => {
+    // Live Ride Requests: apply pushed deltas instead of refetching the world.
+    socket.on('admin:dispatch_event', (ev) => {
+        if (typeof applyDispatchEvent === 'function') applyDispatchEvent(ev);
+    });
+
+    socket.on('ride:status_update', (payload) => {
+        if (typeof applyRideStatusUpdate === 'function') applyRideStatusUpdate(payload);
         if (currentSection === 'active-rides' || currentSection === 'overview') {
             fetchActiveRides();
             refreshOverview();

@@ -1,6 +1,8 @@
 import { Router, Request, Response } from "express";
 import { AdminService } from "../services/admin_service";
 import { adminAuth } from "../middleware/admin_auth";
+import { attachAdminIdentity, requirePermission, AdminRequest } from "../middleware/admin_permissions";
+import { DispatchMonitorQueryService } from "../services/dispatch_monitor_query_service";
 import { adminLimiter } from "../middleware/rate_limit";
 import { adminRejectionSchema } from "../services/validation_service";
 import { DriverStatus, DriverProfile } from "../models/DriverProfile";
@@ -20,7 +22,138 @@ const router = Router();
 
 // Apply Admin Auth & Rate Limiting
 router.use(adminAuth);
+router.use(attachAdminIdentity);
 router.use(adminLimiter);
+
+/** Record a sensitive admin action against the acting role. */
+async function auditAdmin(
+    req: AdminRequest,
+    action: string,
+    entityType: string,
+    entityId: string,
+    details?: Record<string, unknown>,
+) {
+    try {
+        const repo = AppDataSource.getRepository(AuditLog);
+        await repo.save(repo.create({
+            adminId: req.admin?.label ?? 'superadmin',
+            action,
+            entityType,
+            entityId,
+            details: details ?? null,
+        }));
+    } catch (err: any) {
+        console.warn(`[ADMIN_AUDIT] failed to record ${action}: ${err?.message}`);
+    }
+}
+
+// ===================== Live Ride Requests monitor =====================
+
+/**
+ * GET /admin/live-requests
+ * Active searching/offered/accepted/arriving/in-progress rides with dispatch
+ * rollups. Contact data is MASKED — see /reveal-contact for escalation.
+ */
+router.get("/live-requests", requirePermission('monitor:read'), async (req: AdminRequest, res: Response) => {
+    try {
+        const statusParam = (req.query.status as string | undefined)?.trim();
+        const statuses = statusParam && statusParam !== 'all'
+            ? statusParam.split(',').map(s => s.trim()).filter(Boolean) as any[]
+            : undefined;
+        const data = await DispatchMonitorQueryService.liveRequests({
+            statuses,
+            limit: req.query.limit ? Number(req.query.limit) : undefined,
+        });
+        res.json(data);
+    } catch (err: any) {
+        console.error('[ADMIN] live-requests error:', err?.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * GET /admin/live-requests/:rideId
+ * Full detail: trip, dispatch summary and the per-driver offer timeline.
+ */
+router.get("/live-requests/:rideId", requirePermission('monitor:read'), async (req: AdminRequest, res: Response) => {
+    try {
+        const detail = await DispatchMonitorQueryService.requestDetail(String(req.params.rideId));
+        if (!detail) return res.status(404).json({ error: 'Ride not found' });
+        // Opening a request exposes a passenger's trip and history counts, so the
+        // access itself is recorded even though the payload is masked.
+        await auditAdmin(req, 'VIEW_LIVE_REQUEST', 'RIDE', String(req.params.rideId), {
+            status: detail.ride.status,
+        });
+        res.json(detail);
+    } catch (err: any) {
+        console.error('[ADMIN] live-request detail error:', err?.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * POST /admin/live-requests/:rideId/reveal-contact
+ * Unmasked passenger/driver contact for a live support call. Always audited.
+ */
+router.post("/live-requests/:rideId/reveal-contact", requirePermission('monitor:reveal_contact'), async (req: AdminRequest, res: Response) => {
+    try {
+        const reason = (req.body?.reason as string | undefined)?.slice(0, 200) || null;
+        const data = await DispatchMonitorQueryService.revealContact(String(req.params.rideId));
+        if (!data) return res.status(404).json({ error: 'Ride not found' });
+        await auditAdmin(req, 'REVEAL_RIDE_CONTACT', 'RIDE', String(req.params.rideId), { reason });
+        res.json(data);
+    } catch (err: any) {
+        console.error('[ADMIN] reveal-contact error:', err?.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * GET /admin/dispatch/driver-metrics
+ * Descriptive per-driver dispatch behaviour. No scoring, ranking or penalties.
+ */
+router.get("/dispatch/driver-metrics", requirePermission('metrics:read'), async (req: AdminRequest, res: Response) => {
+    try {
+        const data = await DispatchMonitorQueryService.driverMetrics({
+            sinceHours: req.query.hours ? Number(req.query.hours) : undefined,
+            driverId: (req.query.driverId as string | undefined) || undefined,
+            limit: req.query.limit ? Number(req.query.limit) : undefined,
+        });
+        res.json(data);
+    } catch (err: any) {
+        console.error('[ADMIN] driver-metrics error:', err?.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * GET /admin/dispatch/events
+ * Paginated historical dispatch-event query.
+ */
+router.get("/dispatch/events", requirePermission('monitor:read'), async (req: AdminRequest, res: Response) => {
+    try {
+        const typesParam = (req.query.eventTypes as string | undefined)?.trim();
+        const data = await DispatchMonitorQueryService.historicalEvents({
+            rideId: (req.query.rideId as string | undefined) || undefined,
+            driverId: (req.query.driverId as string | undefined) || undefined,
+            eventTypes: typesParam ? (typesParam.split(',').map(s => s.trim()).filter(Boolean) as any[]) : undefined,
+            from: req.query.from ? new Date(req.query.from as string) : undefined,
+            to: req.query.to ? new Date(req.query.to as string) : undefined,
+            dispatchRound: req.query.round ? Number(req.query.round) : undefined,
+            limit: req.query.limit ? Number(req.query.limit) : undefined,
+            offset: req.query.offset ? Number(req.query.offset) : undefined,
+        });
+        res.json(data);
+    } catch (err: any) {
+        console.error('[ADMIN] dispatch events error:', err?.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/** GET /admin/whoami — the acting role, so the UI can hide what it cannot use. */
+router.get("/whoami", async (req: AdminRequest, res: Response) => {
+    res.json({ role: req.admin?.role ?? 'superadmin', label: req.admin?.label ?? 'superadmin' });
+});
 
 /**
  * GET /admin/overview

@@ -148,6 +148,9 @@ class MapRepository {
       final distanceInMeters = leg['distance']['value'] as int;
       final distanceText = leg['distance']['text'] as String;
       final timeText = leg['duration']['text'] as String;
+      // Raw values were computed and thrown away; only the human strings were
+      // kept. Support needs the numbers to reason about a trip after the fact.
+      final durationInSeconds = (leg['duration']['value'] as num?)?.round();
       final polylineEncoded = route['overview_polyline']['points'] as String;
 
       final double distanceInKm = distanceInMeters / 1000.0;
@@ -160,6 +163,8 @@ class MapRepository {
         'time': timeText,
         'fare': totalFare.round(),
         'polyline': _decodePolyline(polylineEncoded),
+        'distanceMeters': distanceInMeters,
+        'durationSeconds': durationInSeconds,
       };
     }
     throw Exception('Failed to calculate route.');

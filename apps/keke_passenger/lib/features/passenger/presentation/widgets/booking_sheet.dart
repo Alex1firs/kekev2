@@ -11,6 +11,8 @@ import '../../application/wallet_controller.dart';
 import '../destination_search_screen.dart';
 import '../wallet_screen.dart';
 import 'booking_notice_card.dart';
+import 'coordination_card.dart';
+import '../../domain/ride_coordination.dart';
 import 'searching_panel.dart';
 import 'ride_chat_panel.dart';
 import 'ride_receipt_sheet.dart';
@@ -291,6 +293,21 @@ class BookingSheet extends ConsumerWidget {
           ],
         ),
         const SizedBox(height: 14),
+
+        // A ride the backend closed for a reason the passenger deserves
+        // explaining — nobody answered, the driver could not make it, support
+        // stepped in. Shown ahead of the ordinary notice because it needs more
+        // than a line of text: it needs a way to get moving again.
+        if (state.closure != null) ...[
+          RideClosedCard(
+            title: state.closureTitle ?? 'Ride closed',
+            body: state.closureBody ?? '',
+            closure: state.closure!,
+            onPrimaryAction: () =>
+                ref.read(bookingControllerProvider.notifier).dismissClosure(),
+          ),
+          const SizedBox(height: 14),
+        ],
 
         // Outcomes that land back here — cancelled request, blocked because a
         // ride is already live, failed active-ride recovery.
@@ -754,6 +771,20 @@ class BookingSheet extends ConsumerWidget {
         _JourneyStageBar(step: state.step),
         const SizedBox(height: 16),
 
+        // The delayed-ride conversation sits ABOVE the tracking card: when a
+        // driver is late, the question in front of the passenger matters more
+        // than the ETA that has stopped being true. Never shown once the trip is
+        // under way — the backend does not put in-progress trips through this.
+        if (state.coordination != null &&
+            state.step != BookingStep.started) ...[
+          CoordinationCard(
+            coordination: state.coordination!,
+            onAction: (action) => _handleCoordinationAction(
+                context, ref, action, state, driver),
+          ),
+          const SizedBox(height: 14),
+        ],
+
         // Card-level transition only — stage bar stays put
         AnimatedSwitcher(
           duration: const Duration(milliseconds: 280),
@@ -813,6 +844,38 @@ class BookingSheet extends ConsumerWidget {
         ],
       ],
     );
+  }
+
+  /// Bridge a coordination action to the controller, plus the two things only the
+  /// UI can do: place a call and open the chat panel.
+  void _handleCoordinationAction(
+    BuildContext context,
+    WidgetRef ref,
+    CoordinationAction action,
+    BookingState state,
+    Map<String, dynamic> driver,
+  ) {
+    final controller = ref.read(bookingControllerProvider.notifier);
+
+    switch (action) {
+      case CoordinationAction.callOtherParty:
+        // Report it first: a tel: hand-off may never come back to this app, and
+        // the call is evidence the ride is alive whether or not we see it again.
+        controller.respondToCoordination(action);
+        _call(context, driver);
+        return;
+      case CoordinationAction.messageOtherParty:
+        controller.respondToCoordination(action);
+        showRideChat(context, ref);
+        return;
+      case CoordinationAction.contactSupport:
+        controller.respondToCoordination(action);
+        _openSupport(context);
+        return;
+      default:
+        controller.respondToCoordination(action);
+        return;
+    }
   }
 
   // ── Nearby ETA helper ──────────────────────────────────────────────────
@@ -2341,6 +2404,59 @@ class _StatBox extends StatelessWidget {
 }
 
 // ── Shared call helper ─────────────────────────────────────────────────────
+
+/// Open the ride chat panel. Shared by the contact strip and the coordination
+/// card, so a delayed passenger reaches the same conversation either way.
+void showRideChat(BuildContext context, WidgetRef ref) {
+  showModalBottomSheet(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    builder: (ctx) => SizedBox(
+      height: MediaQuery.of(ctx).size.height * 0.6 +
+          MediaQuery.of(ctx).viewInsets.bottom,
+      child: const RideChatPanel(),
+    ),
+  );
+}
+
+/// Support hand-off for an escalated ride.
+///
+/// Deliberately plain: no incident number, no internal reason code. The
+/// passenger is told a person is looking at it and given a way to reach one, if
+/// a support line is configured for this build.
+void _openSupport(BuildContext context) {
+  final phone = EnvConfig.current.supportPhone;
+  showDialog(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: Text('Contact support',
+          style: AppTextStyles.body(weight: FontWeight.w700)),
+      content: Text(
+        phone.isEmpty
+            ? 'Our team has already been notified about this ride and is looking into it. '
+                'Nothing will be cancelled automatically while they do.'
+            : 'Our team has already been notified about this ride. You can call us on $phone.',
+        style: AppTextStyles.bodySmall(color: AppColors.darkGray),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(),
+          child: const Text('Close'),
+        ),
+        if (phone.isNotEmpty)
+          TextButton(
+            onPressed: () async {
+              Navigator.of(ctx).pop();
+              final uri = Uri(scheme: 'tel', path: phone);
+              if (await canLaunchUrl(uri)) await launchUrl(uri);
+            },
+            child: const Text('Call support'),
+          ),
+      ],
+    ),
+  );
+}
 
 Future<void> _call(BuildContext context, Map<String, dynamic> driver) async {
   final phone = driver['phone']?.toString();

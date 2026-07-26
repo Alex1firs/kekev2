@@ -69,6 +69,33 @@ class AnalyticsService {
       ...dispatchEvidence,
     });
   }
+
+  /// A coordination prompt, notification or response.
+  ///
+  /// [stage] is the coordination stage, [eventId] the server's idempotency key —
+  /// both are needed to answer the questions that matter operationally: how often
+  /// does a prompt go unanswered, and how often does a driver who says "still
+  /// coming" actually arrive.
+  ///
+  /// Deliberately carries no message text and no coordinates. Knowing a
+  /// coordination prompt was answered is useful; a log of where two people were
+  /// standing and what they said to each other is not ours to keep.
+  void logCoordination(
+    String event, {
+    required String? rideId,
+    required String? eventId,
+    required String stage,
+    String role = 'passenger',
+    Map<String, Object?> extra = const {},
+  }) {
+    log('coordination_$event', {
+      'rideId': rideId,
+      'eventId': eventId,
+      'stage': stage,
+      'role': role,
+      ...extra,
+    });
+  }
 }
 
 final analyticsServiceProvider = Provider<AnalyticsService>((ref) {

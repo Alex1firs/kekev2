@@ -2,6 +2,7 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'booking_notice.dart';
 import 'chat_message.dart';
 import 'nearby_keke.dart';
+import 'ride_coordination.dart';
 
 enum BookingStep {
   loading,
@@ -88,6 +89,18 @@ class BookingState {
   /// off here?"). Drives the confirm/report dialog on the active-ride screen.
   final bool earlyEndRequested;
 
+  /// The live delayed-ride / cancellation-decision state, or null when there is
+  /// nothing to coordinate. Server-authoritative: the app renders it and reports
+  /// the passenger's answer, and never decides on its own that a ride is late.
+  final RideCoordination? coordination;
+
+  /// How a ride that just ended was classified by the server, when it ended in a
+  /// way the passenger needs explaining (nobody answered, the driver asked to
+  /// cancel). Null for an ordinary completion.
+  final RideClosure? closure;
+  final String? closureTitle;
+  final String? closureBody;
+
   /// Set to the just-completed ride's id when the trip finishes, so the receipt
   /// can prompt the passenger to rate the driver. Cleared once the passenger
   /// submits or skips the rating (so it never re-prompts for the same ride).
@@ -134,6 +147,10 @@ class BookingState {
     this.receiptCompletedAt,
     this.earlyEndRequested = false,
     this.pendingReviewRideId,
+    this.coordination,
+    this.closure,
+    this.closureTitle,
+    this.closureBody,
   });
 
   BookingState copyWith({
@@ -188,6 +205,12 @@ class BookingState {
     bool? earlyEndRequested,
     String? pendingReviewRideId,
     bool clearPendingReview = false,
+    RideCoordination? coordination,
+    bool clearCoordination = false,
+    RideClosure? closure,
+    String? closureTitle,
+    String? closureBody,
+    bool clearClosure = false,
   }) {
     return BookingState(
       step: step ?? this.step,
@@ -232,6 +255,10 @@ class BookingState {
       receiptCompletedAt: receiptCompletedAt ?? this.receiptCompletedAt,
       earlyEndRequested: earlyEndRequested ?? this.earlyEndRequested,
       pendingReviewRideId: clearPendingReview ? null : (pendingReviewRideId ?? this.pendingReviewRideId),
+      coordination: clearCoordination ? null : (coordination ?? this.coordination),
+      closure: clearClosure ? null : (closure ?? this.closure),
+      closureTitle: clearClosure ? null : (closureTitle ?? this.closureTitle),
+      closureBody: clearClosure ? null : (closureBody ?? this.closureBody),
     );
   }
 }

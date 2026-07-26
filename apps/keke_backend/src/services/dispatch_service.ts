@@ -227,6 +227,17 @@ export class DispatchService {
   }
 
   /**
+   * Whether the driver DELIBERATELY went offline (tombstone written by
+   * removeDriverAvailability, cleared by the next heartbeat).
+   *
+   * Distinct from a stale heartbeat: a driver who chose to stop working must not
+   * be dragged back into the dispatch pool by ride cleanup.
+   */
+  static async isDriverDeliberatelyOffline(driverId: string): Promise<boolean> {
+    return (await redis.exists(`${this.DRIVER_OFFLINE_PREFIX}${driverId}`)) === 1;
+  }
+
+  /**
    * Release a driver's reservation. When rideId is given, releases ONLY if that
    * ride still owns it (ownership-checked, atomic via Lua). When omitted, forces
    * release. Returns true if a key was actually removed.

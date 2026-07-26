@@ -171,4 +171,46 @@ export class Ride {
     /** Why a ride is held for review (e.g. early_end_no_passenger_response). */
     @Column({ type: "varchar", length: 120, nullable: true })
     reviewReason!: string | null;
+
+    // --- Lifecycle expiry / stale-ride recovery ---
+    // A ride left in accepted/arrived blocks its passenger from booking AND its
+    // driver from accepting, so these states need a deadline. See
+    // config/stale_ride_config.ts and services/stale_ride_service.ts.
+
+    /**
+     * Why this ride reached a terminal state — e.g. `passenger_cancelled` or
+     * `SYSTEM_DRIVER_DID_NOT_ARRIVE`. The status alone cannot distinguish a
+     * passenger changing their mind from an automatic recovery.
+     */
+    @Column({ type: "varchar", length: 120, nullable: true })
+    cancellationReason!: string | null;
+
+    /**
+     * An in-progress trip far past its expected duration. Flagged for a human,
+     * never auto-cancelled: a real trip happened and a real fare is owed.
+     */
+    @Index()
+    @Column({ default: false })
+    requiresOperationsReview!: boolean;
+
+    @Column({ type: "varchar", length: 120, nullable: true })
+    staleReason!: string | null;
+
+    @Column({ type: "timestamp", nullable: true })
+    staleDetectedAt!: Date | null;
+
+    /**
+     * When the stale warning was sent. Persisted rather than kept in memory so a
+     * restart mid-sweep cannot re-warn the same driver.
+     */
+    @Column({ type: "timestamp", nullable: true })
+    staleWarnedAt!: Date | null;
+
+    /** Extensions granted so far. Bounded by STALE_MAX_EXTENSIONS. */
+    @Column({ type: "int", default: 0 })
+    staleExtensionCount!: number;
+
+    /** Deadline pushed to this moment by a driver confirmation. */
+    @Column({ type: "timestamp", nullable: true })
+    staleDeadlineOverrideAt!: Date | null;
 }

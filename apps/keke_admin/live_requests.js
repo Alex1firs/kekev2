@@ -101,7 +101,22 @@ const LR_EVENT_LABEL = {
     offer_expired: 'Offer expired',
     driver_accepted: 'Driver accepted',
     dispatch_failed: 'Dispatch ended without assignment',
-    ride_cancelled: 'Passenger cancelled',
+    ride_cancelled: 'Ride cancelled',
+    stale_ride_detected: 'Stale ride detected',
+    stale_warning_sent: 'Warning sent',
+    stale_extension_granted: 'Extension granted',
+    stale_auto_cancelled: 'Auto-cancelled by system',
+    operations_review_required: 'Operations review required',
+    stale_cleanup_completed: 'Cleanup completed',
+};
+
+/** Badge copy for the derived stale class on a live request. */
+const LR_STALE_META = {
+    accepted_too_long:         { label: 'Overdue arrival',   cls: 'lr-st-nodriver' },
+    arrived_not_started:       { label: 'Not started',       cls: 'lr-st-nodriver' },
+    in_progress_too_long:      { label: 'Trip overrunning',  cls: 'lr-flag' },
+    pending_operations_review: { label: 'Needs ops review',  cls: 'lr-st-error' },
+    system_auto_cancelled:     { label: 'System cancelled',  cls: 'lr-st-cancelled' },
 };
 
 // ── helpers ────────────────────────────────────────────────────────────────
@@ -310,6 +325,11 @@ function lrVisibleRequests() {
         if (round !== 'all' && String(r.dispatchRound || 1) !== round) return false;
         if (Number.isFinite(fareMin) && (r.estimatedFare == null || r.estimatedFare < fareMin)) return false;
         if (Number.isFinite(fareMax) && (r.estimatedFare == null || r.estimatedFare > fareMax)) return false;
+        const stale = (document.getElementById('lr-stale') || {}).value || 'all';
+        if (stale !== 'all') {
+            if (stale === 'any' && (!r.staleClass || r.staleClass === 'ok')) return false;
+            if (stale !== 'any' && r.staleClass !== stale) return false;
+        }
         if (dispatch !== 'all') {
             if (dispatch === 'no_offers' && (r.notifiedDriverCount || 0) > 0) return false;
             if (dispatch === 'offered' && (r.notifiedDriverCount || 0) === 0) return false;
@@ -377,6 +397,13 @@ function renderLiveRequests() {
             <div class="lr-card-top">
                 <span class="lr-badge ${meta.cls}">${lrEsc(meta.label)}</span>
                 ${outcome ? `<span class="lr-badge ${outcome.cls}">${lrEsc(outcome.label)}</span>` : ''}
+                ${(() => {
+                    const st = LR_STALE_META[r.staleClass];
+                    if (!st) return '';
+                    const warned = r.staleWarnedAt ? ' · warned' : '';
+                    const ext = (r.staleExtensionCount || 0) > 0 ? ` · +${r.staleExtensionCount} ext` : '';
+                    return `<span class="lr-badge ${st.cls}" title="${lrEsc(r.staleReason || st.label)}">${lrEsc(st.label)}${warned}${ext}</span>`;
+                })()}
                 <span class="lr-round">Round ${r.dispatchRound || 1}</span>
                 ${r.searchRadiusKm != null ? `<span class="lr-radius">${Number(r.searchRadiusKm).toFixed(1)} km tier</span>` : ''}
                 ${stale ? '<span class="lr-badge lr-stale-chip" title="No live dispatch run — server may have restarted">stale</span>' : ''}

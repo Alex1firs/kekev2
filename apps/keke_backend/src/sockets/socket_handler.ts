@@ -14,6 +14,8 @@ import { loadDispatchConfig } from '../config/dispatch_config';
 import { DriverEligibilityService } from '../services/driver_eligibility_service';
 import { DispatchMonitorService } from '../services/dispatch_monitor_service';
 import { DispatchMonitorQueryService } from '../services/dispatch_monitor_query_service';
+import { RideCleanupService } from '../services/ride_cleanup_service';
+import { loadStaleRideConfig } from '../config/stale_ride_config';
 import { DispatchEventType } from '../models/DispatchEvent';
 import { projectDispatchEvent } from '../services/dispatch_event_projection';
 import { User, UserRole } from '../models/User';
@@ -224,6 +226,28 @@ export class SocketHandler {
                 acknowledgedCount: summary.acknowledgedCount,
             };
         });
+        // The stale-ride cleanup service owns terminal actions but must reach the
+        // in-memory dispatch state and the realtime rooms that live here.
+        RideCleanupService.setHost({
+            abortDispatch: (rideId, reason) => {
+                const run = this.dispatchRuns.get(rideId);
+                if (run) run.abort('cancelled');
+                this.clearDispatchTimers(rideId);
+                rlog('dispatch_aborted_by_cleanup', { rideId, reason });
+            },
+            releaseRideReservations: (rideId, reason) => this.releaseRideReservations(rideId, reason),
+            notifiedDrivers: (rideId) => [...(this.activeDispatches.get(rideId) ?? [])],
+            forgetDriverRide: (driverId) => { this.driverRideMap.delete(driverId); },
+            clearDispatchState: (rideId) => {
+                this.dispatchRuns.delete(rideId);
+                this.rideExclusions.delete(rideId);
+                this.clearDispatch(rideId);
+            },
+            emitToRide: (rideId, event, payload) => { this.io.to(`ride:${rideId}`).emit(event, payload); },
+            emitToDriver: (driverId, event, payload) => { this.io.to(`driver:${driverId}`).emit(event, payload); },
+            emitToAdmin: (event, payload) => { this.io.to('admin').emit(event, payload); },
+        });
+
         this.setupHandlers();
     }
 
@@ -752,6 +776,71 @@ export class SocketHandler {
                 });
             });
 
+            // --- Driver confirms they are still coming ---
+            // The safe action offered by the stale-ride warning. Buys ONE bounded
+            // extension (STALE_EXTENSION_MINUTES), capped by STALE_MAX_EXTENSIONS,
+            // so a confirmation can never hold a passenger's slot open forever.
+            socket.on('ride:still_coming', async (raw) => {
+                const data = validate(Schemas.rideDriverAction, raw, socket);
+                if (!data) return;
+                try {
+                    const config = loadStaleRideConfig();
+                    const rideRepo = AppDataSource.getRepository(Ride);
+                    const ride = await rideRepo.findOne({ where: { rideId: data.rideId } });
+                    if (!ride || ride.driverId !== data.driverId) {
+                        socket.emit('ride:error', { code: 'FORBIDDEN', message: 'This ride is not yours.' });
+                        return;
+                    }
+                    if (ride.staleExtensionCount >= config.maxExtensions) {
+                        socket.emit('ride:error', {
+                            code: 'EXTENSION_LIMIT_REACHED',
+                            message: 'You have already confirmed once. Please arrive or cancel the ride.',
+                        });
+                        return;
+                    }
+
+                    const extendedTo = new Date(Date.now() + config.extensionMinutes * 60_000);
+                    // Conditional + counter increment in one statement, so two taps
+                    // cannot both be granted.
+                    const applied = await rideRepo
+                        .createQueryBuilder()
+                        .update()
+                        .set({
+                            staleDeadlineOverrideAt: extendedTo,
+                            staleExtensionCount: () => '"staleExtensionCount" + 1',
+                        })
+                        .where('"rideId" = :rideId AND status IN (:...live) AND "completedAt" IS NULL AND "staleExtensionCount" < :max',
+                            { rideId: data.rideId, live: ['accepted', 'arrived'], max: config.maxExtensions })
+                        .execute();
+
+                    if (!applied.affected) {
+                        socket.emit('ride:error', { code: 'INVALID_STATE', message: 'This ride can no longer be extended.' });
+                        return;
+                    }
+
+                    socket.emit('ride:extension_granted', {
+                        rideId: data.rideId,
+                        extendedUntil: extendedTo.toISOString(),
+                        minutes: config.extensionMinutes,
+                    });
+                    DispatchMonitorService.record({
+                        rideId: data.rideId,
+                        eventType: DispatchEventType.STALE_EXTENSION_GRANTED,
+                        driverId: data.driverId,
+                        detail: {
+                            minutes: config.extensionMinutes,
+                            extendedUntil: extendedTo.toISOString(),
+                            extensionNumber: (ride.staleExtensionCount ?? 0) + 1,
+                            maxExtensions: config.maxExtensions,
+                        },
+                    });
+                    rlog('stale_extension_granted', { rideId: data.rideId, driverId: data.driverId, minutes: config.extensionMinutes });
+                } catch (err) {
+                    log.error('ride:still_coming failed:', err);
+                    socket.emit('ride:error', { code: 'INTERNAL_ERROR', message: 'Could not confirm right now. Please try again.' });
+                }
+            });
+
             // --- Driver Reject ---
             socket.on('ride:reject', async (raw) => {
                 const data = validate(Schemas.rideDriverAction, raw, socket);
@@ -808,14 +897,29 @@ export class SocketHandler {
                         return;
                     }
 
-                    await AppDataSource.getRepository(Ride).update(data.rideId, {
-                        status: 'arrived' as any,
-                        arrivedAt: new Date(),
-                        arrivedLat: gate.driverLoc?.lat ?? null,
-                        arrivedLng: gate.driverLoc?.lng ?? null,
-                        arrivedPickupDistanceM: gate.distanceM,
-                        ...(gate.flagged ? { suspicious: true, suspiciousReason: mergeReasons(ride.suspiciousReason, [`arrived:${gate.outcome}`]) } : {}),
-                    } as any);
+                    // CONDITIONAL update. validateRideState above is a read, so an
+                    // unconditional write here could resurrect a ride the stale
+                    // sweep cancelled in between — turning a cancelled ride back
+                    // into 'arrived' with its passenger slot already released.
+                    const arrivedUpdate = await AppDataSource.getRepository(Ride)
+                        .createQueryBuilder()
+                        .update()
+                        .set({
+                            status: 'arrived' as any,
+                            arrivedAt: new Date(),
+                            arrivedLat: gate.driverLoc?.lat ?? null,
+                            arrivedLng: gate.driverLoc?.lng ?? null,
+                            arrivedPickupDistanceM: gate.distanceM,
+                            ...(gate.flagged ? { suspicious: true, suspiciousReason: mergeReasons(ride.suspiciousReason, [`arrived:${gate.outcome}`]) } : {}),
+                        } as any)
+                        .where('"rideId" = :rideId AND status = :expected AND "completedAt" IS NULL',
+                            { rideId: data.rideId, expected: 'accepted' })
+                        .execute();
+                    if (!arrivedUpdate.affected) {
+                        log.warn(`[SYNC_AUDIT] ride:arrived lost a race for ${data.rideId} — no longer 'accepted'`);
+                        socket.emit('ride:expired', { code: 'RIDE_NO_LONGER_ACTIVE', rideId: data.rideId, message: 'This ride is no longer active.' });
+                        return;
+                    }
                     this.broadcastToRide(data.rideId, 'ride:status_update', { rideId: data.rideId, status: 'arrived' });
                     NotificationService.sendToUser(ride.passengerId, UserRole.PASSENGER, 'Driver Arrived!', 'Your driver has reached the pickup location.', {
                         type: 'RIDE_ARRIVED', rideId: data.rideId, intent: 'active',
@@ -846,14 +950,27 @@ export class SocketHandler {
                         return;
                     }
 
-                    await AppDataSource.getRepository(Ride).update(data.rideId, {
-                        status: 'in_progress' as any,
-                        startedAt: new Date(),
-                        startLat: gate.driverLoc?.lat ?? null,
-                        startLng: gate.driverLoc?.lng ?? null,
-                        startPickupDistanceM: gate.distanceM,
-                        ...(gate.flagged ? { suspicious: true, suspiciousReason: mergeReasons(ride.suspiciousReason, [`start:${gate.outcome}`]) } : {}),
-                    } as any);
+                    // CONDITIONAL, for the same reason as ride:arrived — a start
+                    // must never revive a ride the sweep already cancelled.
+                    const startUpdate = await AppDataSource.getRepository(Ride)
+                        .createQueryBuilder()
+                        .update()
+                        .set({
+                            status: 'in_progress' as any,
+                            startedAt: new Date(),
+                            startLat: gate.driverLoc?.lat ?? null,
+                            startLng: gate.driverLoc?.lng ?? null,
+                            startPickupDistanceM: gate.distanceM,
+                            ...(gate.flagged ? { suspicious: true, suspiciousReason: mergeReasons(ride.suspiciousReason, [`start:${gate.outcome}`]) } : {}),
+                        } as any)
+                        .where('"rideId" = :rideId AND status IN (:...expected) AND "completedAt" IS NULL',
+                            { rideId: data.rideId, expected: ['arrived', 'accepted'] })
+                        .execute();
+                    if (!startUpdate.affected) {
+                        log.warn(`[SYNC_AUDIT] ride:start lost a race for ${data.rideId} — no longer arrived/accepted`);
+                        socket.emit('ride:expired', { code: 'RIDE_NO_LONGER_ACTIVE', rideId: data.rideId, message: 'This ride is no longer active.' });
+                        return;
+                    }
                     // Send 'started' to match the passenger UI's expected status string
                     this.broadcastToRide(data.rideId, 'ride:status_update', { rideId: data.rideId, status: 'started' });
                     NotificationService.sendToUser(ride.passengerId, UserRole.PASSENGER, 'Trip Started', 'You are now on your trip.', {

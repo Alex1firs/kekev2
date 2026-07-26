@@ -17,6 +17,7 @@ import rideRoutes from "./routes/ride_routes";
 import notificationRoutes from "./routes/notification_routes";
 import passengerRoutes from "./routes/passenger_routes";
 import { NotificationService } from './services/notification_service';
+import { StaleRideSweeper } from './services/stale_ride_sweeper';
 import { redis } from './config/redis';
 
 dotenv.config();
@@ -152,6 +153,18 @@ AppDataSource.initialize()
       console.error(JSON.stringify({ level: 'warn', message: 'Stale ride sweep failed', error: e.message }));
     }
 
+    // Lifecycle expiry for rides stuck in accepted / arrived / in_progress.
+    // The startup sweep above only covers 'searching'; without this, a ride a
+    // driver accepted and abandoned blocks that passenger from booking AND that
+    // driver from accepting, indefinitely, until someone runs SQL by hand.
+    // Guarded by a Postgres advisory lock, so running several backend instances
+    // needs no change here. See services/stale_ride_sweeper.ts.
+    try {
+      StaleRideSweeper.start();
+    } catch (e: any) {
+      console.error(JSON.stringify({ level: 'error', message: 'Failed to start stale-ride sweeper', error: e.message }));
+    }
+
     const server = httpServer.listen(PORT, () => {
       console.log(JSON.stringify({ level: 'info', message: `Keke Backend running on port ${PORT}` }));
     });
@@ -160,6 +173,9 @@ AppDataSource.initialize()
       console.log(JSON.stringify({ level: 'info', message: `${signal} received, shutting down gracefully` }));
       server.close(async () => {
         try {
+          // Stop sweeping before the datasource goes away, so an in-flight pass
+          // cannot query a destroyed connection during a deploy.
+          StaleRideSweeper.stop();
           await AppDataSource.destroy();
           redis.disconnect();
         } catch (e) {}

@@ -17,7 +17,9 @@
     "test:unit": "jest --selectProjects unit",
     "test:integration": "jest --selectProjects integration",
     "test:concurrency": "jest --selectProjects concurrency",
-    "test:coverage": "jest --coverage"
+    "test:coverage": "jest --coverage",
+    "rides:sweep": "npx ts-node src/scripts/sweep_stale_rides.ts",
+    "rides:sweep:prod": "node dist/scripts/sweep_stale_rides.js"
   },
   "keywords": [],
   "author": "",

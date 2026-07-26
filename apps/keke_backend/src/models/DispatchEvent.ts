@@ -52,8 +52,22 @@ export enum DispatchEventType {
 
     /** Dispatch ended with no assignment. `detail.outcomeCode` carries why. */
     DISPATCH_FAILED = "dispatch_failed",
-    /** The passenger cancelled. */
+    /** The passenger cancelled, or the system did — see `detail.cancelledBy`. */
     RIDE_CANCELLED = "ride_cancelled",
+
+    // ── Lifecycle expiry / stale-ride recovery ───────────────────────────
+    /** The sweep found this ride past its state's deadline. */
+    STALE_RIDE_DETECTED = "stale_ride_detected",
+    /** A staged warning was sent before any terminal action. */
+    STALE_WARNING_SENT = "stale_warning_sent",
+    /** A driver confirmed they are still coming; deadline extended once. */
+    STALE_EXTENSION_GRANTED = "stale_extension_granted",
+    /** The system cancelled the ride. `detail.reason` is the SYSTEM_* code. */
+    STALE_AUTO_CANCELLED = "stale_auto_cancelled",
+    /** An over-running in-progress trip was flagged for humans, NOT cancelled. */
+    OPERATIONS_REVIEW_REQUIRED = "operations_review_required",
+    /** Every piece of held state for a terminated ride was released. */
+    STALE_CLEANUP_COMPLETED = "stale_cleanup_completed",
 }
 
 /**

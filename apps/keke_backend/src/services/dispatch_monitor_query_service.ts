@@ -19,6 +19,8 @@ import { User } from '../models/User';
 import { DriverProfile } from '../models/DriverProfile';
 import { DispatchEvent, DispatchEventType, OfferDeliveryState } from '../models/DispatchEvent';
 import { DispatchMonitorService } from './dispatch_monitor_service';
+import { StaleRideService, RideSnapshot } from './stale_ride_service';
+import { loadStaleRideConfig } from '../config/stale_ride_config';
 
 /** Ride statuses the monitor treats as "live". */
 export const LIVE_RIDE_STATUSES: RideStatus[] = [
@@ -129,6 +131,59 @@ export function resolveCandidateOutcome(
         return rideCancelled ? 'cancelled_before_response' : 'awaiting_response';
     }
     return 'awaiting_response';
+}
+
+/**
+ * How overdue a live ride is, as a single label the admin UI can filter on.
+ *
+ * Derived from the same StaleRideService policy the sweeper uses, so the monitor
+ * can never disagree with what the sweep is about to do.
+ */
+export type StaleClass =
+    | 'ok'
+    /** accepted past its ETA-aware arrival deadline. */
+    | 'accepted_too_long'
+    /** arrived but the trip was never started. */
+    | 'arrived_not_started'
+    /** in progress past its review threshold. */
+    | 'in_progress_too_long'
+    /** already flagged for a human. */
+    | 'pending_operations_review'
+    /** terminated by the system rather than by a person. */
+    | 'system_auto_cancelled';
+
+export function staleClassOf(ride: Ride): StaleClass {
+    if (ride.requiresOperationsReview) return 'pending_operations_review';
+    if (typeof ride.cancellationReason === 'string' && ride.cancellationReason.startsWith('SYSTEM_')) {
+        return 'system_auto_cancelled';
+    }
+
+    const config = loadStaleRideConfig();
+    const snapshot: RideSnapshot = {
+        rideId: ride.rideId,
+        status: ride.status as unknown as string,
+        passengerId: ride.passengerId ?? null,
+        driverId: ride.driverId ?? null,
+        acceptedAt: ride.acceptedAt ?? null,
+        arrivedAt: ride.arrivedAt ?? null,
+        startedAt: ride.startedAt ?? null,
+        completedAt: ride.completedAt ?? null,
+        estimatedDurationSec: ride.estimatedDurationSec ?? null,
+        acceptLat: Number.isFinite(Number(ride.acceptLat)) ? Number(ride.acceptLat) : null,
+        acceptLng: Number.isFinite(Number(ride.acceptLng)) ? Number(ride.acceptLng) : null,
+        pickupLat: Number.isFinite(Number(ride.pickupLat)) ? Number(ride.pickupLat) : null,
+        pickupLng: Number.isFinite(Number(ride.pickupLng)) ? Number(ride.pickupLng) : null,
+        staleWarnedAt: ride.staleWarnedAt ?? null,
+        staleExtensionCount: ride.staleExtensionCount ?? 0,
+        staleDeadlineOverrideAt: ride.staleDeadlineOverrideAt ?? null,
+        requiresOperationsReview: ride.requiresOperationsReview ?? false,
+    };
+
+    const evaluation = StaleRideService.evaluate(snapshot, config, new Date());
+    if (evaluation.action === 'none') return 'ok';
+    if (evaluation.action === 'flag_for_review') return 'in_progress_too_long';
+    // 'warn' and 'cancel' both mean overdue; the state says which kind.
+    return snapshot.status === 'arrived' ? 'arrived_not_started' : 'accepted_too_long';
 }
 
 export interface MonitorRollup {
@@ -314,6 +369,15 @@ export class DispatchMonitorQueryService {
                 deliveryFailureCount: rollup.deliveryFailureCount,
                 finalOutcomeCode: rollup.finalOutcomeCode,
                 dataSource: rollup.source,
+                // Stale-lifecycle visibility. `staleClass` is a single derived
+                // label so the UI does not have to recompute the policy.
+                staleClass: staleClassOf(ride),
+                requiresOperationsReview: ride.requiresOperationsReview === true,
+                staleReason: ride.staleReason ?? null,
+                staleDetectedAt: ride.staleDetectedAt ? new Date(ride.staleDetectedAt).toISOString() : null,
+                staleWarnedAt: ride.staleWarnedAt ? new Date(ride.staleWarnedAt).toISOString() : null,
+                staleExtensionCount: ride.staleExtensionCount ?? 0,
+                cancellationReason: ride.cancellationReason ?? null,
                 assignedDriver: driver
                     ? {
                           driverId: driver.userId,

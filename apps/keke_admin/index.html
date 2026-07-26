@@ -326,6 +326,15 @@
                                 <option value="1">Round 1</option>
                                 <option value="2">Round 2</option>
                             </select>
+                            <select id="lr-stale" onchange="renderLiveRequests()">
+                                <option value="all">Any lifecycle state</option>
+                                <option value="any">Stale (any kind)</option>
+                                <option value="accepted_too_long">Accepted too long</option>
+                                <option value="arrived_not_started">Arrived, not started</option>
+                                <option value="in_progress_too_long">In progress too long</option>
+                                <option value="pending_operations_review">Pending ops review</option>
+                                <option value="system_auto_cancelled">System auto-cancelled</option>
+                            </select>
                             <select id="lr-dispatch" onchange="renderLiveRequests()">
                                 <option value="all">Any dispatch state</option>
                                 <option value="no_offers">No offers sent yet</option>
@@ -541,7 +550,7 @@
 
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="live_requests.js?v=1.1"></script>
+    <script src="live_requests.js?v=1.2"></script>
     <script src="app.js?v=3.9"></script>
 </body>
 </html>

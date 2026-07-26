@@ -15,6 +15,7 @@ import {
     StaleResolution,
     StaleDecisionParty,
     StaleDecisionChoice,
+    RideDelayState,
 } from '../config/stale_ride_config';
 
 /** The subset of a ride the policy needs. Keeps tests free of entity plumbing. */
@@ -44,6 +45,33 @@ export interface RideSnapshot {
     staleDecisionBy: string | null;
     staleDecisionChoice: string | null;
     staleDecisionRound: number;
+
+    // ── Evidence the ride is still alive ─────────────────────────────────
+    /**
+     * Last deliberate human action or genuine approach on this ride. Liveness
+     * alone (an open app) does NOT set this — a parked driver emitting location
+     * updates is not a driver who is coming.
+     */
+    lastActivityAt: Date | null;
+    lastActivityType: string | null;
+    /** When the last check-in went out, for pacing reminders humanely. */
+    lastReminderAt: Date | null;
+
+    /** Whether each party is showing any sign of life at all. */
+    driverLive: boolean;
+    passengerLive: boolean;
+    /** How long each has shown nothing, in ms. Null when they are live. */
+    driverOfflineForMs: number | null;
+    passengerOfflineForMs: number | null;
+
+    // ── A cancellation asked for by one party ────────────────────────────
+    cancellationRequestedBy: string | null;
+    cancellationRequestedAt: Date | null;
+    /** 'pending' | 'accepted' | 'declined' */
+    cancellationRequestState: string | null;
+
+    /** Set once a human has been asked to look at this ride. */
+    escalatedToSupportAt: Date | null;
 }
 
 export type StaleAction =
@@ -63,6 +91,16 @@ export type StaleAction =
      * on stayed silent through the permitted rounds.
      */
     | 'cancel'
+    /**
+     * Check in again on the slow cadence. Two people coordinating deserve an
+     * occasional nudge, not a notification every minute.
+     */
+    | 'remind'
+    /**
+     * Hand to a human, with a way forward offered to the engaged party ("we
+     * cannot reach your driver — find another?"). NOT a cancellation.
+     */
+    | 'escalate'
     /** Flag for a human. Never used for accepted/arrived. */
     | 'flag_for_review';
 
@@ -90,6 +128,10 @@ export interface StaleEvaluation {
     deadlineAt: Date | null;
     /** Derived pickup ETA in minutes, when computable. */
     estimatedPickupEtaMinutes: number | null;
+    /** Operational state for the support dashboard. A delay is not an error. */
+    delayState: RideDelayState;
+    /** For `escalate`, which party we cannot reach. */
+    escalationTarget: StaleDecisionParty | null;
 }
 
 const MS_PER_MIN = 60_000;
@@ -189,6 +231,8 @@ export class StaleRideService {
             resolution: null,
             promptParties: [],
             decisionDeadlineAt: null,
+            delayState: RideDelayState.NONE,
+            escalationTarget: null,
             explanation: '',
             since: null,
             ageMinutes: null,
@@ -393,105 +437,182 @@ export class StaleRideService {
         },
     ): StaleEvaluation {
         const { awaitingParty, situation, ...common } = ctx;
+        const otherParty: StaleDecisionParty = awaitingParty === 'driver' ? 'passenger' : 'driver';
         const bothParties: StaleDecisionParty[] = ['passenger', 'driver'];
 
-        // 1. Nobody asked yet — this is the first thing that happens at a deadline.
+        // ── A pending cancellation request outranks everything ────────────
+        // One party has asked; the other gets to accept or keep going. Cancelling
+        // is a two-person act, not a consequence of the clock.
+        if (ride.cancellationRequestedBy && ride.cancellationRequestState === 'pending') {
+            const requester = ride.cancellationRequestedBy as StaleDecisionParty;
+            const askedAt = ride.cancellationRequestedAt;
+            const windowClosed = askedAt != null
+                && now.getTime() - askedAt.getTime() >= config.decisionWindowMinutes * MS_PER_MIN;
+
+            if (!windowClosed) {
+                return {
+                    ...common,
+                    action: 'none',
+                    delayState: RideDelayState.CANCELLATION_REQUESTED,
+                    explanation:
+                        `${situation}. The ${requester} asked to cancel; waiting for the ` +
+                        `${requester === 'driver' ? 'passenger' : 'driver'} to accept or continue`,
+                };
+            }
+            // The other side never answered, so the request stands. This is still a
+            // human decision — someone asked for it.
+            return {
+                ...common,
+                action: 'cancel',
+                resolution: StaleResolution.CANCELLED_REQUEST_UNANSWERED,
+                delayState: RideDelayState.CANCELLATION_REQUESTED,
+                explanation:
+                    `${situation}. The ${requester} asked to cancel and the other party did not ` +
+                    `respond within ${config.decisionWindowMinutes}min, so the request stands`,
+            };
+        }
+
+        // ── Genuine mutual abandonment: the only clock-driven termination ──
+        // BOTH sides silent and lifeless for a long time. Nobody is coordinating,
+        // so holding the passenger's booking and the driver's availability serves
+        // no one. Everything short of this escalates to a human instead.
+        const bothGone = !ride.driverLive && !ride.passengerLive;
+        const quietForMs = ride.lastActivityAt != null
+            ? now.getTime() - ride.lastActivityAt.getTime()
+            : (ride.acceptedAt ? now.getTime() - ride.acceptedAt.getTime() : 0);
+        if (bothGone && quietForMs >= config.mutualAbandonmentMinutes * MS_PER_MIN) {
+            return {
+                ...common,
+                action: 'cancel',
+                resolution: StaleResolution.ABANDONED_BY_BOTH,
+                delayState: RideDelayState.ESCALATED_TO_SUPPORT,
+                explanation:
+                    `${situation}. Neither party has shown any sign of life for ` +
+                    `${Math.round(quietForMs / MS_PER_MIN)}min (threshold ` +
+                    `${config.mutualAbandonmentMinutes}min) — treating the ride as abandoned`,
+            };
+        }
+
+        // ── One side engaged, the other gone: escalate, never cancel ──────
+        // "We cannot reach your driver" plus a way forward is far better than a
+        // ride vanishing. A human decides from here.
+        const awaitedLive = awaitingParty === 'driver' ? ride.driverLive : ride.passengerLive;
+        const otherLive = awaitingParty === 'driver' ? ride.passengerLive : ride.driverLive;
+        const awaitedOfflineForMs = awaitingParty === 'driver'
+            ? ride.driverOfflineForMs
+            : ride.passengerOfflineForMs;
+
+        if (!awaitedLive && otherLive
+            && (awaitedOfflineForMs ?? 0) >= config.escalateAfterOfflineMinutes * MS_PER_MIN) {
+            if (ride.escalatedToSupportAt != null) {
+                return {
+                    ...common,
+                    action: 'none',
+                    delayState: RideDelayState.ESCALATED_TO_SUPPORT,
+                    explanation: `${situation}. Already escalated to support; awaiting a human decision`,
+                };
+            }
+            return {
+                ...common,
+                action: 'escalate',
+                delayState: awaitingParty === 'driver'
+                    ? RideDelayState.DRIVER_OFFLINE
+                    : RideDelayState.PASSENGER_OFFLINE,
+                escalationTarget: awaitingParty,
+                explanation:
+                    `${situation}. The ${otherParty} is engaged but we cannot reach the ` +
+                    `${awaitingParty} (${Math.round((awaitedOfflineForMs ?? 0) / MS_PER_MIN)}min ` +
+                    `with no sign of life). Escalating and offering the ${otherParty} a way forward ` +
+                    `— NOT cancelling`,
+            };
+        }
+
+        // ── Otherwise: keep the conversation going ────────────────────────
+        // Nobody asked yet -> ask.
         if (ride.staleDecisionPromptedAt == null) {
             return {
                 ...common,
                 action: 'prompt_decision',
                 promptParties: bothParties,
                 decisionDeadlineAt: new Date(now.getTime() + config.decisionWindowMinutes * MS_PER_MIN),
+                delayState: RideDelayState.AWAITING_CONFIRMATION,
                 explanation:
-                    `${situation}. Asking both parties whether to keep waiting or cancel ` +
-                    `(${config.decisionWindowMinutes}min to respond) — nothing is cancelled yet`,
+                    `${situation}. Letting both parties know and asking how they would like to ` +
+                    `proceed — nothing is cancelled`,
             };
         }
 
-        const choice = ride.staleDecisionChoice as StaleDecisionChoice | null;
+        // Somebody said they are staying with it. Reflect that, and remind on a
+        // humane cadence rather than nagging.
+        const choice = ride.staleDecisionChoice;
         const by = ride.staleDecisionBy as StaleDecisionParty | null;
-
-        // 2. Somebody said cancel. Their choice is honoured immediately.
-        if (choice === 'cancel' && by) {
-            return {
-                ...common,
-                action: 'cancel',
-                resolution: by === 'passenger'
-                    ? StaleResolution.PASSENGER_CHOSE_CANCEL
-                    : StaleResolution.DRIVER_CHOSE_CANCEL,
-                explanation: `${situation}. The ${by} chose to cancel when asked`,
-            };
-        }
-
-        // 3. Somebody said wait. The extension pushed the deadline, so the outer
-        //    branch has already decided we are inside it; nothing to do now.
-        //    (If the extension has since lapsed, `staleDecisionDeadlineAt` gates
-        //    the next round below.)
-        const windowClosed = ride.staleDecisionDeadlineAt != null
-            && now.getTime() >= ride.staleDecisionDeadlineAt.getTime();
-
         if (choice === 'wait' && by) {
-            const roundsUsed = ride.staleDecisionRound;
-            const canAskAgain = roundsUsed <= config.maxExtensions;
-            if (!windowClosed || canAskAgain) {
-                // Re-ask on the next deadline rather than acting now.
+            const state = by === 'driver'
+                ? RideDelayState.DRIVER_CONFIRMED_EN_ROUTE
+                : RideDelayState.PASSENGER_WAITING;
+            const dueForReminder = this.reminderDue(ride, config, now);
+            if (dueForReminder) {
                 return {
                     ...common,
-                    action: 'none',
+                    action: 'remind',
+                    promptParties: bothParties,
+                    delayState: state,
                     explanation:
-                        `${situation}. The ${by} chose to keep waiting ` +
-                        `(round ${roundsUsed}/${config.maxExtensions}); will ask again at the new deadline`,
+                        `${situation}. The ${by} is staying with this ride; checking in again ` +
+                        `after ${this.reminderIntervalMinutes(ride, config)}min`,
                 };
             }
-            // 6. One side is co-operating, the other never answered across every
-            //    permitted round. Waiting longer cannot produce the missing party.
-            if (by !== awaitingParty) {
-                return {
-                    ...common,
-                    action: 'cancel',
-                    resolution: awaitingParty === 'driver'
-                        ? StaleResolution.DRIVER_UNRESPONSIVE
-                        : StaleResolution.PASSENGER_UNRESPONSIVE,
-                    explanation:
-                        `${situation}. The ${by} kept waiting, but the ${awaitingParty} never ` +
-                        `responded across ${config.maxExtensions + 1} rounds`,
-                };
-            }
-            return {
-                ...common,
-                action: 'cancel',
-                resolution: StaleResolution.NO_RESPONSE_FROM_EITHER,
-                explanation:
-                    `${situation}. Extensions exhausted with no resolution from either party`,
-            };
-        }
-
-        // 4. Window still open and nobody has answered. Wait for them.
-        if (!windowClosed) {
-            const secondsLeft = ride.staleDecisionDeadlineAt
-                ? Math.max(0, Math.round((ride.staleDecisionDeadlineAt.getTime() - now.getTime()) / 1000))
-                : 0;
             return {
                 ...common,
                 action: 'none',
-                promptParties: bothParties,
-                decisionDeadlineAt: ride.staleDecisionDeadlineAt,
-                explanation:
-                    `${situation}. Both parties asked; ${secondsLeft}s left to respond`,
+                delayState: state,
+                explanation: `${situation}. The ${by} confirmed they are staying with this ride`,
             };
         }
 
-        // 5. Window closed with silence from everyone. Nobody is engaged with this
-        //    ride, so holding the passenger's booking slot and the driver's
-        //    availability open helps no one.
+        // Prompt sent, nobody has answered, and neither is provably gone. Keep
+        // reminding on the slow cadence. Time alone never ends the ride.
+        if (this.reminderDue(ride, config, now)) {
+            return {
+                ...common,
+                action: 'remind',
+                promptParties: bothParties,
+                delayState: awaitingParty === 'driver'
+                    ? RideDelayState.WAITING_FOR_DRIVER
+                    : RideDelayState.WAITING_FOR_PASSENGER,
+                explanation:
+                    `${situation}. No response yet and both still reachable; checking in again`,
+            };
+        }
+
         return {
             ...common,
-            action: 'cancel',
-            resolution: StaleResolution.NO_RESPONSE_FROM_EITHER,
-            explanation:
-                `${situation}. Both parties were asked and neither responded within ` +
-                `${config.decisionWindowMinutes}min`,
+            action: 'none',
+            delayState: awaitingParty === 'driver'
+                ? RideDelayState.WAITING_FOR_DRIVER
+                : RideDelayState.WAITING_FOR_PASSENGER,
+            explanation: `${situation}. Waiting for a response; both parties still reachable`,
         };
+    }
+
+    /**
+     * Reminder interval, scaled up for longer trips so a two-hour journey is not
+     * interrupted as often as a ten-minute hop.
+     */
+    static reminderIntervalMinutes(ride: RideSnapshot, config: StaleRideConfig): number {
+        const tripHours = ride.estimatedDurationSec != null
+            ? ride.estimatedDurationSec / 3600
+            : 0;
+        const scaled = config.reminderIntervalMinutes + tripHours * config.reminderIntervalPerTripHour;
+        return Math.max(config.reminderMinIntervalMinutes, scaled);
+    }
+
+    /** Whether enough time has passed since the last check-in to send another. */
+    private static reminderDue(ride: RideSnapshot, config: StaleRideConfig, now: Date): boolean {
+        const interval = this.reminderIntervalMinutes(ride, config) * MS_PER_MIN;
+        const last = ride.lastReminderAt ?? ride.staleDecisionPromptedAt ?? ride.staleWarnedAt;
+        if (last == null) return true;
+        return now.getTime() - last.getTime() >= interval;
     }
 
     /** Whether a "keep waiting" choice may still be accepted for this ride. */

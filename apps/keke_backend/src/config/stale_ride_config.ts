@@ -75,6 +75,52 @@ export interface StaleRideConfig {
      */
     warnAtDeadlineFraction: number;
 
+    // ── Coordination cadence ─────────────────────────────────────────────
+    /**
+     * How long between reminders once both parties know the ride is delayed.
+     *
+     * Deliberately long. Two people who have each said "still coming" and "still
+     * waiting" are coordinating; nagging them every minute is worse than silence,
+     * and teaches both to ignore the notification that actually matters.
+     */
+    reminderIntervalMinutes: number;
+
+    /** Scale the reminder interval up for long trips. */
+    reminderIntervalPerTripHour: number;
+
+    /** Never remind more often than this, whatever the scaling produces. */
+    reminderMinIntervalMinutes: number;
+
+    // ── Evidence of genuine abandonment ──────────────────────────────────
+    /**
+     * How long a party must show NO liveness at all — no heartbeat, no socket,
+     * no location, no interaction — before they count as gone rather than slow.
+     *
+     * This is the threshold that separates "stuck in traffic with a dead phone
+     * battery" from "abandoned the ride", so it is deliberately generous.
+     */
+    partyOfflineMinutes: number;
+
+    /**
+     * With one party engaged and the other gone this long, escalate: tell the
+     * engaged party we cannot reach the other, and offer them a way forward.
+     * Escalation is NOT cancellation.
+     */
+    escalateAfterOfflineMinutes: number;
+
+    /**
+     * The only automatic-termination threshold. BOTH parties must have shown no
+     * liveness and no interaction for this long. Anything less escalates to a
+     * human instead.
+     */
+    mutualAbandonmentMinutes: number;
+
+    /**
+     * A driver whose distance to pickup shrinks by at least this much between
+     * checks is genuinely approaching, which extends the deadline on its own.
+     */
+    approachProgressMetres: number;
+
     /**
      * Assumed Keke speed for deriving a pickup ETA from the accept-point to
      * pickup distance, in metres per minute. Matches the passenger app's own
@@ -127,6 +173,15 @@ export function loadStaleRideConfig(): StaleRideConfig {
         maxExtensions: Math.floor(num('STALE_MAX_EXTENSIONS', 1)),
 
         warnAtDeadlineFraction: Math.min(Math.max(num('STALE_WARN_DEADLINE_FRACTION', 0.6), 0.1), 0.95),
+
+        reminderIntervalMinutes: num('STALE_REMINDER_INTERVAL_MINUTES', 12),
+        reminderIntervalPerTripHour: num('STALE_REMINDER_PER_TRIP_HOUR_MINUTES', 5),
+        reminderMinIntervalMinutes: num('STALE_REMINDER_MIN_INTERVAL_MINUTES', 10),
+
+        partyOfflineMinutes: num('STALE_PARTY_OFFLINE_MINUTES', 10),
+        escalateAfterOfflineMinutes: num('STALE_ESCALATE_AFTER_OFFLINE_MINUTES', 15),
+        mutualAbandonmentMinutes: num('STALE_MUTUAL_ABANDONMENT_MINUTES', 90),
+        approachProgressMetres: num('STALE_APPROACH_PROGRESS_METRES', 150),
         kekeMetresPerMinute: num('KEKE_METRES_PER_MINUTE', 230),
     };
 }
@@ -147,37 +202,85 @@ export enum StaleActionReason {
     TRIP_EXCEEDED_EXPECTED_DURATION = 'SYSTEM_TRIP_EXCEEDED_EXPECTED_DURATION',
 }
 
-/**
- * How a stale ride was RESOLVED. Recorded on `cancellationReason`.
- *
- * Every value names a decision someone made, or names silence explicitly. There
- * is no generic "system cancelled" outcome, because a passenger asking support
- * "why was my ride cancelled?" deserves a real answer.
- */
-export enum StaleResolution {
-    /** The passenger chose to cancel when asked. */
-    PASSENGER_CHOSE_CANCEL = 'PASSENGER_CHOSE_CANCEL',
-    /** The driver chose to cancel when asked. */
-    DRIVER_CHOSE_CANCEL = 'DRIVER_CHOSE_CANCEL',
-    /**
-     * Both were asked and neither answered. Nobody is engaged with this ride, so
-     * holding the passenger's booking slot and the driver's availability open
-     * serves no one.
-     */
-    NO_RESPONSE_FROM_EITHER = 'SYSTEM_NO_RESPONSE_FROM_EITHER',
-    /**
-     * The passenger said keep waiting, but the driver never answered across the
-     * permitted rounds. Waiting longer cannot help — the driver is gone.
-     */
-    DRIVER_UNRESPONSIVE = 'SYSTEM_DRIVER_UNRESPONSIVE',
-    /**
-     * The driver said keep waiting, but the passenger never answered across the
-     * permitted rounds.
-     */
-    PASSENGER_UNRESPONSIVE = 'SYSTEM_PASSENGER_UNRESPONSIVE',
-}
-
 /** Who a decision prompt was answered by. */
 export type StaleDecisionParty = 'passenger' | 'driver';
 /** What they chose. */
 export type StaleDecisionChoice = 'wait' | 'cancel';
+
+/**
+ * The operational state of a delayed ride, as operations staff see it.
+ *
+ * A delay is NOT an error. These are coordination states describing two people
+ * working something out in the real world — traffic, a checkpoint, a gate, a
+ * lift, reception. Most of them are healthy.
+ */
+export enum RideDelayState {
+    /** Nothing wrong. */
+    NONE = 'none',
+    /** Driver is late but has confirmed they are en route. */
+    DRIVER_CONFIRMED_EN_ROUTE = 'delayed_driver_confirmed_en_route',
+    /** Passenger has confirmed they are still waiting. */
+    PASSENGER_WAITING = 'delayed_passenger_waiting',
+    /** Driver has arrived; we are now measuring the passenger's wait. */
+    WAITING_FOR_PASSENGER = 'waiting_for_passenger',
+    /** Delay with no confirmation from the driver yet. */
+    WAITING_FOR_DRIVER = 'waiting_for_driver',
+    /** No liveness from the driver at all. */
+    DRIVER_OFFLINE = 'driver_offline',
+    /** No liveness from the passenger at all. */
+    PASSENGER_OFFLINE = 'passenger_offline',
+    /** One party asked to cancel; the other has not answered yet. */
+    CANCELLATION_REQUESTED = 'cancellation_requested',
+    /** Both prompted, waiting on a response. */
+    AWAITING_CONFIRMATION = 'awaiting_confirmation',
+    /** Handed to a human. The system will not terminate this on its own. */
+    ESCALATED_TO_SUPPORT = 'escalated_to_support',
+}
+
+/**
+ * What kind of signal proves a ride is still alive.
+ *
+ * The distinction matters. An open app is not a driver who is coming: a driver
+ * parked at home emits location updates indefinitely. So liveness stops us
+ * calling someone offline, while only approach or intent moves a deadline.
+ */
+export enum ActivityKind {
+    /** The app is alive — heartbeat, socket, a location fix. Extends nothing. */
+    LIVENESS = 'liveness',
+    /** Distance to pickup genuinely shrinking. Extends the deadline. */
+    APPROACH = 'approach',
+    /** A deliberate human action. Extends the deadline. */
+    INTENT = 'intent',
+}
+
+/** Deliberate actions that prove someone is still engaged with this ride. */
+export enum RideActivityType {
+    DRIVER_STILL_COMING = 'driver_still_coming',
+    PASSENGER_KEEP_WAITING = 'passenger_keep_waiting',
+    DRIVER_APPROACHING = 'driver_approaching',
+    CHAT_MESSAGE = 'chat_message',
+    CALL_ATTEMPT = 'call_attempt',
+    DRIVER_ARRIVED = 'driver_arrived',
+    PASSENGER_ACKNOWLEDGED_ARRIVAL = 'passenger_acknowledged_arrival',
+    LOCATION_SHARED = 'location_shared',
+}
+
+/**
+ * How a stale ride ended. Every value is either a human decision or explicit,
+ * evidenced abandonment — there is no bare "timed out".
+ */
+export enum StaleResolution {
+    /** The passenger asked to cancel and the driver accepted. */
+    CANCELLED_BY_MUTUAL_AGREEMENT_PASSENGER_INITIATED = 'CANCELLED_MUTUAL_PASSENGER_INITIATED',
+    /** The driver asked to cancel and the passenger accepted. */
+    CANCELLED_BY_MUTUAL_AGREEMENT_DRIVER_INITIATED = 'CANCELLED_MUTUAL_DRIVER_INITIATED',
+    /** One party asked, the other never answered, so the request stood. */
+    CANCELLED_REQUEST_UNANSWERED = 'CANCELLED_REQUEST_UNANSWERED',
+    /**
+     * The ONLY time-based termination. Both parties showed no liveness and no
+     * interaction for STALE_MUTUAL_ABANDONMENT_MINUTES. Nobody is coordinating.
+     */
+    ABANDONED_BY_BOTH = 'SYSTEM_ABANDONED_BY_BOTH',
+    /** Operations staff terminated it after escalation. */
+    RESOLVED_BY_SUPPORT = 'SUPPORT_RESOLVED',
+}

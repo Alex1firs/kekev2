@@ -182,6 +182,19 @@ export function staleClassOf(ride: Ride): StaleClass {
         staleDecisionBy: ride.staleDecisionBy ?? null,
         staleDecisionChoice: ride.staleDecisionChoice ?? null,
         staleDecisionRound: ride.staleDecisionRound ?? 0,
+        lastActivityAt: ride.lastActivityAt ?? null,
+        lastActivityType: ride.lastActivityType ?? null,
+        lastReminderAt: ride.lastReminderAt ?? null,
+        // The monitor renders a coarse state label; liveness is resolved live by
+        // the sweeper, so assume reachable here rather than guessing offline.
+        driverLive: true,
+        passengerLive: true,
+        driverOfflineForMs: null,
+        passengerOfflineForMs: null,
+        cancellationRequestedBy: ride.cancellationRequestedBy ?? null,
+        cancellationRequestedAt: ride.cancellationRequestedAt ?? null,
+        cancellationRequestState: ride.cancellationRequestState ?? null,
+        escalatedToSupportAt: ride.escalatedToSupportAt ?? null,
     };
 
     const evaluation = StaleRideService.evaluate(snapshot, config, new Date());

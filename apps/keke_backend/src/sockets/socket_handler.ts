@@ -15,7 +15,11 @@ import { DriverEligibilityService } from '../services/driver_eligibility_service
 import { DispatchMonitorService } from '../services/dispatch_monitor_service';
 import { DispatchMonitorQueryService } from '../services/dispatch_monitor_query_service';
 import { RideCleanupService } from '../services/ride_cleanup_service';
-import { loadStaleRideConfig, StaleResolution } from '../config/stale_ride_config';
+import {
+    loadStaleRideConfig, StaleResolution, RideDelayState,
+    RideActivityType, ActivityKind,
+} from '../config/stale_ride_config';
+import { RideActivityService } from '../services/ride_activity_service';
 import { DispatchEventType } from '../models/DispatchEvent';
 import { projectDispatchEvent } from '../services/dispatch_event_projection';
 import { User, UserRole } from '../models/User';
@@ -122,6 +126,29 @@ const Schemas = {
     // Passenger-consented early drop-off (Option 4 primary / Option 1 confirm).
     rideEndEarly:      z.object({ rideId: id(), passengerId: id(), lat: lat().optional(), lng: lng().optional() }),
     rideEarlyEndReject: z.object({ rideId: id(), passengerId: id() }),
+    // Deliberate interaction proving the ride is still being coordinated.
+    rideActivity: z.object({
+        rideId: id(),
+        userId: id(),
+        role: z.enum(['passenger', 'driver']),
+        type: z.enum([
+            'driver_still_coming', 'passenger_keep_waiting', 'chat_message',
+            'call_attempt', 'location_shared', 'passenger_acknowledged_arrival',
+        ]),
+    }),
+    // One party asks to cancel; the other answers.
+    rideCancelRequest: z.object({
+        rideId: id(),
+        userId: id(),
+        role: z.enum(['passenger', 'driver']),
+        reason: z.string().max(200).optional(),
+    }),
+    rideCancelResponse: z.object({
+        rideId: id(),
+        userId: id(),
+        role: z.enum(['passenger', 'driver']),
+        decision: z.enum(['accept', 'continue']),
+    }),
     // Either party's answer to a stale-ride decision prompt.
     staleDecision: z.object({
         rideId: id(),
@@ -253,6 +280,18 @@ export class SocketHandler {
             emitToRide: (rideId, event, payload) => { this.io.to(`ride:${rideId}`).emit(event, payload); },
             emitToDriver: (driverId, event, payload) => { this.io.to(`driver:${driverId}`).emit(event, payload); },
             emitToAdmin: (event, payload) => { this.io.to('admin').emit(event, payload); },
+        });
+
+        // Liveness evidence: is this user's socket actually connected right now?
+        // Used to tell "slow" from "gone" — a passenger with the app open is not
+        // an abandoned ride, however long the driver has taken.
+        RideActivityService.setPresenceProbe(async (role, userId) => {
+            try {
+                const sockets = await this.io.in(`${role}:${userId}`).fetchSockets();
+                return sockets.length > 0;
+            } catch {
+                return false;
+            }
         });
 
         this.setupHandlers();
@@ -521,6 +560,14 @@ export class SocketHandler {
             socket.on('chat:send', (raw) => {
                 const data = validate(Schemas.chatMessage, raw, socket);
                 if (!data) return;
+                // Two people messaging each other are coordinating. That is the
+                // strongest everyday evidence a delayed ride is still alive.
+                void RideActivityService.record({
+                    rideId: data.rideId,
+                    type: RideActivityType.CHAT_MESSAGE,
+                    kind: ActivityKind.INTENT,
+                    by: data.senderRole as 'passenger' | 'driver',
+                });
                 // Relay to everyone in the ride room (both passenger and driver are joined)
                 this.io.to(`ride:${data.rideId}`).emit('chat:message', {
                     rideId:     data.rideId,
@@ -783,6 +830,242 @@ export class SocketHandler {
                 });
             });
 
+            // --- Meaningful interaction: proof the ride is still alive ---
+            // Any deliberate action tells us two people are still coordinating.
+            // Reported by the apps for things the server cannot see (a tel: call,
+            // sharing live location), and recorded for the ones it can.
+            socket.on('ride:activity', async (raw) => {
+                const data = validate(Schemas.rideActivity, raw, socket);
+                if (!data) return;
+                try {
+                    const ride = await AppDataSource.getRepository(Ride)
+                        .findOne({ where: { rideId: data.rideId } });
+                    if (!ride) return;
+                    const belongs = (data.role === 'passenger' && ride.passengerId === data.userId)
+                        || (data.role === 'driver' && ride.driverId === data.userId);
+                    if (!belongs) return;
+
+                    await RideActivityService.record({
+                        rideId: data.rideId,
+                        type: data.type as RideActivityType,
+                        // Every action reported here is deliberate, so it extends
+                        // the window. Liveness is inferred server-side instead.
+                        kind: ActivityKind.INTENT,
+                        by: data.role,
+                        driverId: ride.driverId ?? null,
+                    });
+                    // Let the other side see it: "your driver is calling you" is
+                    // far better than silence.
+                    const notice = { rideId: data.rideId, by: data.role, type: data.type };
+                    this.io.to(`ride:${data.rideId}`).emit('ride:activity_seen', notice);
+                    if (ride.driverId) {
+                        this.io.to(`driver:${ride.driverId}`).emit('ride:activity_seen', notice);
+                    }
+                } catch (err) {
+                    log.error('ride:activity failed:', err);
+                }
+            });
+
+            // --- One party ASKS to cancel; the other decides ---
+            // Cancelling a ride two people are coordinating is a two-person act.
+            // This records a request and hands the choice to the other side.
+            socket.on('ride:cancel_request', async (raw) => {
+                const data = validate(Schemas.rideCancelRequest, raw, socket);
+                if (!data) return;
+                try {
+                    const rideRepo = AppDataSource.getRepository(Ride);
+                    const ride = await rideRepo.findOne({ where: { rideId: data.rideId } });
+                    if (!ride) {
+                        socket.emit('ride:error', { code: 'RIDE_NOT_FOUND', message: 'Ride not found.' });
+                        return;
+                    }
+                    const isPassenger = data.role === 'passenger' && ride.passengerId === data.userId;
+                    const isDriver = data.role === 'driver' && ride.driverId === data.userId;
+                    if (!isPassenger && !isDriver) {
+                        socket.emit('ride:error', { code: 'FORBIDDEN', message: 'This ride is not yours.' });
+                        return;
+                    }
+                    // A trip in progress is never cancelled this way — a real trip
+                    // happened and a real fare is owed.
+                    if (!['accepted', 'arrived'].includes(ride.status as unknown as string)) {
+                        socket.emit('ride:error', { code: 'INVALID_STATE', message: 'This ride can no longer be cancelled here.' });
+                        return;
+                    }
+
+                    const claim = await rideRepo
+                        .createQueryBuilder()
+                        .update()
+                        .set({
+                            cancellationRequestedBy: data.role,
+                            cancellationRequestedAt: new Date(),
+                            cancellationRequestState: 'pending',
+                            delayState: RideDelayState.CANCELLATION_REQUESTED,
+                        })
+                        .where(`"rideId" = :rideId AND "completedAt" IS NULL
+                                AND ("cancellationRequestState" IS NULL OR "cancellationRequestState" != 'pending')`,
+                            { rideId: data.rideId })
+                        .execute();
+                    if (!claim.affected) {
+                        socket.emit('ride:cancel_request_ack', {
+                            rideId: data.rideId, accepted: false, reason: 'request_already_pending',
+                        });
+                        return;
+                    }
+
+                    const other = data.role === 'passenger' ? 'driver' : 'passenger';
+                    const payload = {
+                        rideId: data.rideId,
+                        requestedBy: data.role,
+                        respondWithinMinutes: loadStaleRideConfig().decisionWindowMinutes,
+                        actions: ['accept_cancellation', 'continue_ride'],
+                    };
+                    if (other === 'driver' && ride.driverId) {
+                        this.io.to(`driver:${ride.driverId}`).emit('ride:cancel_requested', {
+                            ...payload,
+                            title: 'Passenger would like to cancel this ride',
+                            body: 'You can accept the cancellation, or let them know you are still coming.',
+                        });
+                        await NotificationService.sendToUser(
+                            ride.driverId, UserRole.DRIVER,
+                            'Passenger wants to cancel',
+                            'Accept the cancellation, or tell them you are still on your way.',
+                            { type: 'CANCELLATION_REQUESTED', rideId: data.rideId, intent: 'active' },
+                        );
+                    } else {
+                        this.io.to(`ride:${data.rideId}`).emit('ride:cancel_requested', {
+                            ...payload,
+                            title: 'Your driver would like to cancel this ride',
+                            body: 'You can accept, or ask them to keep coming.',
+                        });
+                        if (ride.passengerId) {
+                            await NotificationService.sendToUser(
+                                ride.passengerId, UserRole.PASSENGER,
+                                'Your driver wants to cancel',
+                                'Accept the cancellation, or ask them to keep coming.',
+                                { type: 'CANCELLATION_REQUESTED', rideId: data.rideId, intent: 'active' },
+                            );
+                        }
+                    }
+                    socket.emit('ride:cancel_request_ack', { rideId: data.rideId, accepted: true, awaiting: other });
+
+                    DispatchMonitorService.record({
+                        rideId: data.rideId,
+                        eventType: DispatchEventType.CANCELLATION_REQUESTED,
+                        driverId: ride.driverId ?? null,
+                        detail: { requestedBy: data.role, awaiting: other, rideStatus: ride.status },
+                    });
+                } catch (err) {
+                    log.error('ride:cancel_request failed:', err);
+                    socket.emit('ride:error', { code: 'INTERNAL_ERROR', message: 'Could not send your request. Please try again.' });
+                }
+            });
+
+            // --- The other party answers a cancellation request ---
+            socket.on('ride:cancel_response', async (raw) => {
+                const data = validate(Schemas.rideCancelResponse, raw, socket);
+                if (!data) return;
+                try {
+                    const rideRepo = AppDataSource.getRepository(Ride);
+                    const ride = await rideRepo.findOne({ where: { rideId: data.rideId } });
+                    if (!ride) return;
+                    const isPassenger = data.role === 'passenger' && ride.passengerId === data.userId;
+                    const isDriver = data.role === 'driver' && ride.driverId === data.userId;
+                    if (!isPassenger && !isDriver) {
+                        socket.emit('ride:error', { code: 'FORBIDDEN', message: 'This ride is not yours.' });
+                        return;
+                    }
+                    if (ride.cancellationRequestState !== 'pending') {
+                        socket.emit('ride:error', { code: 'INVALID_STATE', message: 'There is no pending request on this ride.' });
+                        return;
+                    }
+                    // The requester cannot also answer their own request.
+                    if (ride.cancellationRequestedBy === data.role) {
+                        socket.emit('ride:error', { code: 'FORBIDDEN', message: 'You made this request.' });
+                        return;
+                    }
+
+                    const requester = ride.cancellationRequestedBy as 'passenger' | 'driver';
+
+                    if (data.decision === 'accept') {
+                        await rideRepo.update(data.rideId, { cancellationRequestState: 'accepted' } as any);
+                        const resolution = requester === 'passenger'
+                            ? StaleResolution.CANCELLED_BY_MUTUAL_AGREEMENT_PASSENGER_INITIATED
+                            : StaleResolution.CANCELLED_BY_MUTUAL_AGREEMENT_DRIVER_INITIATED;
+                        const outcome = await RideCleanupService.terminate({
+                            rideId: data.rideId,
+                            reason: resolution,
+                            situation: (ride.staleReason as string) ?? undefined,
+                            expectedStatuses: ['accepted', 'arrived'],
+                            passengerMessage: 'This ride has been cancelled by agreement. You can book again now.',
+                            driverMessage: 'This ride has been cancelled by agreement. You can accept new rides now.',
+                            // Both parties took part, which is the whole point of
+                            // the guard — so it is satisfied by construction here.
+                            requireDecisionPrompt: false,
+                        });
+                        DispatchMonitorService.record({
+                            rideId: data.rideId,
+                            eventType: DispatchEventType.CANCELLATION_REQUEST_ACCEPTED,
+                            driverId: ride.driverId ?? null,
+                            detail: { requestedBy: requester, acceptedBy: data.role, applied: outcome.applied },
+                        });
+                        socket.emit('ride:cancel_response_ack', { rideId: data.rideId, decision: 'accept', applied: outcome.applied });
+                        return;
+                    }
+
+                    // decision === 'continue' — the ride goes on. Clear the request
+                    // and count it as activity, because it plainly is.
+                    await rideRepo
+                        .createQueryBuilder()
+                        .update()
+                        .set({
+                            cancellationRequestState: 'declined',
+                            delayState: data.role === 'driver'
+                                ? RideDelayState.DRIVER_CONFIRMED_EN_ROUTE
+                                : RideDelayState.PASSENGER_WAITING,
+                            staleDecisionBy: data.role,
+                            staleDecisionChoice: 'wait',
+                            staleDecisionAt: new Date(),
+                        })
+                        .where('"rideId" = :rideId AND "completedAt" IS NULL', { rideId: data.rideId })
+                        .execute();
+
+                    await RideActivityService.record({
+                        rideId: data.rideId,
+                        type: data.role === 'driver'
+                            ? RideActivityType.DRIVER_STILL_COMING
+                            : RideActivityType.PASSENGER_KEEP_WAITING,
+                        kind: ActivityKind.INTENT,
+                        by: data.role,
+                        driverId: ride.driverId ?? null,
+                        detail: { declinedCancellationFrom: requester },
+                    });
+
+                    const notice = {
+                        rideId: data.rideId,
+                        declinedBy: data.role,
+                        title: data.role === 'driver' ? 'Your driver is continuing' : 'Your passenger is still coming',
+                        body: data.role === 'driver'
+                            ? 'They have asked to keep the ride and are still on their way.'
+                            : 'They would like to keep the ride.',
+                    };
+                    this.io.to(`ride:${data.rideId}`).emit('ride:cancel_declined', notice);
+                    if (ride.driverId) {
+                        this.io.to(`driver:${ride.driverId}`).emit('ride:cancel_declined', notice);
+                    }
+                    socket.emit('ride:cancel_response_ack', { rideId: data.rideId, decision: 'continue', applied: true });
+
+                    DispatchMonitorService.record({
+                        rideId: data.rideId,
+                        eventType: DispatchEventType.CANCELLATION_REQUEST_DECLINED,
+                        driverId: ride.driverId ?? null,
+                        detail: { requestedBy: requester, declinedBy: data.role },
+                    });
+                } catch (err) {
+                    log.error('ride:cancel_response failed:', err);
+                    socket.emit('ride:error', { code: 'INTERNAL_ERROR', message: 'Could not record your answer. Please try again.' });
+                }
+            });
+
             // --- Either party answers the stale-ride decision prompt ---
             // The only path by which a stale ride is cancelled promptly. Both
             // passenger and driver receive the prompt; whoever answers first
@@ -861,9 +1144,13 @@ export class SocketHandler {
                     if (data.choice === 'cancel') {
                         // Honour it now rather than waiting for the next sweep — the
                         // person is holding their phone waiting for it to happen.
+                        // A cancel CHOICE at a decision prompt is treated as a
+                        // request the other party still gets to answer — see
+                        // ride:cancel_request. Reaching here means the other side
+                        // already accepted, or the request went unanswered.
                         const resolution = data.role === 'passenger'
-                            ? StaleResolution.PASSENGER_CHOSE_CANCEL
-                            : StaleResolution.DRIVER_CHOSE_CANCEL;
+                            ? StaleResolution.CANCELLED_BY_MUTUAL_AGREEMENT_PASSENGER_INITIATED
+                            : StaleResolution.CANCELLED_BY_MUTUAL_AGREEMENT_DRIVER_INITIATED;
                         const outcome = await RideCleanupService.terminate({
                             rideId: data.rideId,
                             reason: resolution,
@@ -1099,6 +1386,38 @@ export class SocketHandler {
                         socket.emit('ride:expired', { code: 'RIDE_NO_LONGER_ACTIVE', rideId: data.rideId, message: 'This ride is no longer active.' });
                         return;
                     }
+                    // ARRIVAL CHANGES EVERYTHING. The driver-delayed story is over.
+                    // Clear every trace of it and start measuring the passenger's
+                    // wait instead — a completely different workflow, with the
+                    // driver now the one who is present and waiting.
+                    await AppDataSource.getRepository(Ride)
+                        .createQueryBuilder()
+                        .update()
+                        .set({
+                            delayState: RideDelayState.WAITING_FOR_PASSENGER,
+                            staleWarnedAt: null,
+                            staleDecisionPromptedAt: null,
+                            staleDecisionDeadlineAt: null,
+                            staleDecisionBy: null,
+                            staleDecisionChoice: null,
+                            staleDecisionRound: 0,
+                            staleDeadlineOverrideAt: null,
+                            lastReminderAt: null,
+                            cancellationRequestState: null,
+                            cancellationRequestedBy: null,
+                            cancellationRequestedAt: null,
+                        })
+                        .where('"rideId" = :rideId', { rideId: data.rideId })
+                        .execute();
+                    await RideActivityService.record({
+                        rideId: data.rideId,
+                        type: RideActivityType.DRIVER_ARRIVED,
+                        kind: ActivityKind.INTENT,
+                        by: 'driver',
+                        driverId: data.driverId,
+                    });
+                    await RideActivityService.clearApproach(data.rideId);
+
                     this.broadcastToRide(data.rideId, 'ride:status_update', { rideId: data.rideId, status: 'arrived' });
                     NotificationService.sendToUser(ride.passengerId, UserRole.PASSENGER, 'Driver Arrived!', 'Your driver has reached the pickup location.', {
                         type: 'RIDE_ARRIVED', rideId: data.rideId, intent: 'active',
@@ -1150,6 +1469,30 @@ export class SocketHandler {
                         socket.emit('ride:expired', { code: 'RIDE_NO_LONGER_ACTIVE', rideId: data.rideId, message: 'This ride is no longer active.' });
                         return;
                     }
+                    // TRIP STARTED. All accepted/arrived coordination logic is now
+                    // irrelevant and must not run again for this ride — from here
+                    // only trip-level monitoring applies (lost GPS, abandoned trip),
+                    // and those are flagged for humans, never auto-cancelled.
+                    await AppDataSource.getRepository(Ride)
+                        .createQueryBuilder()
+                        .update()
+                        .set({
+                            delayState: RideDelayState.NONE,
+                            staleWarnedAt: null,
+                            staleDecisionPromptedAt: null,
+                            staleDecisionDeadlineAt: null,
+                            staleDecisionBy: null,
+                            staleDecisionChoice: null,
+                            staleDeadlineOverrideAt: null,
+                            lastReminderAt: null,
+                            cancellationRequestState: null,
+                            cancellationRequestedBy: null,
+                            cancellationRequestedAt: null,
+                        })
+                        .where('"rideId" = :rideId', { rideId: data.rideId })
+                        .execute();
+                    await RideActivityService.clearApproach(data.rideId);
+
                     // Send 'started' to match the passenger UI's expected status string
                     this.broadcastToRide(data.rideId, 'ride:status_update', { rideId: data.rideId, status: 'started' });
                     NotificationService.sendToUser(ride.passengerId, UserRole.PASSENGER, 'Trip Started', 'You are now on your trip.', {

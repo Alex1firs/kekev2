@@ -46,6 +46,18 @@ const ride = (over: Partial<RideSnapshot> = {}): RideSnapshot => ({
     staleDecisionBy: null,
     staleDecisionChoice: null,
     staleDecisionRound: 0,
+    lastActivityAt: null,
+    lastActivityType: null,
+    lastReminderAt: null,
+    // Both reachable by default: the interesting cases set these explicitly.
+    driverLive: true,
+    passengerLive: true,
+    driverOfflineForMs: null,
+    passengerOfflineForMs: null,
+    cancellationRequestedBy: null,
+    cancellationRequestedAt: null,
+    cancellationRequestState: null,
+    escalatedToSupportAt: null,
     ...over,
 });
 
@@ -114,18 +126,22 @@ describe('the sweep is deterministic under repeated evaluation', () => {
         expect(a.action).toBe('prompt_decision');
     });
 
-    it('two workers reach the same decision once a window has closed', () => {
+    it('two workers reach the same decision on an abandoned ride', () => {
         const r = ride({
             staleDecisionPromptedAt: at(21),
             staleDecisionDeadlineAt: at(24),
             staleDecisionRound: 1,
+            // Both gone and quiet long enough to count as abandoned.
+            driverLive: false,
+            passengerLive: false,
+            lastActivityAt: at(0),
         });
-        const now = at(30);
+        const now = at(CONFIG.mutualAbandonmentMinutes + 10);
         const a = StaleRideService.evaluate(r, CONFIG, now);
         const b = StaleRideService.evaluate(r, CONFIG, now);
         expect(a).toEqual(b);
         expect(a.action).toBe('cancel');
-        expect(a.resolution).toBe(StaleResolution.NO_RESPONSE_FROM_EITHER);
+        expect(a.resolution).toBe(StaleResolution.ABANDONED_BY_BOTH);
     });
 
     it('evaluation is side-effect free, so a lost race costs nothing', () => {
@@ -194,23 +210,24 @@ describe('duplicate sweep workers cannot double-release state', () => {
 });
 
 describe('extensions cannot be exploited to hold a ride open', () => {
-    it('a bounded extension defers but does not prevent resolution', () => {
+    it('an extension defers, and a reachable ride is never terminated by it', () => {
         const extended = ride({ staleExtensionCount: 1, staleDeadlineOverrideAt: at(35) });
         // Inside the extension: never terminal.
         expect(StaleRideService.evaluate(extended, CONFIG, at(30)).action).not.toBe('cancel');
-        // Past it: asked again, still not a silent cancel.
+        // Past it: asked again, never cancelled while both are reachable.
         expect(StaleRideService.evaluate(extended, CONFIG, at(36)).action).toBe('prompt_decision');
-        // And no further extension is available, so the next window is decisive.
         expect(StaleRideService.canExtend(extended, CONFIG)).toBe(false);
 
+        // Even with extensions exhausted, a reachable ride keeps coordinating.
         const askedAgain = ride({
             staleExtensionCount: 1,
             staleDeadlineOverrideAt: at(35),
             staleDecisionPromptedAt: at(36),
             staleDecisionDeadlineAt: at(39),
             staleDecisionRound: 2,
+            lastReminderAt: at(36),
         });
-        expect(StaleRideService.evaluate(askedAgain, CONFIG, at(45)).action).toBe('cancel');
+        expect(StaleRideService.evaluate(askedAgain, CONFIG, at(45)).action).not.toBe('cancel');
     });
 
     it('the maximum extension count is enforced by the policy, not the caller', () => {

@@ -1,10 +1,16 @@
 /**
- * The decision window.
+ * Human-centred coordination for delayed rides.
  *
- * A stale ride is never cancelled on a timer. Both parties are asked first, and a
- * cancellation only follows an explicit choice or silence from the party the ride
- * is actually waiting on. These tests pin that: the central property is that NO
- * evaluation can reach `cancel` unless a prompt is on record.
+ * A ride is two real people coordinating in the real world. Traffic, a police
+ * checkpoint, road works, rain, a passenger still inside a building, a driver at
+ * a locked gate, security clearance, a slow lift, office reception — all normal.
+ *
+ * So the rules under test are:
+ *   - time triggers COMMUNICATION, never cancellation
+ *   - any meaningful interaction keeps the ride alive
+ *   - cancelling is a two-person act
+ *   - one party going quiet ESCALATES to a human; it does not cancel
+ *   - the only clock-driven termination is mutual abandonment, with evidence
  */
 import { StaleRideService, RideSnapshot } from '../../src/services/stale_ride_service';
 import {
@@ -12,6 +18,8 @@ import {
     StaleRideConfig,
     StaleActionReason,
     StaleResolution,
+    RideDelayState,
+    RideActivityType,
 } from '../../src/config/stale_ride_config';
 
 const CONFIG: StaleRideConfig = {
@@ -26,13 +34,21 @@ const CONFIG: StaleRideConfig = {
     maxExtensions: 1,
     warnAtDeadlineFraction: 0.6,
     kekeMetresPerMinute: 230,
+    reminderIntervalMinutes: 12,
+    reminderIntervalPerTripHour: 5,
+    reminderMinIntervalMinutes: 10,
+    partyOfflineMinutes: 10,
+    escalateAfterOfflineMinutes: 15,
+    mutualAbandonmentMinutes: 90,
+    approachProgressMetres: 150,
 };
 
 const T0 = new Date('2026-07-26T06:00:00Z');
 const at = (m: number) => new Date(T0.getTime() + m * 60_000);
+const MIN = 60_000;
 
 const ride = (over: Partial<RideSnapshot> = {}): RideSnapshot => ({
-    rideId: 'RIDE-DECISION',
+    rideId: 'RIDE-COORD',
     status: 'accepted',
     passengerId: 'pax-1',
     driverId: 'drv-1',
@@ -52,271 +68,366 @@ const ride = (over: Partial<RideSnapshot> = {}): RideSnapshot => ({
     staleDecisionBy: null,
     staleDecisionChoice: null,
     staleDecisionRound: 0,
+    lastActivityAt: null,
+    lastActivityType: null,
+    lastReminderAt: null,
+    // Both reachable unless a test says otherwise.
+    driverLive: true,
+    passengerLive: true,
+    driverOfflineForMs: null,
+    passengerOfflineForMs: null,
+    cancellationRequestedBy: null,
+    cancellationRequestedAt: null,
+    cancellationRequestState: null,
+    escalatedToSupportAt: null,
     ...over,
 });
 
-/** Prompt sent at `promptedAt`, window closing `decisionWindowMinutes` later. */
 const asked = (over: Partial<RideSnapshot> = {}, promptedAt = 21) => ride({
     staleDecisionPromptedAt: at(promptedAt),
     staleDecisionDeadlineAt: at(promptedAt + CONFIG.decisionWindowMinutes),
     staleDecisionRound: 1,
+    lastReminderAt: at(promptedAt),
     ...over,
 });
 
-// ── The invariant ──────────────────────────────────────────────────────────
-describe('no silent cancellations', () => {
-    it('an un-prompted ride NEVER evaluates to cancel, at any age', () => {
-        const ages = [21, 25, 46, 120, 1440, 5477, 100_000];
-        for (const status of ['accepted', 'arrived']) {
-            for (const minutes of ages) {
-                const e = StaleRideService.evaluate(
-                    ride({ status, arrivedAt: status === 'arrived' ? T0 : null,
-                           staleDecisionPromptedAt: null }),
-                    CONFIG, at(minutes),
-                );
-                expect(e.action).not.toBe('cancel');
-                expect(e.resolution).toBeNull();
-            }
+// ── The core principle ─────────────────────────────────────────────────────
+describe('time alone never means failure', () => {
+    it('a long delay with both parties reachable NEVER cancels', () => {
+        // Four days late — the original incident — but both apps are alive.
+        // Real delays happen; the system talks instead of terminating.
+        for (const minutes of [21, 46, 120, 600, 1440, 5477]) {
+            const e = StaleRideService.evaluate(ride(), CONFIG, at(minutes));
+            expect(e.action).not.toBe('cancel');
         }
     });
 
-    it('the first thing a passed deadline produces is a prompt to BOTH parties', () => {
+    it('the first thing a passed deadline produces is a conversation', () => {
         const e = StaleRideService.evaluate(ride(), CONFIG, at(21));
         expect(e.action).toBe('prompt_decision');
         expect(e.promptParties).toEqual(['passenger', 'driver']);
-        expect(e.decisionDeadlineAt).not.toBeNull();
-        expect(e.explanation).toContain('nothing is cancelled yet');
+        expect(e.delayState).toBe(RideDelayState.AWAITING_CONFIRMATION);
+        expect(e.explanation).toContain('nothing is cancelled');
     });
 
-    it('gives them the configured window to answer', () => {
-        const e = StaleRideService.evaluate(ride(), CONFIG, at(21));
-        const windowMs = e.decisionDeadlineAt!.getTime() - at(21).getTime();
-        expect(Math.round(windowMs / 60_000)).toBe(CONFIG.decisionWindowMinutes);
+    it('no un-prompted ride can ever reach cancel while anyone is reachable', () => {
+        for (const status of ['accepted', 'arrived']) {
+            for (const minutes of [21, 100, 5000, 100_000]) {
+                const e = StaleRideService.evaluate(
+                    ride({ status, arrivedAt: status === 'arrived' ? T0 : null }),
+                    CONFIG, at(minutes),
+                );
+                expect(e.action).not.toBe('cancel');
+            }
+        }
     });
 });
 
-// ── Waiting for an answer ──────────────────────────────────────────────────
-describe('while the window is open, nothing happens', () => {
-    it('holds while both are still deciding', () => {
-        const e = StaleRideService.evaluate(asked(), CONFIG, at(22));
+// ── Stage 1-3: warn, inform, keep waiting ──────────────────────────────────
+describe('a confirmed delay is a healthy coordination state', () => {
+    it('a driver who confirmed shows as en route, not as a problem', () => {
+        const e = StaleRideService.evaluate(
+            asked({ staleDecisionBy: 'driver', staleDecisionChoice: 'wait' }),
+            CONFIG, at(23),
+        );
         expect(e.action).toBe('none');
-        expect(e.explanation).toContain('left to respond');
+        expect(e.delayState).toBe(RideDelayState.DRIVER_CONFIRMED_EN_ROUTE);
     });
 
-    it('does not re-prompt a ride already asked', () => {
-        const e = StaleRideService.evaluate(asked(), CONFIG, at(23));
-        expect(e.action).not.toBe('prompt_decision');
-    });
-});
-
-// ── Explicit choices ───────────────────────────────────────────────────────
-describe('an explicit cancel is honoured and attributed', () => {
-    it('the passenger choosing cancel resolves as PASSENGER_CHOSE_CANCEL', () => {
-        const e = StaleRideService.evaluate(
-            asked({ staleDecisionBy: 'passenger', staleDecisionChoice: 'cancel' }),
-            CONFIG, at(22),
-        );
-        expect(e.action).toBe('cancel');
-        expect(e.resolution).toBe(StaleResolution.PASSENGER_CHOSE_CANCEL);
-        expect(e.explanation).toContain('passenger chose to cancel');
-    });
-
-    it('the driver choosing cancel resolves as DRIVER_CHOSE_CANCEL', () => {
-        const e = StaleRideService.evaluate(
-            asked({ status: 'arrived', arrivedAt: T0, staleDecisionBy: 'driver', staleDecisionChoice: 'cancel' }),
-            CONFIG, at(22),
-        );
-        expect(e.action).toBe('cancel');
-        expect(e.resolution).toBe(StaleResolution.DRIVER_CHOSE_CANCEL);
-    });
-
-    it('honours a cancel immediately, without waiting for the window to close', () => {
-        // Chosen one minute into a three-minute window.
-        const e = StaleRideService.evaluate(
-            asked({ staleDecisionBy: 'passenger', staleDecisionChoice: 'cancel' }),
-            CONFIG, at(22),
-        );
-        expect(e.action).toBe('cancel');
-    });
-
-    it('still records the underlying situation alongside the decision', () => {
-        const e = StaleRideService.evaluate(
-            asked({ staleDecisionBy: 'driver', staleDecisionChoice: 'cancel' }),
-            CONFIG, at(22),
-        );
-        // Situation and resolution are separate facts.
-        expect(e.reason).toBe(StaleActionReason.DRIVER_DID_NOT_ARRIVE);
-        expect(e.resolution).toBe(StaleResolution.DRIVER_CHOSE_CANCEL);
-    });
-});
-
-describe('choosing to keep waiting defers, and is bounded', () => {
-    it('a "wait" choice inside the window holds the ride', () => {
+    it('a passenger who confirmed shows as waiting', () => {
         const e = StaleRideService.evaluate(
             asked({ staleDecisionBy: 'passenger', staleDecisionChoice: 'wait' }),
-            CONFIG, at(22),
+            CONFIG, at(23),
         );
-        expect(e.action).toBe('none');
-        expect(e.explanation).toContain('chose to keep waiting');
+        expect(e.delayState).toBe(RideDelayState.PASSENGER_WAITING);
     });
 
-    it('names who chose to wait, and which round it was', () => {
+    it('does NOT nag: no reminder before the interval elapses', () => {
         const e = StaleRideService.evaluate(
-            asked({ staleDecisionBy: 'driver', staleDecisionChoice: 'wait', staleDecisionRound: 1 }),
-            CONFIG, at(22),
+            asked({ staleDecisionBy: 'driver', staleDecisionChoice: 'wait', lastReminderAt: at(22) }),
+            CONFIG, at(25),
         );
-        expect(e.explanation).toContain('driver chose to keep waiting');
-        expect(e.explanation).toContain('round 1/1');
-    });
-});
-
-// ── Silence ────────────────────────────────────────────────────────────────
-describe('silence from both parties resolves the ride', () => {
-    it('cancels once the window closes with no answer at all', () => {
-        const e = StaleRideService.evaluate(asked(), CONFIG, at(25));
-        expect(e.action).toBe('cancel');
-        expect(e.resolution).toBe(StaleResolution.NO_RESPONSE_FROM_EITHER);
-        expect(e.explanation).toContain('neither responded');
-    });
-
-    it('does not cancel a second before the window closes', () => {
-        // Window closes at 24; at 23.9 it is still open.
-        const e = StaleRideService.evaluate(asked(), CONFIG, new Date(at(24).getTime() - 1000));
         expect(e.action).toBe('none');
     });
 
-    it('the resolution names silence rather than blaming anyone', () => {
-        const e = StaleRideService.evaluate(asked(), CONFIG, at(30));
-        expect(e.resolution).toBe(StaleResolution.NO_RESPONSE_FROM_EITHER);
-        expect(e.explanation).not.toMatch(/no.?show/i);
-        expect(e.explanation).not.toMatch(/fault|blame/i);
+    it('checks in again after the reminder interval', () => {
+        const e = StaleRideService.evaluate(
+            asked({ staleDecisionBy: 'driver', staleDecisionChoice: 'wait', lastReminderAt: at(22) }),
+            CONFIG, at(22 + CONFIG.reminderIntervalMinutes + 1),
+        );
+        expect(e.action).toBe('remind');
+        expect(e.promptParties).toEqual(['passenger', 'driver']);
+    });
+
+    it('scales the reminder interval up for a long trip', () => {
+        const short = ride({ estimatedDurationSec: 10 * 60 });
+        const long = ride({ estimatedDurationSec: 2 * 3600 });
+        const shortInterval = StaleRideService.reminderIntervalMinutes(short, CONFIG);
+        const longInterval = StaleRideService.reminderIntervalMinutes(long, CONFIG);
+        expect(longInterval).toBeGreaterThan(shortInterval);
+        // Never below the floor, however short the trip.
+        expect(shortInterval).toBeGreaterThanOrEqual(CONFIG.reminderMinIntervalMinutes);
     });
 });
 
-describe('one party co-operating, the other silent', () => {
-    it('cancels as DRIVER_UNRESPONSIVE when the passenger waited but the driver never answered', () => {
-        // accepted -> the ride is waiting on the DRIVER to arrive.
+// ── Stage 4: cancelling is a two-person act ────────────────────────────────
+describe('a cancellation request goes to the other party', () => {
+    it('a pending request waits for the other side, and says so', () => {
+        const e = StaleRideService.evaluate(
+            asked({
+                cancellationRequestedBy: 'passenger',
+                cancellationRequestState: 'pending',
+                cancellationRequestedAt: at(22),
+            }),
+            CONFIG, at(23),
+        );
+        expect(e.action).toBe('none');
+        expect(e.delayState).toBe(RideDelayState.CANCELLATION_REQUESTED);
+        expect(e.explanation).toContain('asked to cancel');
+        expect(e.explanation).toContain('waiting for the driver');
+    });
+
+    it('a request outranks everything else, including a long delay', () => {
+        const e = StaleRideService.evaluate(
+            asked({
+                cancellationRequestedBy: 'driver',
+                cancellationRequestState: 'pending',
+                cancellationRequestedAt: at(22),
+            }),
+            CONFIG, at(500),
+        );
+        // Not cancelled by the clock: the other party still gets to answer.
+        expect(e.delayState).toBe(RideDelayState.CANCELLATION_REQUESTED);
+    });
+
+    it('an unanswered request eventually stands — still a human decision', () => {
+        const e = StaleRideService.evaluate(
+            asked({
+                cancellationRequestedBy: 'passenger',
+                cancellationRequestState: 'pending',
+                cancellationRequestedAt: at(22),
+            }),
+            CONFIG, at(22 + CONFIG.decisionWindowMinutes + 1),
+        );
+        expect(e.action).toBe('cancel');
+        expect(e.resolution).toBe(StaleResolution.CANCELLED_REQUEST_UNANSWERED);
+        expect(e.explanation).toContain('did not respond');
+    });
+
+    it('a declined request is not treated as pending', () => {
+        const e = StaleRideService.evaluate(
+            asked({
+                cancellationRequestedBy: 'passenger',
+                cancellationRequestState: 'declined',
+                cancellationRequestedAt: at(22),
+                staleDecisionBy: 'driver',
+                staleDecisionChoice: 'wait',
+            }),
+            CONFIG, at(30),
+        );
+        expect(e.action).not.toBe('cancel');
+        expect(e.delayState).toBe(RideDelayState.DRIVER_CONFIRMED_EN_ROUTE);
+    });
+});
+
+// ── Stage 5: unresponsive party escalates, never cancels ───────────────────
+describe('one party engaged and the other unreachable escalates to a human', () => {
+    it('an unreachable driver escalates rather than cancelling', () => {
         const e = StaleRideService.evaluate(
             asked({
                 staleDecisionBy: 'passenger',
                 staleDecisionChoice: 'wait',
-                staleDecisionRound: 2,   // beyond maxExtensions (1)
-                staleDeadlineOverrideAt: at(24),
+                driverLive: false,
+                driverOfflineForMs: 16 * MIN,
+                passengerLive: true,
             }),
             CONFIG, at(40),
         );
-        expect(e.action).toBe('cancel');
-        expect(e.resolution).toBe(StaleResolution.DRIVER_UNRESPONSIVE);
-        expect(e.explanation).toContain('passenger kept waiting');
-        expect(e.explanation).toContain('driver never');
+        expect(e.action).toBe('escalate');
+        expect(e.action).not.toBe('cancel');
+        expect(e.escalationTarget).toBe('driver');
+        expect(e.delayState).toBe(RideDelayState.DRIVER_OFFLINE);
+        expect(e.explanation).toContain('NOT cancelling');
     });
 
-    it('cancels as PASSENGER_UNRESPONSIVE when the driver waited at the pickup point', () => {
-        // arrived -> the ride is waiting on the PASSENGER to appear.
+    it('an unreachable passenger at the pickup point escalates too', () => {
         const e = StaleRideService.evaluate(
             asked({
                 status: 'arrived',
                 arrivedAt: T0,
                 staleDecisionBy: 'driver',
                 staleDecisionChoice: 'wait',
-                staleDecisionRound: 2,
-                staleDeadlineOverrideAt: at(24),
+                passengerLive: false,
+                passengerOfflineForMs: 20 * MIN,
+                driverLive: true,
             }),
             CONFIG, at(40),
         );
-        expect(e.action).toBe('cancel');
-        expect(e.resolution).toBe(StaleResolution.PASSENGER_UNRESPONSIVE);
-        expect(e.explanation).toContain('driver kept waiting');
+        expect(e.action).toBe('escalate');
+        expect(e.escalationTarget).toBe('passenger');
+        expect(e.delayState).toBe(RideDelayState.PASSENGER_OFFLINE);
     });
 
-    it('honours the co-operating party for the permitted rounds before resolving', () => {
-        // Round 1 of 1: still within the allowance, so keep waiting.
+    it('does not escalate before the offline threshold', () => {
         const e = StaleRideService.evaluate(
-            asked({
-                staleDecisionBy: 'passenger',
-                staleDecisionChoice: 'wait',
-                staleDecisionRound: 1,
-                staleDeadlineOverrideAt: at(24),
-            }),
-            CONFIG, at(40),
+            asked({ driverLive: false, driverOfflineForMs: 5 * MIN }),
+            CONFIG, at(30),
         );
+        expect(e.action).not.toBe('escalate');
         expect(e.action).not.toBe('cancel');
     });
 
-    it('a higher maxExtensions grants more patience before resolving', () => {
-        const patient = { ...CONFIG, maxExtensions: 3 };
+    it('an already-escalated ride is left to the human who owns it', () => {
         const e = StaleRideService.evaluate(
             asked({
-                staleDecisionBy: 'passenger',
-                staleDecisionChoice: 'wait',
-                staleDecisionRound: 2,
-                staleDeadlineOverrideAt: at(24),
+                driverLive: false,
+                driverOfflineForMs: 60 * MIN,
+                escalatedToSupportAt: at(40),
             }),
-            patient, at(40),
+            CONFIG, at(200),
         );
-        expect(e.action).not.toBe('cancel');
+        expect(e.action).toBe('none');
+        expect(e.delayState).toBe(RideDelayState.ESCALATED_TO_SUPPORT);
+        expect(e.explanation).toContain('awaiting a human decision');
     });
 });
 
-// ── A newer transition still always wins ───────────────────────────────────
-describe('a real transition beats any pending decision', () => {
-    it('a driver who arrives mid-decision saves the ride', () => {
+// ── The only clock-driven termination ──────────────────────────────────────
+describe('mutual abandonment is the sole automatic termination', () => {
+    it('cancels only when BOTH are gone and quiet past the threshold', () => {
         const e = StaleRideService.evaluate(
-            asked({ arrivedAt: at(22), staleDecisionBy: null, staleDecisionChoice: null }),
-            CONFIG, at(40),
+            asked({
+                driverLive: false,
+                passengerLive: false,
+                driverOfflineForMs: 60 * MIN,
+                passengerOfflineForMs: 60 * MIN,
+                lastActivityAt: at(0),
+            }),
+            CONFIG, at(CONFIG.mutualAbandonmentMinutes + 5),
+        );
+        expect(e.action).toBe('cancel');
+        expect(e.resolution).toBe(StaleResolution.ABANDONED_BY_BOTH);
+        expect(e.explanation).toContain('any sign of life');
+        expect(e.explanation).toContain('treating the ride as abandoned');
+    });
+
+    it('does NOT cancel when both are gone but not yet past the threshold', () => {
+        const e = StaleRideService.evaluate(
+            asked({
+                driverLive: false,
+                passengerLive: false,
+                lastActivityAt: at(20),
+            }),
+            CONFIG, at(30),
+        );
+        expect(e.action).not.toBe('cancel');
+    });
+
+    it('does NOT cancel when even one party is still reachable', () => {
+        const e = StaleRideService.evaluate(
+            asked({
+                driverLive: false,
+                passengerLive: true,
+                driverOfflineForMs: 200 * MIN,
+                lastActivityAt: at(0),
+            }),
+            CONFIG, at(500),
+        );
+        expect(e.action).not.toBe('cancel');
+    });
+
+    it('recent activity resets the abandonment clock', () => {
+        const e = StaleRideService.evaluate(
+            asked({
+                driverLive: false,
+                passengerLive: false,
+                // Someone messaged five minutes ago, so the ride is not abandoned.
+                lastActivityAt: at(495),
+                lastActivityType: RideActivityType.CHAT_MESSAGE,
+            }),
+            CONFIG, at(500),
+        );
+        expect(e.action).not.toBe('cancel');
+    });
+
+    it('the abandonment threshold is far longer than the arrival deadline', () => {
+        // A delay must have a great deal of room before it looks like abandonment.
+        expect(CONFIG.mutualAbandonmentMinutes).toBeGreaterThan(CONFIG.acceptedMaxMinutes);
+        expect(CONFIG.mutualAbandonmentMinutes).toBeGreaterThan(CONFIG.escalateAfterOfflineMinutes);
+    });
+});
+
+// ── Stage 6/7: arrival and trip start change the story ─────────────────────
+describe('arrival and trip start change the workflow entirely', () => {
+    it('an arrived ride is no longer a driver-delay scenario', () => {
+        const e = StaleRideService.evaluate(
+            ride({ arrivedAt: at(19) }), CONFIG, at(5000),
         );
         expect(e.action).toBe('none');
         expect(e.explanation).toContain('already marked arrived');
     });
 
-    it('a trip that starts mid-decision saves the ride', () => {
-        const e = StaleRideService.evaluate(
-            asked({ status: 'arrived', arrivedAt: T0, startedAt: at(22) }),
-            CONFIG, at(40),
-        );
-        expect(e.action).toBe('none');
+    it('a started trip is never touched by accepted-ride logic', () => {
+        for (const minutes of [30, 200, 5000]) {
+            const e = StaleRideService.evaluate(
+                ride({ status: 'in_progress', arrivedAt: T0, startedAt: at(20) }),
+                CONFIG, at(minutes),
+            );
+            expect(e.action).not.toBe('cancel');
+            expect(e.action).not.toBe('prompt_decision');
+        }
     });
 
-    it('even a pending explicit cancel loses to a completed trip', () => {
+    it('an over-running trip is flagged for a human, never cancelled', () => {
         const e = StaleRideService.evaluate(
-            asked({
-                status: 'completed',
-                startedAt: at(22),
-                completedAt: at(35),
-                staleDecisionBy: 'passenger',
-                staleDecisionChoice: 'cancel',
-            }),
-            CONFIG, at(40),
+            ride({ status: 'in_progress', startedAt: T0 }), CONFIG, at(400),
         );
-        expect(e.action).toBe('none');
-        expect(e.explanation).toContain('completedAt');
+        expect(e.action).toBe('flag_for_review');
+        expect(e.reason).toBe(StaleActionReason.TRIP_EXCEEDED_EXPECTED_DURATION);
+    });
+
+    it('a started trip cannot be cancelled even with a pending request', () => {
+        const e = StaleRideService.evaluate(
+            ride({
+                status: 'in_progress',
+                startedAt: at(20),
+                cancellationRequestedBy: 'passenger',
+                cancellationRequestState: 'pending',
+                cancellationRequestedAt: at(21),
+            }),
+            CONFIG, at(500),
+        );
+        expect(e.action).not.toBe('cancel');
     });
 });
 
-// ── In-progress is untouched by all of this ────────────────────────────────
-describe('in-progress trips are not part of the decision flow', () => {
-    it('is flagged for review, never prompted or cancelled', () => {
-        const running = ride({
-            status: 'in_progress',
-            arrivedAt: T0,
-            startedAt: at(5),
-            staleDecisionPromptedAt: null,
-        });
-        const e = StaleRideService.evaluate(running, CONFIG, at(400));
-        expect(e.action).toBe('flag_for_review');
-        expect(e.action).not.toBe('prompt_decision');
-    });
+// ── Escalation hierarchy ───────────────────────────────────────────────────
+describe('the escalation hierarchy is respected in order', () => {
+    it('observe -> warn -> ask -> remind -> escalate -> terminate', () => {
+        const seen: string[] = [];
+        // Observe
+        seen.push(StaleRideService.evaluate(ride({ staleWarnedAt: null }), CONFIG, at(5)).action);
+        // Warn
+        seen.push(StaleRideService.evaluate(ride({ staleWarnedAt: null }), CONFIG, at(13)).action);
+        // Ask both
+        seen.push(StaleRideService.evaluate(ride(), CONFIG, at(21)).action);
+        // Remind
+        seen.push(StaleRideService.evaluate(
+            asked({ staleDecisionBy: 'driver', staleDecisionChoice: 'wait', lastReminderAt: at(21) }),
+            CONFIG, at(21 + CONFIG.reminderIntervalMinutes + 1),
+        ).action);
+        // Escalate
+        seen.push(StaleRideService.evaluate(
+            asked({ driverLive: false, driverOfflineForMs: 20 * MIN }), CONFIG, at(45),
+        ).action);
+        // Terminate, only on mutual abandonment
+        seen.push(StaleRideService.evaluate(
+            asked({
+                driverLive: false, passengerLive: false, lastActivityAt: at(0),
+            }),
+            CONFIG, at(CONFIG.mutualAbandonmentMinutes + 5),
+        ).action);
 
-    it('cannot be cancelled even with an explicit cancel choice recorded', () => {
-        // Belt and braces: a stray decision row must not terminate a live trip.
-        const running = ride({
-            status: 'in_progress',
-            startedAt: at(5),
-            staleDecisionPromptedAt: at(400),
-            staleDecisionBy: 'passenger',
-            staleDecisionChoice: 'cancel',
-        });
-        const e = StaleRideService.evaluate(running, CONFIG, at(500));
-        expect(e.action).not.toBe('cancel');
+        expect(seen).toEqual(['none', 'warn', 'prompt_decision', 'remind', 'escalate', 'cancel']);
     });
 });

@@ -245,4 +245,56 @@ export class Ride {
     /** How many decision rounds this ride has been through. */
     @Column({ type: "int", default: 0 })
     staleDecisionRound!: number;
+
+    // --- Evidence the ride is still alive ---
+    // A delay is not a failure. Real-world delays are normal: traffic,
+    // checkpoints, rain, a gate, a lift, reception. So the system looks for
+    // evidence of ABANDONMENT rather than treating elapsed time as proof.
+
+    /**
+     * Last deliberate action, or genuine approach toward the pickup, on this ride.
+     *
+     * Liveness alone does NOT set this. An open app is not a driver who is
+     * coming — a driver parked at home emits location updates indefinitely, and
+     * counting those would let one hold a passenger's booking forever.
+     */
+    @Column({ type: "timestamp", nullable: true })
+    lastActivityAt!: Date | null;
+
+    @Column({ type: "varchar", length: 40, nullable: true })
+    lastActivityType!: string | null;
+
+    /** When we last checked in, so reminders stay humane rather than nagging. */
+    @Column({ type: "timestamp", nullable: true })
+    lastReminderAt!: Date | null;
+
+    /** Operational state for the support dashboard. See RideDelayState. */
+    @Index()
+    @Column({ type: "varchar", length: 48, nullable: true })
+    delayState!: string | null;
+
+    // --- A cancellation ASKED FOR by one party ---
+    // Cancelling is a two-person act. One side requests; the other accepts or
+    // says they are continuing.
+
+    @Column({ type: "varchar", length: 16, nullable: true })
+    cancellationRequestedBy!: string | null;
+
+    @Column({ type: "timestamp", nullable: true })
+    cancellationRequestedAt!: Date | null;
+
+    /** 'pending' | 'accepted' | 'declined' */
+    @Column({ type: "varchar", length: 16, nullable: true })
+    cancellationRequestState!: string | null;
+
+    /**
+     * Set when a human is asked to look at this ride. While set, the system will
+     * not terminate it on its own — escalation is explicitly not cancellation.
+     */
+    @Index()
+    @Column({ type: "timestamp", nullable: true })
+    escalatedToSupportAt!: Date | null;
+
+    @Column({ type: "varchar", length: 120, nullable: true })
+    escalationReason!: string | null;
 }

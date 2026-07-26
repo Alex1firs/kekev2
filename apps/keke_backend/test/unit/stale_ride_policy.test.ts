@@ -59,6 +59,18 @@ const ride = (over: Partial<RideSnapshot> = {}): RideSnapshot => ({
     staleDecisionBy: null,
     staleDecisionChoice: null,
     staleDecisionRound: 0,
+    lastActivityAt: null,
+    lastActivityType: null,
+    lastReminderAt: null,
+    // Both reachable by default: the interesting cases set these explicitly.
+    driverLive: true,
+    passengerLive: true,
+    driverOfflineForMs: null,
+    passengerOfflineForMs: null,
+    cancellationRequestedBy: null,
+    cancellationRequestedAt: null,
+    cancellationRequestState: null,
+    escalatedToSupportAt: null,
     ...over,
 });
 
@@ -94,14 +106,14 @@ describe('2. an accepted ride past its ETA-aware deadline PROMPTS, not cancels',
         expect(eta).toBeLessThan(12);
 
         const before = StaleRideService.evaluate(r, CONFIG, at(eta * 3 - 2));
-        expect(before.action).not.toBe('cancel');
+        expect(before.action).not.toBe('prompt_decision');
 
         const after = StaleRideService.evaluate(r, CONFIG, at(eta * 3 + 1));
         // The deadline no longer cancels — it starts a conversation.
         expect(after.action).toBe('prompt_decision');
         expect(after.reason).toBe(StaleActionReason.DRIVER_DID_NOT_ARRIVE);
         expect(after.promptParties).toEqual(['passenger', 'driver']);
-        expect(after.explanation).toContain('nothing is cancelled yet');
+        expect(after.explanation).toContain('nothing is cancelled');
     });
 
     it('asks about the four-day case rather than cancelling it silently', () => {

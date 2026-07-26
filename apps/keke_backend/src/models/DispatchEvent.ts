@@ -76,6 +76,21 @@ export enum DispatchEventType {
     STALE_DECISION_RECEIVED = "stale_decision_received",
     /** The decision window closed with nobody answering. */
     STALE_DECISION_TIMED_OUT = "stale_decision_timed_out",
+
+    // ── Coordination: a delay is a conversation, not a failure ────────────
+    /** Deliberate action or genuine approach proving the ride is alive. */
+    RIDE_ACTIVITY_RECORDED = "ride_activity_recorded",
+    /** A slow-cadence check-in, not a nag. */
+    STALE_REMINDER_SENT = "stale_reminder_sent",
+    /** One party asked to cancel; the other must accept or continue. */
+    CANCELLATION_REQUESTED = "cancellation_requested",
+    CANCELLATION_REQUEST_ACCEPTED = "cancellation_request_accepted",
+    /** The other party said they are continuing, so the ride goes on. */
+    CANCELLATION_REQUEST_DECLINED = "cancellation_request_declined",
+    /** Handed to a human. Explicitly NOT a cancellation. */
+    STALE_ESCALATED_TO_SUPPORT = "stale_escalated_to_support",
+    /** The engaged party was offered another driver instead of a dead end. */
+    REMATCH_OFFERED = "rematch_offered",
 }
 
 /**

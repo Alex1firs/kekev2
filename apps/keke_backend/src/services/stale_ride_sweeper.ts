@@ -31,6 +31,8 @@ import { RideCleanupService } from './ride_cleanup_service';
 import { NotificationService } from './notification_service';
 import { DispatchMonitorService } from './dispatch_monitor_service';
 import { DispatchEventType } from '../models/DispatchEvent';
+import { RideActivityService } from './ride_activity_service';
+import { RideActivityType } from '../config/stale_ride_config';
 
 /** Arbitrary but fixed key so every instance contends for the same lock. */
 const ADVISORY_LOCK_KEY = 8_472_119;
@@ -62,6 +64,10 @@ export interface SweepReport {
     skipped: number;
     /** Decision prompts sent to both parties. */
     prompted: number;
+    /** Slow-cadence check-ins. */
+    reminded: number;
+    /** Rides handed to a human instead of being cancelled. */
+    escalated: number;
     /** Races lost to a legitimate newer transition. */
     lostRaces: number;
     errors: number;
@@ -128,7 +134,7 @@ export class StaleRideSweeper {
             dryRun,
             acquiredLock: false,
             examined: 0, warned: 0, cancelled: 0, flagged: 0,
-            prompted: 0, skipped: 0, lostRaces: 0, errors: 0,
+            prompted: 0, reminded: 0, escalated: 0, skipped: 0, lostRaces: 0, errors: 0,
             plan: [],
         };
 
@@ -162,8 +168,13 @@ export class StaleRideSweeper {
                 const candidates = await this.loadCandidates(config, now);
                 report.examined = candidates.length;
 
-                for (const ride of candidates) {
+                for (const rawRide of candidates) {
                     try {
+                        // Gather live evidence first. The policy is pure, so it can
+                        // only be as good as what we hand it: whether each party is
+                        // showing any sign of life, and whether the driver is
+                        // genuinely closing the distance to the pickup.
+                        const ride = await this.withLiveEvidence(rawRide, config);
                         const evaluation = StaleRideService.evaluate(ride, config, now);
                         const item = await this.describe(ride, evaluation);
                         report.plan.push(item);
@@ -177,14 +188,26 @@ export class StaleRideSweeper {
                             // but nothing is written.
                             if (evaluation.action === 'warn') report.warned += 1;
                             if (evaluation.action === 'prompt_decision') report.prompted += 1;
+                            if (evaluation.action === 'remind') report.reminded += 1;
+                            if (evaluation.action === 'escalate') report.escalated += 1;
                             if (evaluation.action === 'cancel') report.cancelled += 1;
                             if (evaluation.action === 'flag_for_review') report.flagged += 1;
                             continue;
                         }
 
+                        // Keep the operations dashboard honest about what is
+                        // happening, whatever action follows.
+                        await this.persistDelayState(ride, evaluation);
+
                         if (evaluation.action === 'warn') {
                             const sent = await this.sendWarning(ride, evaluation);
                             if (sent) report.warned += 1; else report.skipped += 1;
+                        } else if (evaluation.action === 'remind') {
+                            const sent = await this.sendReminder(ride, evaluation, config);
+                            if (sent) report.reminded += 1; else report.skipped += 1;
+                        } else if (evaluation.action === 'escalate') {
+                            const done = await this.escalate(ride, evaluation, config);
+                            if (done) report.escalated += 1; else report.skipped += 1;
                         } else if (evaluation.action === 'prompt_decision') {
                             const sent = await this.promptDecision(ride, evaluation, config);
                             if (sent) report.prompted += 1; else report.skipped += 1;
@@ -207,7 +230,7 @@ export class StaleRideSweeper {
                         report.errors += 1;
                         console.error(JSON.stringify({
                             level: 'error', scope: 'stale_sweep', event: 'ride_failed',
-                            rideId: ride.rideId, error: err?.message,
+                            rideId: rawRide.rideId, error: err?.message,
                         }));
                     }
                 }
@@ -224,11 +247,13 @@ export class StaleRideSweeper {
             report.finishedAt = new Date().toISOString();
         }
 
-        if (report.warned || report.prompted || report.cancelled || report.flagged || report.errors) {
+        if (report.warned || report.prompted || report.reminded || report.escalated
+            || report.cancelled || report.flagged || report.errors) {
             console.log(JSON.stringify({
                 level: 'info', scope: 'stale_sweep', event: 'completed',
                 dryRun: report.dryRun, examined: report.examined,
                 warned: report.warned, prompted: report.prompted,
+                reminded: report.reminded, escalated: report.escalated,
                 cancelled: report.cancelled,
                 flagged: report.flagged, lostRaces: report.lostRaces,
                 skipped: report.skipped, errors: report.errors,
@@ -301,7 +326,269 @@ export class StaleRideSweeper {
             staleDecisionBy: r.staleDecisionBy ?? null,
             staleDecisionChoice: r.staleDecisionChoice ?? null,
             staleDecisionRound: r.staleDecisionRound ?? 0,
+            lastActivityAt: r.lastActivityAt ?? null,
+            lastActivityType: r.lastActivityType ?? null,
+            lastReminderAt: r.lastReminderAt ?? null,
+            // Filled in by the sweeper from live Redis before evaluation.
+            driverLive: true,
+            passengerLive: true,
+            driverOfflineForMs: null,
+            passengerOfflineForMs: null,
+            cancellationRequestedBy: r.cancellationRequestedBy ?? null,
+            cancellationRequestedAt: r.cancellationRequestedAt ?? null,
+            cancellationRequestState: r.cancellationRequestState ?? null,
+            escalatedToSupportAt: r.escalatedToSupportAt ?? null,
         };
+    }
+
+    /**
+     * Gather live evidence about a ride before the policy judges it.
+     *
+     * Two questions: is each party showing any sign of life, and is the driver
+     * genuinely closing the distance to the pickup? Approach counts as activity —
+     * a driver stuck in traffic who is still making progress has not abandoned
+     * anything, whatever the clock says.
+     */
+    private static async withLiveEvidence(
+        ride: RideSnapshot, config: StaleRideConfig,
+    ): Promise<RideSnapshot> {
+        let lastActivityAt = ride.lastActivityAt;
+        let lastActivityType = ride.lastActivityType;
+
+        // Approach only matters while the driver is still travelling to pickup.
+        if (ride.status === 'accepted' && ride.driverId
+            && ride.pickupLat != null && ride.pickupLng != null) {
+            const approach = await RideActivityService.checkDriverApproach(
+                ride.rideId, ride.driverId,
+                { lat: ride.pickupLat, lng: ride.pickupLng },
+                config,
+            );
+            if (approach.approaching) {
+                lastActivityAt = new Date();
+                lastActivityType = RideActivityType.DRIVER_APPROACHING;
+            }
+        }
+
+        const [driver, passenger] = await Promise.all([
+            ride.driverId
+                ? RideActivityService.driverLiveness(ride.driverId, lastActivityAt, config)
+                : Promise.resolve({ live: false, offlineForMs: null, via: null } as const),
+            ride.passengerId
+                ? RideActivityService.passengerLiveness(ride.passengerId, lastActivityAt, config)
+                : Promise.resolve({ live: false, offlineForMs: null, via: null } as const),
+        ]);
+
+        return {
+            ...ride,
+            lastActivityAt,
+            lastActivityType,
+            driverLive: driver.live,
+            passengerLive: passenger.live,
+            driverOfflineForMs: driver.offlineForMs,
+            passengerOfflineForMs: passenger.offlineForMs,
+        };
+    }
+
+    /**
+     * Keep the operations dashboard truthful about what is happening, on every
+     * pass, whatever action follows. Support staff seeing "Delayed — driver
+     * confirmed en route" is the difference between a calm answer and a guess.
+     */
+    private static async persistDelayState(
+        ride: RideSnapshot, evaluation: StaleEvaluation,
+    ): Promise<void> {
+        if (evaluation.delayState === ride.status) return;
+        try {
+            await AppDataSource.getRepository(Ride)
+                .createQueryBuilder()
+                .update()
+                .set({ delayState: evaluation.delayState })
+                .where('"rideId" = :rideId AND "completedAt" IS NULL AND ("delayState" IS NULL OR "delayState" != :state)',
+                    { rideId: ride.rideId, state: evaluation.delayState })
+                .execute();
+        } catch (err: any) {
+            console.warn(`[STALE_SWEEP] delayState persist failed for ${ride.rideId}: ${err?.message}`);
+        }
+    }
+
+    /**
+     * A slow-cadence check-in for two people who are already coordinating.
+     *
+     * Deliberately infrequent (see reminderIntervalMinutes). Someone who has said
+     * "still coming" does not need telling every minute; a notification that
+     * arrives constantly is one both parties learn to swipe away, which is exactly
+     * how the message that matters gets missed.
+     */
+    private static async sendReminder(
+        ride: RideSnapshot, evaluation: StaleEvaluation, config: StaleRideConfig,
+    ): Promise<boolean> {
+        const interval = StaleRideService.reminderIntervalMinutes(ride, config);
+        const rideRepo = AppDataSource.getRepository(Ride);
+        // Claim the reminder so two workers cannot both send it.
+        const claim = await rideRepo
+            .createQueryBuilder()
+            .update()
+            .set({ lastReminderAt: new Date() })
+            .where(`"rideId" = :rideId AND "completedAt" IS NULL
+                    AND ("lastReminderAt" IS NULL OR "lastReminderAt" <= :cutoff)`,
+                { rideId: ride.rideId, cutoff: new Date(Date.now() - interval * 60_000) })
+            .execute();
+        if (!claim.affected) return false;
+
+        const waitingForDriver = ride.status === 'accepted';
+        try {
+            // Both sides hear the same facts, phrased for their situation. Neither
+            // is told the other is at fault.
+            RideCleanupService.hostRef?.emitToRide(ride.rideId, 'ride:delay_update', {
+                rideId: ride.rideId,
+                delayState: evaluation.delayState,
+                role: 'passenger',
+                title: waitingForDriver ? 'Your driver is still on the way' : 'Your driver is waiting for you',
+                body: waitingForDriver
+                    ? 'They have confirmed they are coming. You can call or message them, or cancel if you need to.'
+                    : 'Your driver is at the pickup point. Let them know if you need a moment.',
+                actions: waitingForDriver
+                    ? ['continue_waiting', 'call_driver', 'message_driver', 'find_another_driver', 'request_cancel']
+                    : ['on_my_way', 'call_driver', 'message_driver', 'request_cancel'],
+            });
+            if (ride.driverId) {
+                RideCleanupService.hostRef?.emitToDriver(ride.driverId, 'ride:delay_update', {
+                    rideId: ride.rideId,
+                    delayState: evaluation.delayState,
+                    role: 'driver',
+                    title: waitingForDriver ? 'Your passenger is still waiting' : 'Still waiting for the passenger',
+                    body: waitingForDriver
+                        ? 'They know you are delayed and are waiting for you.'
+                        : 'The passenger has not appeared yet. You can call or message them.',
+                    actions: waitingForDriver
+                        ? ['still_coming', 'share_location', 'call_passenger', 'message_passenger', 'request_cancel']
+                        : ['call_passenger', 'message_passenger', 'request_cancel'],
+                });
+            }
+        } catch { /* realtime is best-effort */ }
+
+        DispatchMonitorService.record({
+            rideId: ride.rideId,
+            eventType: DispatchEventType.STALE_REMINDER_SENT,
+            driverId: ride.driverId,
+            detail: {
+                delayState: evaluation.delayState,
+                intervalMinutes: Math.round(interval),
+                ageMinutes: Math.round(evaluation.ageMinutes ?? 0),
+            },
+        });
+        return true;
+    }
+
+    /**
+     * Hand the ride to a human, and give the engaged party somewhere to go.
+     *
+     * This replaces cancelling on one-sided silence. "We cannot reach your driver
+     * — find another?" respects a passenger who has done everything right; a ride
+     * silently disappearing does not. Nothing is terminated here, and once
+     * escalated the system stops acting on this ride at all.
+     */
+    private static async escalate(
+        ride: RideSnapshot, evaluation: StaleEvaluation, config: StaleRideConfig,
+    ): Promise<boolean> {
+        const target = evaluation.escalationTarget;
+        const reason = target === 'driver' ? 'driver_unreachable' : 'passenger_unreachable';
+
+        const claim = await AppDataSource.getRepository(Ride)
+            .createQueryBuilder()
+            .update()
+            .set({
+                escalatedToSupportAt: new Date(),
+                escalationReason: reason,
+                delayState: evaluation.delayState,
+                requiresOperationsReview: true,
+            })
+            .where('"rideId" = :rideId AND "escalatedToSupportAt" IS NULL AND "completedAt" IS NULL',
+                { rideId: ride.rideId })
+            .execute();
+        if (!claim.affected) return false;
+
+        try {
+            if (target === 'driver') {
+                // The passenger is the engaged party: offer them a way forward.
+                RideCleanupService.hostRef?.emitToRide(ride.rideId, 'ride:delay_escalated', {
+                    rideId: ride.rideId,
+                    delayState: evaluation.delayState,
+                    title: 'We are unable to reach your driver',
+                    body: 'We have not been able to contact them. You can look for another Keke, or keep waiting.',
+                    actions: ['find_another_driver', 'continue_waiting', 'request_cancel'],
+                    supportNotified: true,
+                });
+                if (ride.passengerId) {
+                    await NotificationService.sendToUser(
+                        ride.passengerId, UserRole.PASSENGER,
+                        'Unable to reach your driver',
+                        'Tap to find another Keke, or keep waiting. Support has been notified.',
+                        { type: 'RIDE_ESCALATED', rideId: ride.rideId, intent: 'active' },
+                    );
+                }
+                DispatchMonitorService.record({
+                    rideId: ride.rideId,
+                    eventType: DispatchEventType.REMATCH_OFFERED,
+                    driverId: ride.driverId,
+                    detail: { offeredTo: 'passenger', becauseOf: reason },
+                });
+            } else {
+                // The driver is engaged and waiting: tell them where they stand.
+                if (ride.driverId) {
+                    RideCleanupService.hostRef?.emitToDriver(ride.driverId, 'ride:delay_escalated', {
+                        rideId: ride.rideId,
+                        delayState: evaluation.delayState,
+                        title: 'Unable to reach the passenger',
+                        body: 'We have not been able to contact them. Support has been notified. You can request to cancel.',
+                        actions: ['request_cancel', 'call_passenger', 'continue_waiting'],
+                        supportNotified: true,
+                    });
+                    await NotificationService.sendToUser(
+                        ride.driverId, UserRole.DRIVER,
+                        'Unable to reach the passenger',
+                        'Support has been notified. You can request to cancel this ride.',
+                        { type: 'RIDE_ESCALATED', rideId: ride.rideId, intent: 'active' },
+                    );
+                }
+            }
+
+            // High-priority operations signal — a human owns this now.
+            RideCleanupService.hostRef?.emitToAdmin('admin:ride_requires_review', {
+                rideId: ride.rideId,
+                reason,
+                delayState: evaluation.delayState,
+                passengerId: ride.passengerId,
+                driverId: ride.driverId,
+                unreachableParty: target,
+                unreachableForMinutes: Math.round(
+                    ((target === 'driver' ? ride.driverOfflineForMs : ride.passengerOfflineForMs) ?? 0) / 60_000,
+                ),
+                severity: 'high',
+                autoCancelled: false,
+            });
+        } catch (err: any) {
+            console.warn(`[STALE_SWEEP] escalation notify failed for ${ride.rideId}: ${err?.message}`);
+        }
+
+        DispatchMonitorService.record({
+            rideId: ride.rideId,
+            eventType: DispatchEventType.STALE_ESCALATED_TO_SUPPORT,
+            driverId: ride.driverId,
+            detail: {
+                reason,
+                unreachableParty: target,
+                engagedParty: target === 'driver' ? 'passenger' : 'driver',
+                escalateAfterOfflineMinutes: config.escalateAfterOfflineMinutes,
+                autoCancelled: false,
+                explanation: evaluation.explanation,
+            },
+        });
+        console.warn(JSON.stringify({
+            level: 'warn', scope: 'stale_sweep', event: 'escalated_to_support',
+            rideId: ride.rideId, reason, unreachableParty: target,
+        }));
+        return true;
     }
 
     /** Enrich an evaluation with the driver-liveness context an operator needs. */
@@ -548,32 +835,31 @@ export class StaleRideSweeper {
         let passengerMessage: string;
         let driverMessage: string;
         switch (res) {
-            case StaleResolution.PASSENGER_CHOSE_CANCEL:
-                passengerMessage = 'Your ride has been cancelled as you requested. You can book again now.';
-                driverMessage = 'The passenger cancelled this ride. You can accept new rides now.';
+            case StaleResolution.CANCELLED_BY_MUTUAL_AGREEMENT_PASSENGER_INITIATED:
+                passengerMessage = 'Your ride has been cancelled as you asked. You can book again now.';
+                driverMessage = 'The passenger cancelled and you accepted. You can accept new rides now.';
                 break;
-            case StaleResolution.DRIVER_CHOSE_CANCEL:
-                passengerMessage = 'Your driver could not complete this pickup, so the ride was cancelled. You can book again now.';
-                driverMessage = 'This ride has been cancelled as you requested. You can accept new rides now.';
+            case StaleResolution.CANCELLED_BY_MUTUAL_AGREEMENT_DRIVER_INITIATED:
+                passengerMessage = 'Your driver could not make this pickup and you accepted the cancellation. You can book again now.';
+                driverMessage = 'This ride has been cancelled as you asked. You can accept new rides now.';
                 break;
-            case StaleResolution.DRIVER_UNRESPONSIVE:
-                passengerMessage = 'We could not reach your driver, so we cancelled the ride. You can book again now.';
-                driverMessage = 'This ride was cancelled because we did not hear back from you. You can accept new rides now.';
+            case StaleResolution.CANCELLED_REQUEST_UNANSWERED:
+                passengerMessage = 'This ride was cancelled after a cancellation request went unanswered. You can book again now.';
+                driverMessage = 'This ride was cancelled after a cancellation request went unanswered. You can accept new rides now.';
                 break;
-            case StaleResolution.PASSENGER_UNRESPONSIVE:
-                passengerMessage = 'This ride was cancelled because we did not hear back from you. You can book again whenever you are ready.';
-                driverMessage = 'The passenger did not respond, so this ride was cancelled. You can accept new rides now.';
+            case StaleResolution.ABANDONED_BY_BOTH:
+                passengerMessage = 'We lost contact with this ride, so we released it. You can book again whenever you are ready.';
+                driverMessage = 'We lost contact with this ride, so we released it. You can accept new rides now.';
                 break;
             default:
-                passengerMessage = 'We did not hear back about this ride, so we cancelled it. You can book again now.';
-                driverMessage = 'We did not hear back about this ride, so we cancelled it. You can accept new rides now.';
+                passengerMessage = 'This ride has been closed. You can book again now.';
+                driverMessage = 'This ride has been closed. You can accept new rides now.';
                 break;
         }
 
         // The window closed unanswered — record that plainly before terminating.
-        if (res === StaleResolution.NO_RESPONSE_FROM_EITHER
-            || res === StaleResolution.DRIVER_UNRESPONSIVE
-            || res === StaleResolution.PASSENGER_UNRESPONSIVE) {
+        if (res === StaleResolution.CANCELLED_REQUEST_UNANSWERED
+            || res === StaleResolution.ABANDONED_BY_BOTH) {
             DispatchMonitorService.record({
                 rideId: ride.rideId,
                 eventType: DispatchEventType.STALE_DECISION_TIMED_OUT,
@@ -590,7 +876,7 @@ export class StaleRideSweeper {
         const outcome = await RideCleanupService.terminate({
             rideId: ride.rideId,
             // The DECISION is the cancellation reason...
-            reason: res ?? StaleResolution.NO_RESPONSE_FROM_EITHER,
+            reason: res ?? StaleResolution.ABANDONED_BY_BOTH,
             // ...and the SITUATION is recorded alongside it.
             situation: evaluation.reason ?? StaleActionReason.DRIVER_DID_NOT_ARRIVE,
             expectedStatuses: [ride.status],

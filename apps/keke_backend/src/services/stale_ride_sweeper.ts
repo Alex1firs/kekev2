@@ -283,18 +283,26 @@ export class StaleRideSweeper {
         );
         const cutoff = new Date(now.getTime() - earliestActionableMinutes * 60_000);
 
-        const rows: Ride[] = await AppDataSource.getRepository(Ride)
-            .createQueryBuilder('r')
-            .where('r.status IN (:...statuses)', { statuses: SWEPT_STATUSES })
-            .andWhere('r."completedAt" IS NULL')
-            .andWhere('(r."acceptedAt" <= :cutoff OR r."startedAt" <= :cutoff OR r."acceptedAt" IS NULL)', { cutoff })
-            .orderBy('r."acceptedAt"', 'ASC', 'NULLS LAST')
-            .limit(config.batchSize)
-            // Row-level locks skipped rather than waited on: a row another worker
-            // (or a live transaction) holds is simply left for the next pass.
-            .setLock('pessimistic_write')
-            .setOnLocked('skip_locked')
-            .getMany();
+        // SELECT ... FOR UPDATE SKIP LOCKED is only legal inside a transaction,
+        // and TypeORM refuses the lock outright without one. The transaction wraps
+        // the read alone: these row locks are released at commit, and nothing
+        // depends on holding them. Two sweepers are kept apart by the advisory
+        // lock above, and every write is a conditional UPDATE that re-checks the
+        // state it relies on, so a row changing after this read is already handled.
+        const rows: Ride[] = await AppDataSource.transaction((manager) =>
+            manager.getRepository(Ride)
+                .createQueryBuilder('r')
+                .where('r.status IN (:...statuses)', { statuses: SWEPT_STATUSES })
+                .andWhere('r."completedAt" IS NULL')
+                .andWhere('(r."acceptedAt" <= :cutoff OR r."startedAt" <= :cutoff OR r."acceptedAt" IS NULL)', { cutoff })
+                .orderBy('r."acceptedAt"', 'ASC', 'NULLS LAST')
+                .limit(config.batchSize)
+                // Row-level locks skipped rather than waited on: a row another
+                // worker (or a live transaction) holds is left for the next pass.
+                .setLock('pessimistic_write')
+                .setOnLocked('skip_locked')
+                .getMany(),
+        );
 
         return rows.map((r) => this.toSnapshot(r));
     }

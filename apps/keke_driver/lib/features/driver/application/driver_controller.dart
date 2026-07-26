@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:dio/dio.dart' as dio;
@@ -16,6 +17,8 @@ import '../domain/chat_message.dart';
 import '../domain/driver_profile.dart';
 import '../domain/driver_state.dart';
 import '../domain/trip_request.dart';
+import '../domain/ride_coordination.dart';
+import '../../../core/services/analytics_service.dart';
 import '../../../core/network/socket_service.dart';
 import '../../../core/network/socket_provider.dart';
 import '../../../core/network/api_client.dart';
@@ -53,12 +56,14 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
   StreamSubscription? _notificationSubscription;
   final NotificationService _notificationService;
   final SoundService _soundService;
+  final AnalyticsService _analytics;
   void Function()? _onWalletRefreshNeeded;
 
   void setWalletRefreshCallback(void Function() cb) => _onWalletRefreshNeeded = cb;
 
-  DriverController(SocketService? initialSocket, this._apiClient, this._notificationService, this._soundService, this._userId, this._storage, this._authToken)
-      : super(DriverState(
+  DriverController(SocketService? initialSocket, this._apiClient, this._notificationService, this._soundService, this._userId, this._storage, this._authToken, {AnalyticsService? analytics})
+      : _analytics = analytics ?? AnalyticsService(),
+        super(DriverState(
           profile: const DriverProfile(status: DriverStatus.unregistered),
           isLoading: true, // hold routing on splash until profile is fetched
         )) {
@@ -102,6 +107,32 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
     _notificationSubscription = _notificationService.intentStream.listen((data) {
       print('[DRIVER_SYNC] Notification intent received: $data. Triggering sync...');
       syncStatus();
+
+      // A coordination push and the socket event that accompanies it describe the
+      // SAME question. The server sends a matching `eventId` on both, so marking
+      // it seen here means whichever arrives second raises no second prompt.
+      final type = data['type']?.toString();
+      const coordinationTypes = {
+        'STALE_RIDE_WARNING',
+        'STALE_RIDE_DECISION',
+        'CANCELLATION_REQUESTED',
+        'RIDE_ESCALATED',
+      };
+      if (!coordinationTypes.contains(type)) return;
+
+      final eventId = data['eventId']?.toString();
+      if (eventId != null && eventId.isNotEmpty) {
+        if (_rememberCoordinationEvent(eventId)) {
+          _analytics.logCoordination('notification_displayed',
+              rideId: data['rideId']?.toString(),
+              eventId: eventId,
+              stage: 'notification',
+              extra: {'type': type});
+        }
+      }
+      // Tapping the notification must land on the real state, not on whatever the
+      // push text said a moment ago — it may already have been answered.
+      refreshCoordination();
     });
     
     // Catch cold starts from a notification
@@ -165,7 +196,7 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
           if (incomingRideId == currentRideId || state.tripStep == TripStep.none) {
             print('[DRIVER_SIGNAL] Cancellation/Dismissal confirmed for: $incomingRideId');
             _stopWatchdog();
-            _resetToAvailable();
+            _handleRideCancelled(data);
           }
           break;
         case 'socket:reconnected':
@@ -178,6 +209,9 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
           if (state.operationStatus == OperationStatus.available) {
             _sendHeartbeat();
           }
+          // Any prompt we were showing may have been answered or expired while we
+          // were offline. Only the server knows; re-read rather than guess.
+          refreshCoordination();
           break;
         case 'socket:disconnected':
           print('[SOCKET] Disconnected.');
@@ -228,6 +262,45 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
           _onWalletRefreshNeeded?.call();
           state = state.copyWith(errorMessage: 'Trip completed. Payment is under review.');
           _scheduleErrorClear(seconds: 8);
+          break;
+        // ── Delayed-ride coordination ─────────────────────────────────────
+        // A delay is a conversation, not a failure. All of these route through
+        // one path so the dedupe rule cannot diverge between event types.
+        case 'ride:delay_notice':
+        case 'ride:delay_update':
+        case 'ride:stale_decision_required':
+        case 'ride:cancel_requested':
+        case 'ride:delay_escalated':
+          _applyCoordinationEvent(data);
+          break;
+        case 'ride:stale_decision_resolved':
+          _onCoordinationResolved(
+            data,
+            title: data['message']?.toString() ?? 'The passenger is still waiting',
+            body: 'Please head to the pickup point.',
+          );
+          break;
+        case 'ride:cancel_declined':
+          _onCoordinationResolved(
+            data,
+            title: data['title']?.toString() ?? 'The passenger is continuing',
+            body: data['body']?.toString() ?? 'They would like to keep the ride.',
+          );
+          break;
+        case 'ride:extension_granted':
+          // Our own "I'm still coming" landed. Settle the card calmly rather than
+          // leaving the driver looking at a spinner.
+          _onExtensionGranted(data);
+          break;
+        case 'ride:activity_seen':
+          _onActivitySeen(data);
+          break;
+        case 'ride:cancel_request_ack':
+          _onCancelRequestAck(data);
+          break;
+        case 'ride:cancel_response_ack':
+        case 'ride:stale_decision_ack':
+          _onCoordinationAck(data);
           break;
         case 'chat:message':
           try {
@@ -579,11 +652,36 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
               pickupCode: rideData['pickupCode']?.toString(),
             );
 
+            // Restore the delayed-ride card from the SAME payload. A driver whose
+            // app was killed mid-conversation comes back to the question still in
+            // front of them, with the countdown where it actually is — the whole
+            // point of the server sending an absolute deadline.
+            RideCoordination? recoveredCoordination;
+            final block = rideData['coordination'];
+            if (block is Map && step == TripStep.accepted) {
+              recoveredCoordination = RideCoordination.fromWire(
+                block.map((k, v) => MapEntry(k.toString(), v)),
+                role: 'driver',
+              );
+              if (recoveredCoordination != null) {
+                _rememberCoordinationEvent(recoveredCoordination.eventId);
+                recoveredCoordination = recoveredCoordination.copyWith(
+                  // An answer already on record must not be presented as an open
+                  // question — the driver already said their piece.
+                  answered: !recoveredCoordination.decisionOpen &&
+                      recoveredCoordination.decidedByMe,
+                );
+              }
+            }
+
             state = state.copyWith(
               operationStatus: OperationStatus.busy,
               tripStep: step,
               activeRequest: recoveredRequest,
+              coordination: recoveredCoordination,
             );
+            print('[DRIVER_INIT] Recovered ride $rideId'
+                '${recoveredCoordination != null ? ' with an open coordination prompt' : ''}');
             _startWatchdog();
           }
         } catch (e) {
@@ -1126,6 +1224,456 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
     _resetToAvailable();
   }
 
+  /// Test seam: place the controller on an accepted ride without going through
+  /// the offer/countdown flow, which needs a live socket and real timers.
+  ///
+  /// Only the fields the coordination flow reads are set — this is not a
+  /// substitute for the real acceptance path.
+  @visibleForTesting
+  void debugSetActiveRide(TripRequest request, TripStep step) {
+    state = state.copyWith(
+      activeRequest: request,
+      tripStep: step,
+      operationStatus: OperationStatus.busy,
+      isLoading: false,
+    );
+  }
+
+  // ── Delayed-ride coordination ──────────────────────────────────────────
+  //
+  // The driver's half of the human-centred recovery model. Being late is not a
+  // failing — traffic, checkpoints, rain and locked gates are the job — so the app
+  // asks rather than accuses, and reports what the driver chooses.
+
+  /// Coordination moments already shown. Keyed on the server's deterministic
+  /// `eventId`, so a socket event and its push notification are one prompt, and a
+  /// replay after reconnect cannot ask twice.
+  final Set<String> _seenCoordinationEvents = <String>{};
+  static const int _maxRememberedCoordinationEvents = 64;
+
+  bool _rememberCoordinationEvent(String eventId) {
+    if (_seenCoordinationEvents.contains(eventId)) return false;
+    if (_seenCoordinationEvents.length >= _maxRememberedCoordinationEvents) {
+      _seenCoordinationEvents.remove(_seenCoordinationEvents.first);
+    }
+    _seenCoordinationEvents.add(eventId);
+    return true;
+  }
+
+  String? get _activeRideId => state.activeRequest?.id.toString();
+
+  /// Apply an inbound coordination event, if it is about the ride we are actually
+  /// on and the trip has not already started.
+  void _applyCoordinationEvent(Map<String, dynamic> data) {
+    final rideId = data['rideId']?.toString();
+    if (rideId == null || rideId != _activeRideId) return;
+    if (state.tripStep == TripStep.started ||
+        state.tripStep == TripStep.completed) {
+      return;
+    }
+
+    final parsed = RideCoordination.fromWire(data, role: 'driver');
+    if (parsed == null) return;
+
+    final fresh = _rememberCoordinationEvent(parsed.eventId);
+    if (!fresh && state.coordination?.eventId == parsed.eventId) return;
+
+    state = state.copyWith(coordination: parsed, clearClosure: true);
+    if (fresh) {
+      _analytics.logCoordination('prompt_displayed',
+          rideId: rideId,
+          eventId: parsed.eventId,
+          stage: parsed.stage.wire,
+          extra: {
+            'needsAnswer': parsed.needsAnswer,
+            'rideStatus': parsed.rideStatus,
+            'reasonCode': parsed.reasonCode,
+          });
+      // Only a real question earns a sound. A driver riding through traffic does
+      // not need a chime for every status update.
+      if (parsed.needsAnswer) _soundService.playRequestSound();
+    }
+  }
+
+  void _onCoordinationResolved(
+    Map<String, dynamic> data, {
+    required String title,
+    required String body,
+  }) {
+    final rideId = data['rideId']?.toString();
+    if (rideId == null || rideId != _activeRideId) return;
+    final existing = state.coordination;
+    state = state.copyWith(
+      coordination: RideCoordination(
+        rideId: rideId,
+        stage: CoordinationStage.confirmedEnRoute,
+        title: title,
+        body: body,
+        eventId: data['eventId']?.toString() ?? '$rideId:resolved',
+        rideStatus: existing?.rideStatus ?? 'accepted',
+        decisionOpen: false,
+        extensionsRemaining: existing?.extensionsRemaining ?? 0,
+        actions: const [
+          CoordinationAction.callOtherParty,
+          CoordinationAction.openNavigation,
+          CoordinationAction.requestCancel,
+        ],
+      ),
+    );
+  }
+
+  /// Our own "I'm still coming" was granted. The card stays — the ride is still
+  /// delayed and the passenger is still waiting — but it goes calm and states
+  /// plainly that the passenger was told.
+  void _onExtensionGranted(Map<String, dynamic> data) {
+    final rideId = data['rideId']?.toString();
+    if (rideId == null || rideId != _activeRideId) return;
+    final current = state.coordination;
+    if (current == null) return;
+    state = state.copyWith(
+      coordination: current.copyWith(
+        stage: CoordinationStage.confirmedEnRoute,
+        title: 'Passenger notified that you are still coming',
+        body: 'Please head to the pickup point.',
+        submitting: false,
+        answered: true,
+        decisionOpen: false,
+        clearRespondBy: true,
+        actions: const [
+          CoordinationAction.callOtherParty,
+          CoordinationAction.openNavigation,
+          CoordinationAction.requestCancel,
+        ],
+      ),
+    );
+    _analytics.logCoordination('still_coming_confirmed',
+        rideId: rideId,
+        eventId: current.eventId,
+        stage: current.stage.wire,
+        extra: {'minutes': (data['minutes'] as num?)?.toInt()});
+  }
+
+  void _onActivitySeen(Map<String, dynamic> data) {
+    if (data['rideId']?.toString() != _activeRideId) return;
+    if (data['by']?.toString() != 'passenger') return;
+    final text = switch (data['type']?.toString()) {
+      'passenger_called_driver' => 'The passenger is trying to call you.',
+      'passenger_keep_waiting' => 'The passenger is on their way out to you.',
+      'chat_message' => 'The passenger sent you a message.',
+      _ => null,
+    };
+    if (text == null) return;
+    state = state.copyWith(errorMessage: text);
+    _scheduleErrorClear(seconds: 6);
+  }
+
+  /// Our own cancellation request was accepted for delivery. The ride stays
+  /// active — a request is not a cancellation.
+  void _onCancelRequestAck(Map<String, dynamic> data) {
+    final rideId = data['rideId']?.toString();
+    if (rideId == null || rideId != _activeRideId) return;
+
+    if (data['accepted'] != true) {
+      state = state.copyWith(
+        coordination: state.coordination?.copyWith(submitting: false),
+        errorMessage: data['reason']?.toString() == 'request_already_pending'
+            ? 'There is already a cancellation request on this ride.'
+            : 'We could not send that just now. Please try again.',
+      );
+      _scheduleErrorClear(seconds: 6);
+      return;
+    }
+
+    final deadline = DateTime.tryParse(data['respondByAt']?.toString() ?? '');
+    state = state.copyWith(
+      coordination: RideCoordination(
+        rideId: rideId,
+        stage: CoordinationStage.cancellationRequested,
+        title: 'Waiting for a response to your cancellation',
+        body: 'We have asked the passenger. The ride stays active until they answer.',
+        eventId: data['eventId']?.toString() ?? '$rideId:cancel_request_pending',
+        respondByAt: deadline?.toUtc(),
+        cancellationRequestedBy: 'driver',
+        cancellationRequestState: 'pending',
+        requestedByMe: true,
+        rideStatus: state.coordination?.rideStatus ?? 'accepted',
+        actions: const [CoordinationAction.callOtherParty],
+      ),
+    );
+    _analytics.logCoordination('cancellation_requested',
+        rideId: rideId,
+        eventId: data['eventId']?.toString(),
+        stage: CoordinationStage.cancellationRequested.wire);
+  }
+
+  /// The server's verdict on a response we sent. Authoritative: a refusal here
+  /// means the answer did not land, whatever the UI was showing.
+  void _onCoordinationAck(Map<String, dynamic> data) {
+    final rideId = data['rideId']?.toString();
+    if (rideId == null || rideId != _activeRideId) return;
+    final current = state.coordination;
+    if (current == null) return;
+
+    final accepted = data['accepted'] as bool? ?? (data['applied'] as bool? ?? false);
+    if (accepted) {
+      state = state.copyWith(
+        coordination: current.copyWith(
+          submitting: false,
+          answered: true,
+          decisionOpen: false,
+        ),
+      );
+      _analytics.logCoordination('prompt_acknowledged',
+          rideId: rideId,
+          eventId: current.eventId,
+          stage: current.stage.wire,
+          extra: {'choice': data['choice']?.toString() ?? data['decision']?.toString()});
+      return;
+    }
+
+    final reason = data['reason']?.toString();
+    final message = switch (reason) {
+      'already_decided' => 'The passenger already answered this one.',
+      'extension_limit_reached' => data['message']?.toString() ??
+          'You have already confirmed once on this ride. Please arrive, or cancel.',
+      _ => 'We could not record that. Please try again.',
+    };
+    state = state.copyWith(
+      coordination: current.copyWith(submitting: false),
+      errorMessage: message,
+    );
+    _scheduleErrorClear(seconds: 8);
+    _analytics.logCoordination('response_rejected',
+        rideId: rideId,
+        eventId: current.eventId,
+        stage: current.stage.wire,
+        extra: {'reason': reason});
+    refreshCoordination();
+  }
+
+  /// Act on the driver's choice. Everything that changes the ride goes to the
+  /// server and waits for its answer; nothing is applied on the optimistic
+  /// assumption that it worked.
+  void respondToCoordination(CoordinationAction action) {
+    final current = state.coordination;
+    final rideId = _activeRideId;
+    if (current == null || rideId == null) return;
+    if (current.submitting) return;
+
+    switch (action) {
+      case CoordinationAction.stillComing:
+      case CoordinationAction.continueRide:
+        _confirmStillComing(current, rideId, action);
+        return;
+
+      case CoordinationAction.keepWaiting:
+        // Arrived, waiting for the passenger. Answering the prompt with "wait" is
+        // what buys the bounded extension.
+        state = state.copyWith(coordination: current.copyWith(submitting: true));
+        _socketService?.emit('ride:stale_decision', {
+          'rideId': rideId,
+          'userId': _userId,
+          'role': 'driver',
+          'choice': 'wait',
+        });
+        _analytics.logCoordination('keep_waiting',
+            rideId: rideId, eventId: current.eventId, stage: current.stage.wire);
+        return;
+
+      case CoordinationAction.acceptCancellation:
+        state = state.copyWith(coordination: current.copyWith(submitting: true));
+        _socketService?.emit('ride:cancel_response', {
+          'rideId': rideId,
+          'userId': _userId,
+          'role': 'driver',
+          'decision': 'accept',
+        });
+        _analytics.logCoordination('cancellation_accepted',
+            rideId: rideId, eventId: current.eventId, stage: current.stage.wire);
+        return;
+
+      case CoordinationAction.requestCancel:
+      case CoordinationAction.findAnotherDriver:
+        state = state.copyWith(coordination: current.copyWith(submitting: true));
+        // A request, not a cancellation. The passenger still gets to answer.
+        _socketService?.emit('ride:cancel_request', {
+          'rideId': rideId,
+          'userId': _userId,
+          'role': 'driver',
+        });
+        return;
+
+      case CoordinationAction.callOtherParty:
+        // The dial is the UI's job; reporting it here is what makes it count as
+        // evidence the ride is alive. The server cannot see a phone call.
+        _socketService?.emit('ride:activity', {
+          'rideId': rideId,
+          'userId': _userId,
+          'role': 'driver',
+          'type': 'driver_called_passenger',
+        });
+        _analytics.logCoordination('call_used',
+            rideId: rideId, eventId: current.eventId, stage: current.stage.wire);
+        return;
+
+      case CoordinationAction.shareLocation:
+        _socketService?.emit('ride:activity', {
+          'rideId': rideId,
+          'userId': _userId,
+          'role': 'driver',
+          'type': 'driver_shared_location',
+        });
+        _analytics.logCoordination('location_shared',
+            rideId: rideId, eventId: current.eventId, stage: current.stage.wire);
+        return;
+
+      case CoordinationAction.onMyWay:
+        _confirmStillComing(current, rideId, action);
+        return;
+
+      case CoordinationAction.messageOtherParty:
+        _analytics.logCoordination('message_used',
+            rideId: rideId, eventId: current.eventId, stage: current.stage.wire);
+        return;
+
+      case CoordinationAction.contactSupport:
+        _analytics.logCoordination('support_opened',
+            rideId: rideId, eventId: current.eventId, stage: current.stage.wire);
+        return;
+
+      case CoordinationAction.openNavigation:
+        _analytics.logCoordination('navigation_opened',
+            rideId: rideId, eventId: current.eventId, stage: current.stage.wire);
+        return;
+    }
+  }
+
+  /// "I'm still coming."
+  ///
+  /// Deliberately does NOT mark the driver arrived — confirming you are on your
+  /// way is not the same as being there, and conflating them would let a driver
+  /// skip the geofence that protects the pickup.
+  void _confirmStillComing(
+    RideCoordination current,
+    String rideId,
+    CoordinationAction action,
+  ) {
+    state = state.copyWith(coordination: current.copyWith(submitting: true));
+
+    if (current.stage == CoordinationStage.cancellationRequested &&
+        !current.requestedByMe) {
+      // Declining the passenger's cancellation request is its own event, and it
+      // doubles as "still coming".
+      _socketService?.emit('ride:cancel_response', {
+        'rideId': rideId,
+        'userId': _userId,
+        'role': 'driver',
+        'decision': 'continue',
+      });
+      _analytics.logCoordination('cancellation_declined',
+          rideId: rideId, eventId: current.eventId, stage: current.stage.wire);
+      return;
+    }
+
+    if (current.decisionOpen) {
+      // There is an open prompt: answering it is what the server is waiting for.
+      _socketService?.emit('ride:stale_decision', {
+        'rideId': rideId,
+        'userId': _userId,
+        'role': 'driver',
+        'choice': 'wait',
+      });
+    } else {
+      // A soft reminder with no open prompt. `ride:still_coming` is the driver-only
+      // path for exactly this, and it acks with ride:extension_granted.
+      _socketService?.emit('ride:still_coming', {
+        'rideId': rideId,
+        'driverId': _userId,
+      });
+    }
+    _analytics.logCoordination('still_coming_selected',
+        rideId: rideId, eventId: current.eventId, stage: current.stage.wire);
+  }
+
+  /// Re-read the authoritative coordination state. Called on launch, on reconnect
+  /// and after a rejected response — this is what makes a prompt survive a process
+  /// restart, and what stops an answered prompt from coming back.
+  Future<void> refreshCoordination() async {
+    final rideId = _activeRideId;
+    if (rideId == null) return;
+    try {
+      final response = await _apiClient.dio.get('/rides/$rideId/coordination');
+      if (!mounted || _activeRideId != rideId) return;
+
+      final data = response.data;
+      final block = data is Map ? data['coordination'] : null;
+      if (block is! Map) {
+        if (state.coordination != null) {
+          state = state.copyWith(clearCoordination: true);
+        }
+        return;
+      }
+      final parsed = RideCoordination.fromWire(
+        block.map((k, v) => MapEntry(k.toString(), v)),
+        role: 'driver',
+      );
+      if (parsed == null) {
+        state = state.copyWith(clearCoordination: true);
+        return;
+      }
+      _rememberCoordinationEvent(parsed.eventId);
+      state = state.copyWith(
+        coordination: parsed.copyWith(
+          answered: !parsed.decisionOpen && parsed.decidedByMe,
+        ),
+      );
+    } catch (e) {
+      print('[DRIVER] Coordination refresh failed: $e');
+    }
+  }
+
+  /// A ride ended. The server classifies how; the app only renders it.
+  void _handleRideCancelled(Map<String, dynamic> data) {
+    final closure = RideClosure.fromWire(data['outcome']?.toString());
+    _analytics.logCoordination('ride_closed',
+        rideId: data['rideId']?.toString(),
+        eventId: data['eventId']?.toString(),
+        stage: 'closed',
+        extra: {'outcome': closure.name, 'reasonCode': data['reason']?.toString()});
+
+    _resetToAvailable();
+
+    // An offer merely withdrawn during dispatch needs no explanation — the driver
+    // never had this ride.
+    if (closure == RideClosure.offerWithdrawn) return;
+
+    if (!mounted) return;
+    state = state.copyWith(
+      closure: closure,
+      closureTitle: data['title']?.toString() ?? 'Ride closed',
+      closureBody: data['body']?.toString() ?? _defaultClosureBody(closure),
+    );
+  }
+
+  static String _defaultClosureBody(RideClosure closure) => switch (closure) {
+        RideClosure.closedNoResponse =>
+          'This ride was closed after neither party responded.',
+        RideClosure.cancelledRequestUnanswered =>
+          'The cancellation request went unanswered, so the ride was closed. '
+              'You can accept new rides now.',
+        RideClosure.cancelledByPassenger =>
+          'The passenger cancelled this ride. You can accept new rides now.',
+        RideClosure.resolvedBySupport =>
+          'Our team closed this ride. Please contact support if you need anything else.',
+        _ => 'This ride has been cancelled. You can accept new rides now.',
+      };
+
+  /// Dismiss the closing card and get back on the road.
+  void dismissClosure() {
+    if (state.closure == null) return;
+    state = state.copyWith(clearClosure: true);
+  }
+
   // --- Trip Lifecycle ---
 
   void markArrived() {
@@ -1136,11 +1684,16 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
       'driverId': _userId,
     });
 
+    // ARRIVAL SETTLES THE QUESTION. Any "are you still coming?" card goes now —
+    // the driver being here is the answer, and leaving the prompt up next to
+    // "you have arrived" would be nonsense. A separate waiting-for-passenger
+    // conversation may start later; the server drives that, not this.
     state = state.copyWith(
       tripStep: TripStep.arrived,
       waitTimeSeconds: 0,
       clearPickupRoute: true,
       clearRouteEta: true,
+      clearCoordination: true,
     );
     _fetchDestinationRoute(); // fire-and-forget
 
@@ -1161,7 +1714,9 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
     });
 
     _waitTimer?.cancel();
-    state = state.copyWith(tripStep: TripStep.started);
+    // The trip is under way. An in-progress ride is only ever flagged for a
+    // human, never cancelled on a timer, so no coordination UI may appear.
+    state = state.copyWith(tripStep: TripStep.started, clearCoordination: true);
   }
 
   void completeTrip() {
@@ -1330,7 +1885,34 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
         else if (status == 'in_progress' || status == 'started') targetStep = TripStep.started;
 
         if (targetStep != state.tripStep) {
-          state = state.copyWith(tripStep: targetStep);
+          state = state.copyWith(
+            tripStep: targetStep,
+            // Arrival settles the driver-late question, and a trip under way is
+            // never in this conversation at all.
+            clearCoordination: targetStep != TripStep.accepted,
+          );
+        }
+
+        // Restore or discard the coordination card from the same payload, so a
+        // cold start does not flash the ordinary trip screen and then jump.
+        final block = data['coordination'];
+        if (block is Map) {
+          final parsed = RideCoordination.fromWire(
+            block.map((k, v) => MapEntry(k.toString(), v)),
+            role: 'driver',
+          );
+          if (parsed != null) {
+            _rememberCoordinationEvent(parsed.eventId);
+            state = state.copyWith(
+              coordination: parsed.copyWith(
+                answered: !parsed.decisionOpen && parsed.decidedByMe,
+              ),
+            );
+          } else if (state.coordination != null) {
+            state = state.copyWith(clearCoordination: true);
+          }
+        } else if (state.coordination != null) {
+          state = state.copyWith(clearCoordination: true);
         }
       } else if (data == null || data['rideId'] == null) {
          // Server reports no ACTIVE (accepted) ride. Only force-reset if we

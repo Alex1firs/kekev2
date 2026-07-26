@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:socket_io_client/socket_io_client.dart' as IO;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../config/env_config.dart';
@@ -17,6 +18,28 @@ class SocketService {
   SocketService(this._role, this._userId, this._token) {
     _initSocket();
   }
+
+  /// Test seam: a service with no real socket. Connectivity is fixed by
+  /// [connected], inbound events come from [injectEvent], and outbound ones are
+  /// recorded in [sentEvents] instead of hitting the network. Mirrors the
+  /// passenger app's seam so both sides of one coordination flow are tested the
+  /// same way.
+  @visibleForTesting
+  SocketService.offline({bool connected = true})
+      : _role = 'driver',
+        _userId = 'test-driver',
+        _token = '',
+        _forcedConnected = connected;
+
+  bool? _forcedConnected;
+
+  /// Outbound emits captured by [SocketService.offline]. Always empty in prod.
+  @visibleForTesting
+  final List<({String event, dynamic data})> sentEvents = [];
+
+  /// Pushes an inbound event into [events] as if the server had sent it.
+  @visibleForTesting
+  void injectEvent(Map<String, dynamic> event) => _controller.add(event);
 
   void updateActiveRide(String? rideId) {
     _activeRideId = rideId;
@@ -74,7 +97,7 @@ class SocketService {
     });
   }
 
-  bool get isConnected => _socket?.connected ?? false;
+  bool get isConnected => _forcedConnected ?? (_socket?.connected ?? false);
 
   /// Force a fresh reconnect. Call when the app returns to the foreground:
   /// iOS/Android suspend the socket while backgrounded, and the built-in
@@ -91,6 +114,10 @@ class SocketService {
   }
 
   void emit(String event, dynamic data) {
+    if (_forcedConnected != null) {
+      sentEvents.add((event: event, data: data));
+      return;
+    }
     _socket?.emit(event, data);
   }
 

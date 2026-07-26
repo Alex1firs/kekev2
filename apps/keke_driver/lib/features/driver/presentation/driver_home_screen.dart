@@ -18,6 +18,7 @@ import 'earnings_screen.dart';
 import 'widgets/battery_optimization_sheet.dart';
 import 'widgets/incoming_request_card.dart';
 import 'widgets/trip_operation_hud.dart';
+import 'widgets/coordination_card.dart';
 
 class DriverHomeScreen extends ConsumerStatefulWidget {
   const DriverHomeScreen({super.key});
@@ -351,6 +352,25 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
 
           if (driverState.tripStep != TripStep.none)
             TripOperationHUD(state: driverState),
+
+          // A ride the backend closed for a reason the driver deserves explaining
+          // — nobody answered, the passenger asked to cancel, support stepped in.
+          // Shown once the HUD is gone, with a way back on the road.
+          if (driverState.closure != null &&
+              driverState.tripStep == TripStep.none)
+            Positioned(
+              bottom: 24,
+              left: 20,
+              right: 20,
+              child: RideClosedCard(
+                title: driverState.closureTitle ?? 'Ride closed',
+                body: driverState.closureBody ?? '',
+                closure: driverState.closure!,
+                onPrimaryAction: () => ref
+                    .read(driverControllerProvider.notifier)
+                    .dismissClosure(),
+              ),
+            ),
 
           if (needsNin) _buildNinVerificationOverlay(driverState),
         ],

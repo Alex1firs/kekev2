@@ -5,10 +5,16 @@ class EnvConfig {
   final String apiBaseUrl;
   final String googleMapsApiKey;
 
+  /// Support line offered when a ride is escalated to a human. Empty means the
+  /// app shows the escalation state without a dial action rather than dialling
+  /// a placeholder number.
+  final String supportPhone;
+
   const EnvConfig({
     required this.environment,
     required this.apiBaseUrl,
     required this.googleMapsApiKey,
+    this.supportPhone = '',
   });
 
   /// The active environment variables configured dynamically at compile/build time
@@ -47,6 +53,7 @@ class EnvConfig {
       environment: parsedEnv,
       apiBaseUrl: resolvedApiUrl,
       googleMapsApiKey: mapsKey,
+      supportPhone: const String.fromEnvironment('SUPPORT_PHONE'),
     );
   }
 }

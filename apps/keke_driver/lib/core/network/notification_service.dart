@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import '../services/reliability_log.dart';
@@ -33,6 +34,12 @@ class NotificationService {
   NotificationService(this._dio, this._role);
 
   Stream<Map<String, dynamic>> get intentStream => _intentStreamController.stream;
+
+  /// Test seam: push a notification payload as if the OS had delivered it.
+  /// Firebase is unavailable under `flutter test`, so the tap path cannot
+  /// otherwise be exercised.
+  @visibleForTesting
+  void injectIntent(Map<String, dynamic> data) => _intentStreamController.add(data);
 
   Future<void> initialize() async {
     try {

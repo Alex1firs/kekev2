@@ -7,6 +7,9 @@ import '../../domain/driver_profile.dart';
 import '../../domain/driver_state.dart';
 import 'ride_chat_panel.dart';
 import 'sos_sheet.dart';
+import 'coordination_card.dart';
+import '../../domain/ride_coordination.dart';
+import '../../../../core/config/env_config.dart';
 
 class TripOperationHUD extends ConsumerWidget {
   final DriverState state;
@@ -49,6 +52,22 @@ class TripOperationHUD extends ConsumerWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    // The delayed-ride conversation goes FIRST. When a passenger
+                    // is waiting and we are asking whether the driver is still
+                    // coming, that question outranks the ETA and the fare. Never
+                    // shown once the trip is under way — the backend does not put
+                    // in-progress trips through this conversation.
+                    if (state.coordination != null &&
+                        state.tripStep != TripStep.started &&
+                        state.tripStep != TripStep.completed) ...[
+                      CoordinationCard(
+                        coordination: state.coordination!,
+                        onAction: (action) =>
+                            _handleCoordinationAction(context, ref, action),
+                      ),
+                      const SizedBox(height: 16),
+                    ],
+
                     // Trip phase progress
                     if (state.tripStep != TripStep.completed) ...[
                       _TripPhaseBar(step: state.tripStep),
@@ -512,6 +531,123 @@ class TripOperationHUD extends ConsumerWidget {
               if (await canLaunchUrl(uri)) await launchUrl(uri);
             },
           ),
+        ],
+      ),
+    );
+  }
+
+  /// Bridge a coordination action to the controller, plus the things only the UI
+  /// can do: place a call, open the chat, hand off to navigation, reach support.
+  void _handleCoordinationAction(
+    BuildContext context,
+    WidgetRef ref,
+    CoordinationAction action,
+  ) {
+    final controller = ref.read(driverControllerProvider.notifier);
+
+    switch (action) {
+      case CoordinationAction.callOtherParty:
+        // Report it first: a tel: hand-off may never return to this app, and the
+        // call is evidence the ride is alive whether or not we see it again.
+        controller.respondToCoordination(action);
+        _dialPassenger(context);
+        return;
+      case CoordinationAction.messageOtherParty:
+        controller.respondToCoordination(action);
+        showModalBottomSheet(
+          context: context,
+          isScrollControlled: true,
+          backgroundColor: Colors.transparent,
+          builder: (ctx) => SizedBox(
+            height: MediaQuery.of(ctx).size.height * 0.6 +
+                MediaQuery.of(ctx).viewInsets.bottom,
+            child: const RideChatPanel(),
+          ),
+        );
+        return;
+      case CoordinationAction.openNavigation:
+        controller.respondToCoordination(action);
+        _openNavigation();
+        return;
+      case CoordinationAction.contactSupport:
+        controller.respondToCoordination(action);
+        _openSupport(context);
+        return;
+      default:
+        controller.respondToCoordination(action);
+        return;
+    }
+  }
+
+  /// Dial the passenger, normalising to a locally dialable format. Nigerian
+  /// networks reject +234 from some handsets, so the leading zero form is used.
+  Future<void> _dialPassenger(BuildContext context) async {
+    String phone = state.activeRequest?.passengerPhone ?? '';
+    if (phone.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Passenger's phone number is unavailable")),
+      );
+      return;
+    }
+    phone = phone.replaceAll(RegExp(r'\s+'), '');
+    if (phone.startsWith('+234')) {
+      phone = '0${phone.substring(4)}';
+    } else if (phone.startsWith('234')) {
+      phone = '0${phone.substring(3)}';
+    }
+    final uri = Uri(scheme: 'tel', path: phone);
+    if (await canLaunchUrl(uri)) await launchUrl(uri);
+  }
+
+  /// Hand the pickup point to the phone's map app.
+  Future<void> _openNavigation() async {
+    final pickup = state.activeRequest?.pickupLocation;
+    if (pickup == null) return;
+    final uri = Uri.parse(
+        'google.navigation:q=${pickup.latitude},${pickup.longitude}&mode=d');
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri);
+      return;
+    }
+    final web = Uri.parse('https://www.google.com/maps/dir/?api=1'
+        '&destination=${pickup.latitude},${pickup.longitude}');
+    if (await canLaunchUrl(web)) await launchUrl(web);
+  }
+
+  /// Support hand-off for an escalated ride. No incident number, no internal
+  /// reason code — just that a person has it, and how to reach one.
+  void _openSupport(BuildContext context) {
+    final supportPhone = EnvConfig.current.supportPhone;
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.charcoal,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text('Contact support',
+            style: AppTextStyles.body(
+                color: AppColors.white, weight: FontWeight.w700)),
+        content: Text(
+          supportPhone.isEmpty
+              ? 'Our team has already been notified about this ride and is looking '
+                  'into it. Nothing will be cancelled automatically while they do.'
+              : 'Our team has already been notified about this ride. '
+                  'You can call us on $supportPhone.',
+          style: AppTextStyles.bodySmall(color: AppColors.lightGray),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Close'),
+          ),
+          if (supportPhone.isNotEmpty)
+            TextButton(
+              onPressed: () async {
+                Navigator.of(ctx).pop();
+                final uri = Uri(scheme: 'tel', path: supportPhone);
+                if (await canLaunchUrl(uri)) await launchUrl(uri);
+              },
+              child: const Text('Call support'),
+            ),
         ],
       ),
     );

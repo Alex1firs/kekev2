@@ -2,6 +2,7 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'driver_profile.dart';
 import 'trip_request.dart';
 import 'chat_message.dart';
+import 'ride_coordination.dart';
 
 class DriverState {
   final DriverProfile profile;
@@ -43,6 +44,17 @@ class DriverState {
   /// UI can warn that ride requests may be missed.
   final bool batteryOptimizationActive;
 
+  /// The live delayed-ride / cancellation-decision state, or null when there is
+  /// nothing to coordinate. Server-authoritative: the app renders it and reports
+  /// the driver's answer, and never decides on its own that a pickup has failed.
+  final RideCoordination? coordination;
+
+  /// How a ride that just ended was classified by the server, when the driver
+  /// needs it explaining (nobody answered, the passenger asked to cancel).
+  final RideClosure? closure;
+  final String? closureTitle;
+  final String? closureBody;
+
   const DriverState({
     required this.profile,
     this.operationStatus = OperationStatus.offline,
@@ -63,6 +75,10 @@ class DriverState {
     this.connectionStatus = ConnectionStatus.connecting,
     this.lastHeartbeatAt,
     this.batteryOptimizationActive = false,
+    this.coordination,
+    this.closure,
+    this.closureTitle,
+    this.closureBody,
   });
 
   DriverState copyWith({
@@ -92,6 +108,12 @@ class DriverState {
     ConnectionStatus? connectionStatus,
     DateTime? lastHeartbeatAt,
     bool? batteryOptimizationActive,
+    RideCoordination? coordination,
+    bool clearCoordination = false,
+    RideClosure? closure,
+    String? closureTitle,
+    String? closureBody,
+    bool clearClosure = false,
   }) {
     return DriverState(
       profile: profile ?? this.profile,
@@ -113,6 +135,10 @@ class DriverState {
       connectionStatus: connectionStatus ?? this.connectionStatus,
       lastHeartbeatAt: lastHeartbeatAt ?? this.lastHeartbeatAt,
       batteryOptimizationActive: batteryOptimizationActive ?? this.batteryOptimizationActive,
+      coordination: clearCoordination ? null : (coordination ?? this.coordination),
+      closure: clearClosure ? null : (closure ?? this.closure),
+      closureTitle: clearClosure ? null : (closureTitle ?? this.closureTitle),
+      closureBody: clearClosure ? null : (closureBody ?? this.closureBody),
     );
   }
 }

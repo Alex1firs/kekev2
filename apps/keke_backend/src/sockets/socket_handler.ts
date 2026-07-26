@@ -57,6 +57,13 @@ function rlog(event: string, fields: Record<string, any>): void {
     try { console.log(JSON.stringify({ level: 'info', scope: 'dispatch', event, ...fields })); } catch { /* noop */ }
 }
 
+/**
+ * How old a passenger's active-ride slot must be, with no matching ride row,
+ * before it is treated as orphaned rather than as a request still committing.
+ * Comfortably longer than any plausible insert, far shorter than the 3h TTL.
+ */
+const ORPHAN_SLOT_GRACE_MS = Number(process.env.PASSENGER_SLOT_ORPHAN_GRACE_MS) || 30_000;
+
 // Nigeria bounding box for coordinate validation
 const LAT_MIN = 4.0, LAT_MAX = 14.0;
 const LNG_MIN = 2.0, LNG_MAX = 15.0;
@@ -375,12 +382,22 @@ export class SocketHandler {
                     if (owner && owner !== rideId) {
                         const ownerRide = await AppDataSource.getRepository(Ride).findOne({ where: { rideId: owner } });
                         const ownerLive = !!ownerRide && ACTIVE_RIDE_STATES.includes(ownerRide.status as any);
-                        // ownerLive → genuine active ride; !ownerRide → a simultaneous
-                        // sibling whose ride row isn't saved yet. Either way, block.
-                        if (ownerLive || !ownerRide) {
-                            rlog('passenger_guard', { passengerId, rideId, blockedBy: owner, source: 'redis' });
+                        // A slot whose ride row does not exist is ambiguous: it is
+                        // either a simultaneous sibling still committing its row
+                        // (milliseconds old), or an orphan left by a crash or an
+                        // early return. Age decides. Without this an orphan locks
+                        // the passenger out for the full 3h TTL with nothing in the
+                        // app to cancel, because /rides/active/passenger correctly
+                        // reports no ride.
+                        const slotAgeMs = await DispatchService.getPassengerActiveAgeMs(passengerId);
+                        const orphaned = !ownerRide && (slotAgeMs ?? 0) > ORPHAN_SLOT_GRACE_MS;
+                        if (ownerLive || (!ownerRide && !orphaned)) {
+                            rlog('passenger_guard', { passengerId, rideId, blockedBy: owner, source: 'redis', slotAgeMs });
                             socket.emit('ride:error', { code: 'ACTIVE_RIDE_EXISTS', message: 'You already have an active ride in progress.' });
                             return;
+                        }
+                        if (orphaned) {
+                            rlog('passenger_slot_orphan_reclaimed', { passengerId, rideId, orphanRideId: owner, slotAgeMs });
                         }
                         // Stale slot (owner ride already terminal) — take it over.
                         await DispatchService.releasePassengerActive(passengerId);
@@ -394,6 +411,14 @@ export class SocketHandler {
                     });
                     if (existingActive && existingActive.rideId !== rideId) {
                         rlog('passenger_guard', { passengerId, rideId, blockedBy: existingActive.rideId, source: 'db' });
+                        // Guard (A) may have just claimed the slot for THIS rideId,
+                        // whose ride row we are now abandoning. Releasing it is not
+                        // optional: leaving it behind points the slot at a ride that
+                        // will never exist, and every subsequent request then fails
+                        // guard (A) instead — locking the passenger out long after
+                        // the real blocking ride is resolved. Ownership-checked, so
+                        // a slot genuinely held by another ride is left alone.
+                        await DispatchService.releasePassengerActive(passengerId, rideId);
                         socket.emit('ride:error', { code: 'ACTIVE_RIDE_EXISTS', message: 'You already have an active ride in progress.' });
                         return;
                     }

@@ -326,6 +326,23 @@ export class DispatchService {
     return await redis.get(this.passengerActiveKey(passengerId));
   }
 
+  /**
+   * How long the passenger's active-ride slot has been held, in ms.
+   *
+   * Derived from the key's remaining TTL, so it needs no extra bookkeeping and
+   * cannot be skewed by a wrong client clock (ride ids are client-generated).
+   * Returns null when no slot is held.
+   *
+   * Used to tell a genuine in-flight sibling request — milliseconds old, whose
+   * ride row simply isn't committed yet — from an orphaned slot left behind by
+   * a crash or an early return.
+   */
+  static async getPassengerActiveAgeMs(passengerId: string): Promise<number | null> {
+    const ttlMs = await redis.pttl(this.passengerActiveKey(passengerId));
+    if (typeof ttlMs !== 'number' || ttlMs <= 0) return null;
+    return Math.max(0, this.PASSENGER_ACTIVE_TTL_SECONDS * 1000 - ttlMs);
+  }
+
   /** Release the passenger's active-ride slot (ownership-checked when rideId given). */
   static async releasePassengerActive(passengerId: string, rideId?: string): Promise<boolean> {
     const key = this.passengerActiveKey(passengerId);

@@ -33,6 +33,7 @@ import { DispatchMonitorService } from './dispatch_monitor_service';
 import { DispatchEventType } from '../models/DispatchEvent';
 import { RideActivityService } from './ride_activity_service';
 import { RideActivityType } from '../config/stale_ride_config';
+import { coordinationEventId } from './ride_coordination_contract';
 
 /** Arbitrary but fixed key so every instance contends for the same lock. */
 const ADVISORY_LOCK_KEY = 8_472_119;
@@ -436,11 +437,18 @@ export class StaleRideSweeper {
         if (!claim.affected) return false;
 
         const waitingForDriver = ride.status === 'accepted';
+        // Keyed on the reminder count so each check-in is its own event, but a
+        // duplicated delivery of the same one collapses in the app.
+        const remindEventId = coordinationEventId(
+            ride.rideId, 'reminder', ride.lastReminderAt ? new Date(ride.lastReminderAt).getTime() : 0,
+        );
         try {
             // Both sides hear the same facts, phrased for their situation. Neither
             // is told the other is at fault.
             RideCleanupService.hostRef?.emitToRide(ride.rideId, 'ride:delay_update', {
                 rideId: ride.rideId,
+                eventId: remindEventId,
+                rideStatus: ride.status,
                 delayState: evaluation.delayState,
                 role: 'passenger',
                 title: waitingForDriver ? 'Your driver is still on the way' : 'Your driver is waiting for you',
@@ -454,6 +462,8 @@ export class StaleRideSweeper {
             if (ride.driverId) {
                 RideCleanupService.hostRef?.emitToDriver(ride.driverId, 'ride:delay_update', {
                     rideId: ride.rideId,
+                    eventId: remindEventId,
+                    rideStatus: ride.status,
                     delayState: evaluation.delayState,
                     role: 'driver',
                     title: waitingForDriver ? 'Your passenger is still waiting' : 'Still waiting for the passenger',
@@ -508,11 +518,15 @@ export class StaleRideSweeper {
             .execute();
         if (!claim.affected) return false;
 
+        const escalationEventId = coordinationEventId(ride.rideId, 'escalation', reason);
         try {
             if (target === 'driver') {
                 // The passenger is the engaged party: offer them a way forward.
                 RideCleanupService.hostRef?.emitToRide(ride.rideId, 'ride:delay_escalated', {
                     rideId: ride.rideId,
+                    eventId: escalationEventId,
+                    rideStatus: ride.status,
+                    unreachableParty: target,
                     delayState: evaluation.delayState,
                     title: 'We are unable to reach your driver',
                     body: 'We have not been able to contact them. You can look for another Keke, or keep waiting.',
@@ -524,7 +538,7 @@ export class StaleRideSweeper {
                         ride.passengerId, UserRole.PASSENGER,
                         'Unable to reach your driver',
                         'Tap to find another Keke, or keep waiting. Support has been notified.',
-                        { type: 'RIDE_ESCALATED', rideId: ride.rideId, intent: 'active' },
+                        { type: 'RIDE_ESCALATED', rideId: ride.rideId, intent: 'active', eventId: escalationEventId },
                     );
                 }
                 DispatchMonitorService.record({
@@ -538,6 +552,9 @@ export class StaleRideSweeper {
                 if (ride.driverId) {
                     RideCleanupService.hostRef?.emitToDriver(ride.driverId, 'ride:delay_escalated', {
                         rideId: ride.rideId,
+                        eventId: escalationEventId,
+                        rideStatus: ride.status,
+                        unreachableParty: target,
                         delayState: evaluation.delayState,
                         title: 'Unable to reach the passenger',
                         body: 'We have not been able to contact them. Support has been notified. You can request to cancel.',
@@ -548,7 +565,7 @@ export class StaleRideSweeper {
                         ride.driverId, UserRole.DRIVER,
                         'Unable to reach the passenger',
                         'Support has been notified. You can request to cancel this ride.',
-                        { type: 'RIDE_ESCALATED', rideId: ride.rideId, intent: 'active' },
+                        { type: 'RIDE_ESCALATED', rideId: ride.rideId, intent: 'active', eventId: escalationEventId },
                     );
                 }
             }
@@ -635,14 +652,71 @@ export class StaleRideSweeper {
             ? Math.max(0, Math.round((evaluation.deadlineAt.getTime() - Date.now()) / 60_000))
             : 0;
 
+        // Realtime first. This stage used to be push-only, which meant a party
+        // sitting in the app with a healthy socket saw nothing at all — the soft
+        // reminder, the gentlest step in the whole ladder, was invisible to
+        // exactly the person most likely to act on it.
+        const warnEventId = coordinationEventId(ride.rideId, 'warning', ride.status);
+        try {
+            if (ride.status === 'accepted') {
+                RideCleanupService.hostRef?.emitToRide(ride.rideId, 'ride:delay_notice', {
+                    rideId: ride.rideId,
+                    eventId: warnEventId,
+                    rideStatus: ride.status,
+                    role: 'passenger',
+                    delayState: evaluation.delayState,
+                    title: 'Your driver is taking longer than expected',
+                    body: 'We are checking whether the driver is still on the way.',
+                    actions: ['keep_waiting', 'call_other_party', 'request_cancel'],
+                });
+                if (ride.driverId) {
+                    RideCleanupService.hostRef?.emitToDriver(ride.driverId, 'ride:delay_notice', {
+                        rideId: ride.rideId,
+                        eventId: warnEventId,
+                        rideStatus: ride.status,
+                        role: 'driver',
+                        delayState: evaluation.delayState,
+                        title: 'Are you still heading to the passenger?',
+                        body: 'The passenger is waiting. Let us know if you are still on your way.',
+                        actions: ['still_coming', 'call_other_party', 'open_navigation', 'request_cancel'],
+                    });
+                }
+            } else if (ride.status === 'arrived') {
+                RideCleanupService.hostRef?.emitToRide(ride.rideId, 'ride:delay_notice', {
+                    rideId: ride.rideId,
+                    eventId: warnEventId,
+                    rideStatus: ride.status,
+                    role: 'passenger',
+                    delayState: evaluation.delayState,
+                    title: 'Your driver is waiting',
+                    body: 'Please meet your driver at the pickup point.',
+                    actions: ['on_my_way', 'call_other_party', 'request_cancel'],
+                });
+                if (ride.driverId) {
+                    RideCleanupService.hostRef?.emitToDriver(ride.driverId, 'ride:delay_notice', {
+                        rideId: ride.rideId,
+                        eventId: warnEventId,
+                        rideStatus: ride.status,
+                        role: 'driver',
+                        delayState: evaluation.delayState,
+                        title: 'Passenger is taking longer to come out',
+                        body: 'We have reminded the passenger that you are waiting.',
+                        actions: ['keep_waiting', 'call_other_party', 'request_cancel'],
+                    });
+                }
+            }
+        } catch { /* realtime is best-effort; the push below still goes */ }
+
         try {
             if (ride.status === 'accepted' && ride.driverId) {
+                // No cancellation threat here. Nothing is cancelled on a timer any
+                // more, so saying otherwise would be a lie that also teaches
+                // drivers to distrust the next message.
                 await NotificationService.sendToUser(
                     ride.driverId, UserRole.DRIVER,
                     'Still heading to your passenger?',
-                    `Your passenger is still waiting. This ride will be cancelled in about ${minutesLeft} minutes ` +
-                    `if you are no longer on your way — open the app to confirm you are still coming.`,
-                    { type: 'STALE_RIDE_WARNING', rideId: ride.rideId, intent: 'active' },
+                    'Your passenger is waiting. Open the app to let them know you are still on your way.',
+                    { type: 'STALE_RIDE_WARNING', rideId: ride.rideId, intent: 'active', eventId: warnEventId },
                 );
             } else if (ride.status === 'arrived') {
                 if (ride.driverId) {
@@ -651,7 +725,7 @@ export class StaleRideSweeper {
                         'Start the trip?',
                         `You marked arrived ${Math.round(evaluation.ageMinutes ?? 0)} minutes ago. Start the trip, ` +
                         `or cancel if you could not pick the passenger up.`,
-                        { type: 'STALE_RIDE_WARNING', rideId: ride.rideId, intent: 'active' },
+                        { type: 'STALE_RIDE_WARNING', rideId: ride.rideId, intent: 'active', eventId: warnEventId },
                     );
                 }
                 if (ride.passengerId) {
@@ -659,7 +733,7 @@ export class StaleRideSweeper {
                         ride.passengerId, UserRole.PASSENGER,
                         'Has your trip started?',
                         'Your driver marked arrived a while ago. If you have not been picked up, you can cancel.',
-                        { type: 'STALE_RIDE_WARNING', rideId: ride.rideId, intent: 'active' },
+                        { type: 'STALE_RIDE_WARNING', rideId: ride.rideId, intent: 'active', eventId: warnEventId },
                     );
                 }
             }
@@ -735,31 +809,57 @@ export class StaleRideSweeper {
         const waitingFor: 'driver' | 'passenger' = ride.status === 'accepted' ? 'driver' : 'passenger';
 
         // Realtime prompt — the in-app dialog with the two actions.
+        //
+        // `eventId` is deterministic on (ride, round): the push notification sent
+        // a moment later carries the same id, so an app that receives both shows
+        // one prompt. `extensionsRemaining` lets the app decide whether offering
+        // "Keep waiting" would be honest before it draws the button.
+        const round = ride.staleDecisionRound + 1;
         const promptBase = {
             rideId: ride.rideId,
+            eventId: coordinationEventId(ride.rideId, 'decision', round),
+            rideStatus: ride.status,
             reason: evaluation.reason,
             respondBySeconds: respondBySec,
             respondByAt: deadlineAt.toISOString(),
             waitingFor,
+            round,
+            extensionsRemaining: Math.max(0, config.maxExtensions - (ride.staleExtensionCount ?? 0)),
             options: ['wait', 'cancel'],
         };
+        // `options: ['wait','cancel']` says what the SERVER accepts; `actions`
+        // says what each side should be offered. They are not the same thing:
+        // "wait" means "I'm still coming" to a driver who has not arrived and
+        // "keep waiting" to one who is parked at the pickup point, and an app
+        // given only the wire value cannot tell those apart. Both are sent, so
+        // older builds keep working off `options`.
         try {
             RideCleanupService.hostRef?.emitToRide(ride.rideId, 'ride:stale_decision_required', {
                 ...promptBase,
                 role: 'passenger',
-                title: waitingFor === 'driver' ? 'Your driver is running late' : 'Are you at the pickup point?',
+                actions: waitingFor === 'driver'
+                    ? ['keep_waiting', 'call_other_party', 'request_cancel']
+                    : ['on_my_way', 'call_other_party', 'request_cancel'],
+                title: waitingFor === 'driver'
+                    ? 'Your driver is taking longer than expected'
+                    : 'Your driver is waiting',
                 body: waitingFor === 'driver'
-                    ? 'Your driver has not arrived yet. Would you like to keep waiting, or cancel and book another Keke?'
-                    : 'Your driver is waiting at the pickup point. Are you still coming, or would you like to cancel?',
+                    ? 'We are checking whether the driver is still on the way.'
+                    : 'Please meet your driver at the pickup point.',
             });
             if (ride.driverId) {
                 RideCleanupService.hostRef?.emitToDriver(ride.driverId, 'ride:stale_decision_required', {
                     ...promptBase,
                     role: 'driver',
-                    title: waitingFor === 'driver' ? 'Are you still going to this pickup?' : 'Passenger has not arrived',
+                    actions: waitingFor === 'driver'
+                        ? ['still_coming', 'call_other_party', 'open_navigation', 'request_cancel']
+                        : ['keep_waiting', 'call_other_party', 'request_cancel'],
+                    title: waitingFor === 'driver'
+                        ? 'Are you still heading to the passenger?'
+                        : 'Passenger is taking longer to come out',
                     body: waitingFor === 'driver'
-                        ? 'Your passenger is still waiting. Are you still on your way, or would you like to cancel?'
-                        : 'The passenger has not shown up yet. Do you want to keep waiting, or cancel this ride?',
+                        ? 'The passenger is waiting. Let us know if you are still on your way.'
+                        : 'We have reminded the passenger that you are waiting.',
                 });
             }
         } catch (err: any) {
@@ -777,7 +877,7 @@ export class StaleRideSweeper {
                     waitingFor === 'driver'
                         ? 'Tap to keep waiting or cancel and book another Keke.'
                         : 'Tap to confirm you are coming, or cancel the ride.',
-                    { type: 'STALE_RIDE_DECISION', rideId: ride.rideId, intent: 'active' },
+                    { type: 'STALE_RIDE_DECISION', rideId: ride.rideId, intent: 'active', eventId: promptBase.eventId },
                 );
             }
             if (ride.driverId) {
@@ -785,7 +885,7 @@ export class StaleRideSweeper {
                     ride.driverId, UserRole.DRIVER,
                     waitingFor === 'driver' ? 'Still going to this pickup?' : 'Passenger has not arrived',
                     'Tap to keep going or cancel this ride.',
-                    { type: 'STALE_RIDE_DECISION', rideId: ride.rideId, intent: 'active' },
+                    { type: 'STALE_RIDE_DECISION', rideId: ride.rideId, intent: 'active', eventId: promptBase.eventId },
                 );
             }
         } catch (err: any) {

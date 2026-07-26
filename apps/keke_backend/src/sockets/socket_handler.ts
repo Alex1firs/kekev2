@@ -39,6 +39,7 @@ import {
     mergeReasons,
     LatLng,
 } from '../services/ride_integrity_service';
+import { coordinationEventId } from '../services/ride_coordination_contract';
 
 const _jwtSecret = process.env.JWT_SECRET;
 if (!_jwtSecret) {
@@ -594,7 +595,14 @@ export class SocketHandler {
                         return socket.emit('ride:error', { code: 'INVALID_STATE', message: 'Ride cannot be canceled at this stage' });
                     }
 
-                    await rideRepo.update(data.rideId, { status: 'canceled' as any, completedAt: new Date() });
+                    // Record WHY, not just that. History and the apps both need to
+                    // tell a passenger changing their mind apart from a coordination
+                    // outcome, and `status` alone cannot.
+                    await rideRepo.update(data.rideId, {
+                        status: 'canceled' as any,
+                        completedAt: new Date(),
+                        cancellationReason: 'passenger_cancelled',
+                    } as any);
 
                     // Abort dispatch NOW so no further round can start and any
                     // in-flight offer window stops waiting. Without this, a
@@ -622,12 +630,28 @@ export class SocketHandler {
                     this.clearDispatchTimers(data.rideId);
 
                     this.io.to('admin').emit('ride:status_update', { rideId: data.rideId, status: 'canceled' });
-                    this.broadcastToRide(data.rideId, 'ride:cancelled', { rideId: data.rideId });
+                    // `outcome` is the discriminator the apps key on. Without it the
+                    // passenger app read EVERY cancellation as its own — including a
+                    // driver-initiated one — and told the passenger they had
+                    // cancelled a ride they had not.
+                    this.broadcastToRide(data.rideId, 'ride:cancelled', {
+                        rideId: data.rideId,
+                        reason: 'passenger_cancelled',
+                        outcome: 'cancelled_by_passenger',
+                        eventId: coordinationEventId(data.rideId, 'cancelled', 'passenger_cancelled'),
+                    });
 
                     // Notify the assigned driver directly (activeDispatches is cleared on accept)
                     if (ride.driverId) {
                         this.driverRideMap.delete(ride.driverId);
-                        this.io.to(`driver:${ride.driverId}`).emit('ride:cancelled', { rideId: data.rideId });
+                        this.io.to(`driver:${ride.driverId}`).emit('ride:cancelled', {
+                            rideId: data.rideId,
+                            reason: 'passenger_cancelled',
+                            outcome: 'cancelled_by_passenger',
+                            title: 'Ride cancelled',
+                            body: 'The passenger cancelled this ride. You can accept new rides now.',
+                            eventId: coordinationEventId(data.rideId, 'cancelled', 'passenger_cancelled'),
+                        });
                         NotificationService.sendToUser(ride.driverId, UserRole.DRIVER, 'Ride Cancelled', 'The passenger cancelled the ride.', {
                             type: 'RIDE_CANCELLED', rideId: data.rideId, intent: 'home',
                         });
@@ -638,7 +662,11 @@ export class SocketHandler {
                     if (notifiedDrivers) {
                         log.info(`[BACKEND_DISMISS] Signaling ${notifiedDrivers.size} drivers to dismiss ride ${data.rideId}`);
                         for (const driverId of notifiedDrivers) {
-                            this.io.to(`driver:${driverId}`).emit('ride:cancelled', { rideId: data.rideId });
+                            // A dismissal, not a cancellation of THEIR ride — these
+                            // drivers were only being rung.
+                            this.io.to(`driver:${driverId}`).emit('ride:cancelled', {
+                                rideId: data.rideId, outcome: 'offer_withdrawn',
+                            });
                             NotificationService.sendToUser(driverId, UserRole.DRIVER, 'Ride Cancelled', 'The request has been cancelled.', {
                                 type: 'RIDE_CANCELLED', rideId: data.rideId, intent: 'home',
                             });
@@ -892,12 +920,13 @@ export class SocketHandler {
                         return;
                     }
 
+                    const requestClaimedAt = new Date();
                     const claim = await rideRepo
                         .createQueryBuilder()
                         .update()
                         .set({
                             cancellationRequestedBy: data.role,
-                            cancellationRequestedAt: new Date(),
+                            cancellationRequestedAt: requestClaimedAt,
                             cancellationRequestState: 'pending',
                             delayState: RideDelayState.CANCELLATION_REQUESTED,
                         })
@@ -913,10 +942,20 @@ export class SocketHandler {
                     }
 
                     const other = data.role === 'passenger' ? 'driver' : 'passenger';
+                    const cfg = loadStaleRideConfig();
+                    // Absolute deadline, not just a duration. An app that restarts
+                    // mid-window has to resume the countdown where it actually is;
+                    // given only "3 minutes" it would restart from three.
+                    const requestedAt = requestClaimedAt;
+                    const respondByAt = new Date(requestedAt.getTime() + cfg.decisionWindowMinutes * 60_000);
                     const payload = {
                         rideId: data.rideId,
+                        eventId: coordinationEventId(data.rideId, `cancel_request_${data.role}`, requestedAt.getTime()),
+                        rideStatus: ride.status,
                         requestedBy: data.role,
-                        respondWithinMinutes: loadStaleRideConfig().decisionWindowMinutes,
+                        respondWithinMinutes: cfg.decisionWindowMinutes,
+                        respondByAt: respondByAt.toISOString(),
+                        respondBySeconds: cfg.decisionWindowMinutes * 60,
                         actions: ['accept_cancellation', 'continue_ride'],
                     };
                     if (other === 'driver' && ride.driverId) {
@@ -929,7 +968,7 @@ export class SocketHandler {
                             ride.driverId, UserRole.DRIVER,
                             'Passenger wants to cancel',
                             'Accept the cancellation, or tell them you are still on your way.',
-                            { type: 'CANCELLATION_REQUESTED', rideId: data.rideId, intent: 'active' },
+                            { type: 'CANCELLATION_REQUESTED', rideId: data.rideId, intent: 'active', eventId: payload.eventId },
                         );
                     } else {
                         this.io.to(`ride:${data.rideId}`).emit('ride:cancel_requested', {
@@ -942,11 +981,14 @@ export class SocketHandler {
                                 ride.passengerId, UserRole.PASSENGER,
                                 'Your driver wants to cancel',
                                 'Accept the cancellation, or ask them to keep coming.',
-                                { type: 'CANCELLATION_REQUESTED', rideId: data.rideId, intent: 'active' },
+                                { type: 'CANCELLATION_REQUESTED', rideId: data.rideId, intent: 'active', eventId: payload.eventId },
                             );
                         }
                     }
-                    socket.emit('ride:cancel_request_ack', { rideId: data.rideId, accepted: true, awaiting: other });
+                    socket.emit('ride:cancel_request_ack', {
+                        rideId: data.rideId, accepted: true, awaiting: other,
+                        respondByAt: payload.respondByAt, eventId: payload.eventId,
+                    });
 
                     DispatchMonitorService.record({
                         rideId: data.rideId,
@@ -1042,6 +1084,8 @@ export class SocketHandler {
 
                     const notice = {
                         rideId: data.rideId,
+                        eventId: coordinationEventId(data.rideId, 'cancel_declined', data.role),
+                        rideStatus: ride.status,
                         declinedBy: data.role,
                         title: data.role === 'driver' ? 'Your driver is continuing' : 'Your passenger is still coming',
                         body: data.role === 'driver'

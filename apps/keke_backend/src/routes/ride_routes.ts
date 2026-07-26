@@ -10,9 +10,33 @@ import { errBody, ErrorCode } from "../utils/errors";
 import { In } from "typeorm";
 import { SettingService } from "../services/setting_service";
 import { NearbyKekeFeedService } from "../services/nearby_keke_feed_service";
+import { coordinationSnapshot, coordinationCopy, CoordinationStage } from "../services/ride_coordination_contract";
+import { loadStaleRideConfig } from "../config/stale_ride_config";
 
 
 const router = Router();
+
+/**
+ * The app-facing coordination block for one ride, or null when there is nothing
+ * to coordinate.
+ *
+ * Built server-side on purpose. The apps must not re-derive which actions are
+ * permitted — that logic lives in StaleRideService and the coordination
+ * contract, and a second copy on a phone would drift from it the first time a
+ * threshold changed. The phone renders what this returns.
+ */
+function buildCoordination(ride: Ride, role: 'passenger' | 'driver', canCall: boolean) {
+    const snapshot = coordinationSnapshot(ride, loadStaleRideConfig());
+    if (snapshot.stage === CoordinationStage.NONE) return null;
+    // A trip that is under way is never in a delayed-pickup conversation. It can
+    // be flagged for a human, but it is never cancelled on a timer, so showing
+    // any of this to either party would be actively misleading.
+    if (!['accepted', 'arrived'].includes(snapshot.rideStatus)) return null;
+    const copy = coordinationCopy(snapshot, role, { canCall });
+    if (!copy) return null;
+    return { ...snapshot, ...copy, role };
+}
+
 
 /** Computed driver star average (0 when the driver has no reviews yet). */
 function driverAverage(driver: { ratingSum?: number; ratingCount?: number }): number {
@@ -57,7 +81,13 @@ router.get("/active/passenger", authMiddleware, async (req: AuthRequest, res: Re
             }
         }
 
-        return res.status(200).json({ ...ride, driverDetails });
+        // The authoritative coordination read. Attached here so a cold start or a
+        // reconnect restores the delayed-ride UI in the SAME round trip that
+        // restores the ride — an app that had to make two calls would flash the
+        // ordinary tracking screen in between.
+        const coordination = buildCoordination(ride, 'passenger', driverDetails?.phone != null);
+
+        return res.status(200).json({ ...ride, driverDetails, coordination });
     } catch (err: any) {
         console.error('[RIDES] Active passenger ride error:', err?.message);
         return res.status(500).json(errBody(ErrorCode.INTERNAL_ERROR, "We couldn't load your active ride. Please try again."));
@@ -73,7 +103,8 @@ router.get("/active/driver", authMiddleware, async (req: AuthRequest, res: Respo
             },
             order: { createdAt: "DESC" }
         });
-        return res.status(200).json(ride || {});
+        if (!ride) return res.status(200).json({});
+        return res.status(200).json({ ...ride, coordination: buildCoordination(ride, 'driver', true) });
     } catch (err: any) {
         console.error('[RIDES] Active driver ride error:', err?.message);
         return res.status(500).json(errBody(ErrorCode.INTERNAL_ERROR, "We couldn't load your active ride. Please try again."));
@@ -111,6 +142,55 @@ router.get("/history/passenger", authMiddleware, async (req: AuthRequest, res: R
     } catch (err: any) {
         console.error('[RIDES] Passenger history error:', err?.message);
         return res.status(500).json(errBody(ErrorCode.INTERNAL_ERROR, "We couldn't load your trip history. Please try again."));
+    }
+});
+
+/**
+ * GET /api/v1/rides/:rideId/coordination
+ *
+ * The authoritative delayed-ride / decision state for one ride, for the party
+ * asking. Used on app launch, on socket reconnect and after a process restart:
+ * the app throws away whatever it had in memory and renders this instead.
+ *
+ * Deadlines come back as absolute server timestamps so a countdown resumes where
+ * it really is rather than restarting, and `decisionOpen` tells the app whether a
+ * prompt it remembers is still worth showing — a resolved decision must not be
+ * replayed at someone who already answered it.
+ */
+router.get("/:rideId/coordination", authMiddleware, async (req: AuthRequest, res: Response) => {
+    try {
+        const ride = await AppDataSource.getRepository(Ride)
+            .findOne({ where: { rideId: String(req.params.rideId) } });
+        if (!ride) {
+            return res.status(404).json(errBody(ErrorCode.NOT_FOUND, "Ride not found."));
+        }
+
+        // Only the two people on this ride. Coordination state says where someone
+        // is and whether they are answering their phone.
+        const userId = req.user!.userId;
+        const role: 'passenger' | 'driver' | null = ride.passengerId === userId
+            ? 'passenger'
+            : ride.driverId === userId ? 'driver' : null;
+        if (role == null) {
+            return res.status(403).json(errBody(ErrorCode.FORBIDDEN, "This ride is not yours."));
+        }
+
+        let canCall = true;
+        if (role === 'passenger' && ride.driverId) {
+            const driverUser = await AppDataSource.getRepository(User)
+                .findOne({ where: { id: ride.driverId } });
+            canCall = !!driverUser?.phone;
+        }
+
+        return res.status(200).json({
+            rideId: ride.rideId,
+            rideStatus: ride.status,
+            role,
+            coordination: buildCoordination(ride, role, canCall),
+        });
+    } catch (err: any) {
+        console.error('[RIDES] Coordination state error:', err?.message);
+        return res.status(500).json(errBody(ErrorCode.INTERNAL_ERROR, "We couldn't load this ride's status. Please try again."));
     }
 });
 

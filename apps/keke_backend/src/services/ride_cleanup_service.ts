@@ -29,6 +29,7 @@ import { DispatchService } from './dispatch_service';
 import { NotificationService } from './notification_service';
 import { DispatchMonitorService } from './dispatch_monitor_service';
 import { DispatchEventType } from '../models/DispatchEvent';
+import { cancellationCopy, coordinationEventId } from './ride_coordination_contract';
 
 /**
  * The in-memory and realtime state only the socket handler owns. Registered once
@@ -197,17 +198,33 @@ export class RideCleanupService {
         }
 
         // ── Realtime + notifications ─────────────────────────────────────
+        // The socket payload used to carry only `reason` — a raw value like
+        // SYSTEM_ABANDONED_BY_BOTH. An app in the foreground therefore had either
+        // an engineering code to show someone or nothing at all, and the apps
+        // ended up guessing (the passenger app read every cancellation as
+        // "you cancelled"). The human copy travels with it now, so the phone
+        // renders what the server decided rather than re-deriving it.
+        const passengerOutcome = cancellationCopy(args.reason, 'passenger');
+        const driverOutcome = cancellationCopy(args.reason, 'driver');
         try {
             this.host?.emitToRide(args.rideId, 'ride:cancelled', {
                 rideId: args.rideId,
                 reason: args.reason,
                 systemCancelled: true,
+                outcome: passengerOutcome.outcome,
+                title: passengerOutcome.title,
+                body: args.passengerMessage || passengerOutcome.body,
+                eventId: coordinationEventId(args.rideId, 'cancelled', args.reason),
             });
             if (driverId) {
                 this.host?.emitToDriver(driverId, 'ride:cancelled', {
                     rideId: args.rideId,
                     reason: args.reason,
                     systemCancelled: true,
+                    outcome: driverOutcome.outcome,
+                    title: driverOutcome.title,
+                    body: args.driverMessage || driverOutcome.body,
+                    eventId: coordinationEventId(args.rideId, 'cancelled', args.reason),
                 });
             }
             for (const offered of this.host?.notifiedDrivers(args.rideId) ?? []) {

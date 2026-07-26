@@ -990,8 +990,14 @@ export class StaleRideSweeper {
             expectedStatuses: [ride.status],
             passengerMessage,
             driverMessage,
-            // Refuses outright if no prompt was ever sent.
-            requireDecisionPrompt: true,
+            // Refuses outright if no prompt was ever sent — EXCEPT for mutual
+            // abandonment, which is the one resolution that rests on evidenced
+            // absence rather than on an answer. Demanding a prompt there is
+            // self-contradictory: both parties are provably unreachable, so there
+            // is nobody to ask, and the ride wedges forever instead of closing —
+            // retrying every pass while the passenger's booking slot stays leaked.
+            // Every other resolution still requires that someone was asked.
+            requireDecisionPrompt: res !== StaleResolution.ABANDONED_BY_BOTH,
         });
 
         if (!outcome.applied) {

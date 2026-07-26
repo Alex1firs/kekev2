@@ -237,16 +237,34 @@ describe('the cleanup service refuses a silent cancellation', () => {
         expect(guardAt).toBeLessThan(updateAt);
     });
 
-    it('every automatic stale cancellation sets requireDecisionPrompt', () => {
+    it('every automatic stale cancellation passes requireDecisionPrompt', () => {
         const sweeper = require('fs').readFileSync(
             require('path').join(__dirname, '../../src/services/stale_ride_sweeper.ts'),
             'utf8',
         );
-        expect(sweeper).toMatch(/requireDecisionPrompt: true/);
-        // The sweeper never calls terminate without it.
+        // The sweeper never calls terminate without deciding the flag explicitly.
         const terminateCalls = sweeper.split('RideCleanupService.terminate(').length - 1;
-        const guarded = sweeper.split('requireDecisionPrompt: true').length - 1;
+        const guarded = sweeper.split('requireDecisionPrompt:').length - 1;
+        expect(terminateCalls).toBeGreaterThan(0);
         expect(guarded).toBe(terminateCalls);
+    });
+
+    it('exempts only mutual abandonment from needing a prompt', () => {
+        // This once read `requireDecisionPrompt: true` unconditionally, which
+        // deadlocked against the policy: ABANDONED_BY_BOTH cancels on evidence of
+        // absence and never sets staleDecisionPromptedAt, so the cleanup refused it
+        // on every pass and the ride could never close. The exemption is narrow and
+        // must stay that way — see stale_sweep_abandonment_deadlock.test.ts for the
+        // behavioural cover.
+        const sweeper = require('fs').readFileSync(
+            require('path').join(__dirname, '../../src/services/stale_ride_sweeper.ts'),
+            'utf8',
+        );
+        expect(sweeper).toMatch(
+            /requireDecisionPrompt:\s*res !== StaleResolution\.ABANDONED_BY_BOTH/,
+        );
+        // No blanket opt-out may creep in alongside it.
+        expect(sweeper).not.toMatch(/requireDecisionPrompt:\s*false/);
     });
 });
 

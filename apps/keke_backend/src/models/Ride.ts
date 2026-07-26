@@ -210,7 +210,39 @@ export class Ride {
     @Column({ type: "int", default: 0 })
     staleExtensionCount!: number;
 
-    /** Deadline pushed to this moment by a driver confirmation. */
+    /** Deadline pushed to this moment by a "keep waiting" choice. */
     @Column({ type: "timestamp", nullable: true })
     staleDeadlineOverrideAt!: Date | null;
+
+    // --- The decision window ---
+    // A stale ride is never cancelled on a timer alone. Both parties are asked
+    // first, and a cancellation only follows an explicit choice or silence from
+    // the party the ride is waiting on. These columns hold that conversation.
+
+    /**
+     * When both parties were asked to choose. Its presence is the invariant that
+     * makes silent cancellation impossible: cleanup refuses to cancel a stale
+     * ride unless this is set.
+     */
+    @Column({ type: "timestamp", nullable: true })
+    staleDecisionPromptedAt!: Date | null;
+
+    /** When the current decision window closes. */
+    @Column({ type: "timestamp", nullable: true })
+    staleDecisionDeadlineAt!: Date | null;
+
+    /** Who answered: 'passenger' | 'driver'. Null while nobody has. */
+    @Column({ type: "varchar", length: 16, nullable: true })
+    staleDecisionBy!: string | null;
+
+    /** What they chose: 'wait' | 'cancel'. */
+    @Column({ type: "varchar", length: 16, nullable: true })
+    staleDecisionChoice!: string | null;
+
+    @Column({ type: "timestamp", nullable: true })
+    staleDecisionAt!: Date | null;
+
+    /** How many decision rounds this ride has been through. */
+    @Column({ type: "int", default: 0 })
+    staleDecisionRound!: number;
 }

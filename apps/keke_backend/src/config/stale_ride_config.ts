@@ -49,12 +49,23 @@ export interface StaleRideConfig {
     /** Absolute threshold: past this a trip is always flagged for review. */
     inProgressAbsoluteMinutes: number;
 
-    // ── extensions ───────────────────────────────────────────────────────
-    /** How long a driver "still on my way" confirmation buys. */
+    // ── the decision window ──────────────────────────────────────────────
+    /**
+     * Once a deadline is reached, BOTH parties are asked whether to keep waiting
+     * or cancel, and this is how long they have to answer.
+     *
+     * Nothing is cancelled during this window. A cancellation only follows an
+     * explicit choice, or silence from the party whose action the ride is waiting
+     * on — so there is no such thing as a cancellation neither user saw coming.
+     */
+    decisionWindowMinutes: number;
+
+    /** How long a "keep waiting" choice buys before asking again. */
     extensionMinutes: number;
     /**
-     * How many extensions one ride may receive. A confirmation must never be
-     * able to hold a passenger's slot open indefinitely.
+     * How many times "keep waiting" may be chosen on one ride. After this, the
+     * next decision round accepts only an explicit cancel or resolves on silence
+     * — otherwise two co-operative users could hold a slot open forever.
      */
     maxExtensions: number;
 
@@ -111,6 +122,7 @@ export function loadStaleRideConfig(): StaleRideConfig {
         inProgressMinMinutes: num('STALE_INPROGRESS_MIN_MINUTES', 120),
         inProgressAbsoluteMinutes: num('STALE_INPROGRESS_ABSOLUTE_MINUTES', 360),
 
+        decisionWindowMinutes: num('STALE_DECISION_WINDOW_MINUTES', 3),
         extensionMinutes: num('STALE_EXTENSION_MINUTES', 10),
         maxExtensions: Math.floor(num('STALE_MAX_EXTENSIONS', 1)),
 
@@ -119,7 +131,13 @@ export function loadStaleRideConfig(): StaleRideConfig {
     };
 }
 
-/** Explicit, auditable reasons for a system-initiated terminal action. */
+/**
+ * The SITUATION that made a ride stale. Recorded on `staleReason`.
+ *
+ * Separate from why it was finally cancelled: the situation describes what went
+ * wrong, the outcome describes who decided. Both are needed to answer a support
+ * question honestly.
+ */
 export enum StaleActionReason {
     /** accepted, deadline elapsed, driver never arrived. */
     DRIVER_DID_NOT_ARRIVE = 'SYSTEM_DRIVER_DID_NOT_ARRIVE',
@@ -128,3 +146,38 @@ export enum StaleActionReason {
     /** in progress far past its expected duration. Flag only, never a cancel. */
     TRIP_EXCEEDED_EXPECTED_DURATION = 'SYSTEM_TRIP_EXCEEDED_EXPECTED_DURATION',
 }
+
+/**
+ * How a stale ride was RESOLVED. Recorded on `cancellationReason`.
+ *
+ * Every value names a decision someone made, or names silence explicitly. There
+ * is no generic "system cancelled" outcome, because a passenger asking support
+ * "why was my ride cancelled?" deserves a real answer.
+ */
+export enum StaleResolution {
+    /** The passenger chose to cancel when asked. */
+    PASSENGER_CHOSE_CANCEL = 'PASSENGER_CHOSE_CANCEL',
+    /** The driver chose to cancel when asked. */
+    DRIVER_CHOSE_CANCEL = 'DRIVER_CHOSE_CANCEL',
+    /**
+     * Both were asked and neither answered. Nobody is engaged with this ride, so
+     * holding the passenger's booking slot and the driver's availability open
+     * serves no one.
+     */
+    NO_RESPONSE_FROM_EITHER = 'SYSTEM_NO_RESPONSE_FROM_EITHER',
+    /**
+     * The passenger said keep waiting, but the driver never answered across the
+     * permitted rounds. Waiting longer cannot help — the driver is gone.
+     */
+    DRIVER_UNRESPONSIVE = 'SYSTEM_DRIVER_UNRESPONSIVE',
+    /**
+     * The driver said keep waiting, but the passenger never answered across the
+     * permitted rounds.
+     */
+    PASSENGER_UNRESPONSIVE = 'SYSTEM_PASSENGER_UNRESPONSIVE',
+}
+
+/** Who a decision prompt was answered by. */
+export type StaleDecisionParty = 'passenger' | 'driver';
+/** What they chose. */
+export type StaleDecisionChoice = 'wait' | 'cancel';

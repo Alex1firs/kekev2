@@ -52,8 +52,19 @@ export interface RideCleanupHost {
 
 export interface TerminateArgs {
     rideId: string;
-    /** Explicit reason, e.g. SYSTEM_DRIVER_DID_NOT_ARRIVE. */
+    /** Explicit reason, e.g. PASSENGER_CHOSE_CANCEL. */
     reason: string;
+    /** The situation that made it stale, recorded separately from the decision. */
+    situation?: string;
+    /**
+     * Require that both parties were asked before this ride can be cancelled.
+     *
+     * Set for every automatic stale cancellation. It is the structural guarantee
+     * behind "no silent cancellations": if `staleDecisionPromptedAt` is null the
+     * cancel is refused outright, so a coding mistake elsewhere cannot produce a
+     * termination the passenger and driver never saw coming.
+     */
+    requireDecisionPrompt?: boolean;
     /** Statuses the ride must still be in. The conditional-update guard. */
     expectedStatuses: string[];
     /** Human-facing copy. */
@@ -80,6 +91,11 @@ export class RideCleanupService {
 
     static setHost(host: RideCleanupHost | null): void {
         this.host = host;
+    }
+
+    /** Shared with the sweeper so decision prompts use the same realtime seam. */
+    static get hostRef(): RideCleanupHost | null {
+        return this.host;
     }
 
     /**
@@ -127,6 +143,18 @@ export class RideCleanupService {
             return result;
         }
 
+        // NO SILENT CANCELLATIONS. An automatic stale cancellation may only
+        // proceed once both parties have actually been asked.
+        if (args.requireDecisionPrompt && ride.staleDecisionPromptedAt == null) {
+            result.skippedReason = 'decision_prompt_not_sent';
+            console.warn(JSON.stringify({
+                level: 'warn', scope: 'ride_cleanup', event: 'refused_silent_cancel',
+                rideId: args.rideId, reason: args.reason,
+                detail: 'no decision prompt on record — refusing to cancel',
+            }));
+            return result;
+        }
+
         // ── The authoritative conditional write ──────────────────────────
         // A single guarded UPDATE. If a driver's arrive/start/complete landed
         // first, affected === 0 and we abandon the whole cleanup.
@@ -137,7 +165,10 @@ export class RideCleanupService {
                 status: 'canceled' as any,
                 completedAt: new Date(),
                 cancellationReason: args.reason,
-                staleReason: args.reason,
+                // The situation and the decision are separate facts: "the driver
+                // never arrived" is why it went wrong, "the passenger chose to
+                // cancel" is how it ended.
+                staleReason: args.situation ?? args.reason,
                 staleDetectedAt: new Date(),
             })
             .where(

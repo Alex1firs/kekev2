@@ -15,7 +15,7 @@ import { DriverEligibilityService } from '../services/driver_eligibility_service
 import { DispatchMonitorService } from '../services/dispatch_monitor_service';
 import { DispatchMonitorQueryService } from '../services/dispatch_monitor_query_service';
 import { RideCleanupService } from '../services/ride_cleanup_service';
-import { loadStaleRideConfig } from '../config/stale_ride_config';
+import { loadStaleRideConfig, StaleResolution } from '../config/stale_ride_config';
 import { DispatchEventType } from '../models/DispatchEvent';
 import { projectDispatchEvent } from '../services/dispatch_event_projection';
 import { User, UserRole } from '../models/User';
@@ -122,6 +122,13 @@ const Schemas = {
     // Passenger-consented early drop-off (Option 4 primary / Option 1 confirm).
     rideEndEarly:      z.object({ rideId: id(), passengerId: id(), lat: lat().optional(), lng: lng().optional() }),
     rideEarlyEndReject: z.object({ rideId: id(), passengerId: id() }),
+    // Either party's answer to a stale-ride decision prompt.
+    staleDecision: z.object({
+        rideId: id(),
+        userId: id(),
+        role: z.enum(['passenger', 'driver']),
+        choice: z.enum(['wait', 'cancel']),
+    }),
     sosAlert: z.object({
         rideId: id(),
         initiatorId: id(),
@@ -774,6 +781,178 @@ export class SocketHandler {
                     driverId: data.driverId,
                     withFreshness: true,
                 });
+            });
+
+            // --- Either party answers the stale-ride decision prompt ---
+            // The only path by which a stale ride is cancelled promptly. Both
+            // passenger and driver receive the prompt; whoever answers first
+            // decides. "wait" buys a bounded extension and tells the other side;
+            // "cancel" terminates immediately, attributed to whoever chose it.
+            socket.on('ride:stale_decision', async (raw) => {
+                const data = validate(Schemas.staleDecision, raw, socket);
+                if (!data) return;
+                try {
+                    const config = loadStaleRideConfig();
+                    const rideRepo = AppDataSource.getRepository(Ride);
+                    const ride = await rideRepo.findOne({ where: { rideId: data.rideId } });
+                    if (!ride) {
+                        socket.emit('ride:error', { code: 'RIDE_NOT_FOUND', message: 'Ride not found.' });
+                        return;
+                    }
+
+                    // Only the two people actually on this ride may decide.
+                    const isPassenger = data.role === 'passenger' && ride.passengerId === data.userId;
+                    const isDriver = data.role === 'driver' && ride.driverId === data.userId;
+                    if (!isPassenger && !isDriver) {
+                        socket.emit('ride:error', { code: 'FORBIDDEN', message: 'This ride is not yours.' });
+                        return;
+                    }
+                    if (ride.staleDecisionPromptedAt == null) {
+                        socket.emit('ride:error', { code: 'INVALID_STATE', message: 'There is nothing to decide on this ride.' });
+                        return;
+                    }
+                    if (ride.completedAt != null) {
+                        socket.emit('ride:error', { code: 'INVALID_STATE', message: 'This ride has already ended.' });
+                        return;
+                    }
+
+                    // First answer wins. The conditional makes two simultaneous
+                    // taps resolve to exactly one decision.
+                    const claim = await rideRepo
+                        .createQueryBuilder()
+                        .update()
+                        .set({
+                            staleDecisionBy: data.role,
+                            staleDecisionChoice: data.choice,
+                            staleDecisionAt: new Date(),
+                        })
+                        .where('"rideId" = :rideId AND "staleDecisionChoice" IS NULL AND "completedAt" IS NULL AND status IN (:...live)',
+                            { rideId: data.rideId, live: ['accepted', 'arrived'] })
+                        .execute();
+
+                    if (!claim.affected) {
+                        socket.emit('ride:stale_decision_ack', {
+                            rideId: data.rideId,
+                            accepted: false,
+                            reason: 'already_decided',
+                            decidedBy: ride.staleDecisionBy,
+                            decidedChoice: ride.staleDecisionChoice,
+                        });
+                        return;
+                    }
+
+                    DispatchMonitorService.record({
+                        rideId: data.rideId,
+                        eventType: DispatchEventType.STALE_DECISION_RECEIVED,
+                        driverId: ride.driverId,
+                        detail: {
+                            by: data.role,
+                            choice: data.choice,
+                            round: ride.staleDecisionRound,
+                            respondedWithinMs: ride.staleDecisionPromptedAt
+                                ? Date.now() - new Date(ride.staleDecisionPromptedAt).getTime()
+                                : null,
+                        },
+                    });
+                    rlog('stale_decision_received', {
+                        rideId: data.rideId, by: data.role, choice: data.choice,
+                    });
+
+                    if (data.choice === 'cancel') {
+                        // Honour it now rather than waiting for the next sweep — the
+                        // person is holding their phone waiting for it to happen.
+                        const resolution = data.role === 'passenger'
+                            ? StaleResolution.PASSENGER_CHOSE_CANCEL
+                            : StaleResolution.DRIVER_CHOSE_CANCEL;
+                        const outcome = await RideCleanupService.terminate({
+                            rideId: data.rideId,
+                            reason: resolution,
+                            situation: (ride.staleReason as string) ?? undefined,
+                            expectedStatuses: ['accepted', 'arrived'],
+                            passengerMessage: data.role === 'passenger'
+                                ? 'Your ride has been cancelled as you requested. You can book again now.'
+                                : 'Your driver could not complete this pickup, so the ride was cancelled. You can book again now.',
+                            driverMessage: data.role === 'driver'
+                                ? 'This ride has been cancelled as you requested. You can accept new rides now.'
+                                : 'The passenger cancelled this ride. You can accept new rides now.',
+                            requireDecisionPrompt: true,
+                        });
+                        socket.emit('ride:stale_decision_ack', {
+                            rideId: data.rideId, accepted: outcome.applied, choice: 'cancel',
+                        });
+                        return;
+                    }
+
+                    // choice === 'wait' — extend, bounded, and tell the other side
+                    // so they know someone is still engaged.
+                    const canWait = ride.staleExtensionCount < config.maxExtensions;
+                    if (!canWait) {
+                        socket.emit('ride:stale_decision_ack', {
+                            rideId: data.rideId,
+                            accepted: false,
+                            reason: 'extension_limit_reached',
+                            message: 'You have already chosen to wait once. Please arrive, start the trip, or cancel.',
+                        });
+                        return;
+                    }
+
+                    const extendedTo = new Date(Date.now() + config.extensionMinutes * 60_000);
+                    await rideRepo
+                        .createQueryBuilder()
+                        .update()
+                        .set({
+                            staleDeadlineOverrideAt: extendedTo,
+                            staleExtensionCount: () => '"staleExtensionCount" + 1',
+                            // Re-arm: the next deadline asks again.
+                            staleDecisionPromptedAt: null,
+                            staleDecisionDeadlineAt: null,
+                            staleWarnedAt: null,
+                        })
+                        .where('"rideId" = :rideId AND "completedAt" IS NULL AND "staleExtensionCount" < :max',
+                            { rideId: data.rideId, max: config.maxExtensions })
+                        .execute();
+
+                    const notice = {
+                        rideId: data.rideId,
+                        decidedBy: data.role,
+                        choice: 'wait',
+                        extendedUntil: extendedTo.toISOString(),
+                        minutes: config.extensionMinutes,
+                    };
+                    // BOTH sides are told — the point of the whole mechanism is
+                    // that neither is left uninformed.
+                    this.io.to(`ride:${data.rideId}`).emit('ride:stale_decision_resolved', {
+                        ...notice,
+                        message: data.role === 'driver'
+                            ? 'Your driver is still on the way.'
+                            : 'Your passenger is still coming.',
+                    });
+                    if (ride.driverId) {
+                        this.io.to(`driver:${ride.driverId}`).emit('ride:stale_decision_resolved', {
+                            ...notice,
+                            message: data.role === 'passenger'
+                                ? 'The passenger is still waiting for you.'
+                                : 'You chose to keep going. Please head to the pickup point.',
+                        });
+                    }
+                    socket.emit('ride:stale_decision_ack', { rideId: data.rideId, accepted: true, choice: 'wait' });
+
+                    DispatchMonitorService.record({
+                        rideId: data.rideId,
+                        eventType: DispatchEventType.STALE_EXTENSION_GRANTED,
+                        driverId: ride.driverId,
+                        detail: {
+                            grantedTo: data.role,
+                            minutes: config.extensionMinutes,
+                            extendedUntil: extendedTo.toISOString(),
+                            extensionNumber: (ride.staleExtensionCount ?? 0) + 1,
+                            maxExtensions: config.maxExtensions,
+                        },
+                    });
+                } catch (err) {
+                    log.error('ride:stale_decision failed:', err);
+                    socket.emit('ride:error', { code: 'INTERNAL_ERROR', message: 'Could not record your choice. Please try again.' });
+                }
             });
 
             // --- Driver confirms they are still coming ---

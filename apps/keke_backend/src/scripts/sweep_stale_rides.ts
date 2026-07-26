@@ -64,6 +64,10 @@ function printPlan(plan: SweepPlanItem[]): void {
         console.log(`  driver HB age   ${ageOf(p.driverHeartbeatAgeMs)}${p.driverHeartbeatFresh ? ' (fresh)' : ' (stale)'}`);
         console.log(`  ACTION          ${p.action.toUpperCase()}`);
         console.log(`  reason          ${p.reason ?? '—'}`);
+        console.log(`  resolution      ${p.resolution ?? '—'}`);
+        if (p.promptParties.length) {
+            console.log(`  asking          ${p.promptParties.join(', ')} (respond by ${iso(p.decisionDeadlineAt)})`);
+        }
         console.log(`  why             ${p.explanation}`);
         console.log('');
     }
@@ -89,7 +93,9 @@ async function main(): Promise<void> {
             console.log(`  accepted window   min ${config.acceptedMinMinutes}m, ETA x${config.acceptedEtaMultiplier}, max ${config.acceptedMaxMinutes}m`);
             console.log(`  arrived window    warn ${config.arrivedWarnMinutes}m, cancel ${config.arrivedCancelMinutes}m`);
             console.log(`  in-progress       review at max(est x${config.inProgressDurationMultiplier}, ${config.inProgressMinMinutes}m), cap ${config.inProgressAbsoluteMinutes}m`);
+            console.log(`  decision window   ${config.decisionWindowMinutes}m to answer, up to ${config.maxExtensions} "keep waiting"`);
             console.log('  in-progress trips are FLAGGED for review, never auto-cancelled.');
+            console.log('  A deadline PROMPTS both parties; it never cancels on its own.');
             console.log('');
         }
 
@@ -102,13 +108,14 @@ async function main(): Promise<void> {
             console.log('  Summary');
             console.log(`    examined        ${report.examined}`);
             console.log(`    would warn      ${report.warned}`);
+            console.log(`    would ask both  ${report.prompted}`);
             console.log(`    would cancel    ${report.cancelled}`);
             console.log(`    would flag      ${report.flagged}`);
             console.log(`    skipped         ${report.skipped}`);
             console.log(`    lost races      ${report.lostRaces}`);
             console.log(`    errors          ${report.errors}`);
             console.log('');
-            if (dryRun && (report.warned || report.cancelled || report.flagged)) {
+            if (dryRun && (report.warned || report.prompted || report.cancelled || report.flagged)) {
                 console.log('  Nothing was changed. Re-run with --apply to perform these actions.');
                 console.log('');
             }

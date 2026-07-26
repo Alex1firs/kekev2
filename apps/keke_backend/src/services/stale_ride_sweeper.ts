@@ -25,7 +25,7 @@
 import { AppDataSource } from '../config/data_source';
 import { Ride } from '../models/Ride';
 import { UserRole } from '../models/User';
-import { loadStaleRideConfig, StaleRideConfig, StaleActionReason } from '../config/stale_ride_config';
+import { loadStaleRideConfig, StaleRideConfig, StaleActionReason, StaleResolution } from '../config/stale_ride_config';
 import { StaleRideService, RideSnapshot, StaleEvaluation } from './stale_ride_service';
 import { RideCleanupService } from './ride_cleanup_service';
 import { NotificationService } from './notification_service';
@@ -60,6 +60,8 @@ export interface SweepReport {
     cancelled: number;
     flagged: number;
     skipped: number;
+    /** Decision prompts sent to both parties. */
+    prompted: number;
     /** Races lost to a legitimate newer transition. */
     lostRaces: number;
     errors: number;
@@ -126,7 +128,7 @@ export class StaleRideSweeper {
             dryRun,
             acquiredLock: false,
             examined: 0, warned: 0, cancelled: 0, flagged: 0,
-            skipped: 0, lostRaces: 0, errors: 0,
+            prompted: 0, skipped: 0, lostRaces: 0, errors: 0,
             plan: [],
         };
 
@@ -174,6 +176,7 @@ export class StaleRideSweeper {
                             // Counted so the operator sees the shape of the change,
                             // but nothing is written.
                             if (evaluation.action === 'warn') report.warned += 1;
+                            if (evaluation.action === 'prompt_decision') report.prompted += 1;
                             if (evaluation.action === 'cancel') report.cancelled += 1;
                             if (evaluation.action === 'flag_for_review') report.flagged += 1;
                             continue;
@@ -182,6 +185,9 @@ export class StaleRideSweeper {
                         if (evaluation.action === 'warn') {
                             const sent = await this.sendWarning(ride, evaluation);
                             if (sent) report.warned += 1; else report.skipped += 1;
+                        } else if (evaluation.action === 'prompt_decision') {
+                            const sent = await this.promptDecision(ride, evaluation, config);
+                            if (sent) report.prompted += 1; else report.skipped += 1;
                         } else if (evaluation.action === 'cancel') {
                             const outcome = await this.cancel(ride, evaluation);
                             if (outcome === 'cancelled') report.cancelled += 1;
@@ -218,11 +224,12 @@ export class StaleRideSweeper {
             report.finishedAt = new Date().toISOString();
         }
 
-        if (report.warned || report.cancelled || report.flagged || report.errors) {
+        if (report.warned || report.prompted || report.cancelled || report.flagged || report.errors) {
             console.log(JSON.stringify({
                 level: 'info', scope: 'stale_sweep', event: 'completed',
                 dryRun: report.dryRun, examined: report.examined,
-                warned: report.warned, cancelled: report.cancelled,
+                warned: report.warned, prompted: report.prompted,
+                cancelled: report.cancelled,
                 flagged: report.flagged, lostRaces: report.lostRaces,
                 skipped: report.skipped, errors: report.errors,
             }));
@@ -289,6 +296,11 @@ export class StaleRideSweeper {
             staleExtensionCount: r.staleExtensionCount ?? 0,
             staleDeadlineOverrideAt: r.staleDeadlineOverrideAt ?? null,
             requiresOperationsReview: r.requiresOperationsReview ?? false,
+            staleDecisionPromptedAt: r.staleDecisionPromptedAt ?? null,
+            staleDecisionDeadlineAt: r.staleDecisionDeadlineAt ?? null,
+            staleDecisionBy: r.staleDecisionBy ?? null,
+            staleDecisionChoice: r.staleDecisionChoice ?? null,
+            staleDecisionRound: r.staleDecisionRound ?? 0,
         };
     }
 
@@ -389,6 +401,130 @@ export class StaleRideSweeper {
         return true;
     }
 
+    /**
+     * Ask BOTH parties whether to keep waiting or cancel.
+     *
+     * This is the step that replaced cancelling on a timer. It pushes a realtime
+     * prompt and a push notification to each side, records the window, and
+     * returns — nothing is terminated here. The prompt is claimed with a
+     * conditional UPDATE, so two workers cannot both ask.
+     *
+     * Copy differs per role because the two sides are in genuinely different
+     * situations: the passenger is waiting for a driver who has not shown up, and
+     * the driver is waiting for a passenger who has not appeared. Neither is told
+     * the other is at fault.
+     */
+    private static async promptDecision(
+        ride: RideSnapshot,
+        evaluation: StaleEvaluation,
+        config: StaleRideConfig,
+    ): Promise<boolean> {
+        const deadlineAt = evaluation.decisionDeadlineAt
+            ?? new Date(Date.now() + config.decisionWindowMinutes * 60_000);
+        const rideRepo = AppDataSource.getRepository(Ride);
+
+        // Claim the prompt. `staleDecisionPromptedAt IS NULL` makes this the
+        // once-only gate, and bumping the round lets the policy count how many
+        // times this ride has been through the conversation.
+        const claim = await rideRepo
+            .createQueryBuilder()
+            .update()
+            .set({
+                staleDecisionPromptedAt: new Date(),
+                staleDecisionDeadlineAt: deadlineAt,
+                staleDecisionBy: null,
+                staleDecisionChoice: null,
+                staleReason: evaluation.reason ?? null,
+                staleDetectedAt: new Date(),
+                staleDecisionRound: () => '"staleDecisionRound" + 1',
+            })
+            .where('"rideId" = :rideId AND "staleDecisionPromptedAt" IS NULL AND status = :status AND "completedAt" IS NULL',
+                { rideId: ride.rideId, status: ride.status })
+            .execute();
+
+        if (!claim.affected || claim.affected === 0) return false;
+
+        const respondBySec = Math.max(30, Math.round((deadlineAt.getTime() - Date.now()) / 1000));
+        const waitingFor: 'driver' | 'passenger' = ride.status === 'accepted' ? 'driver' : 'passenger';
+
+        // Realtime prompt — the in-app dialog with the two actions.
+        const promptBase = {
+            rideId: ride.rideId,
+            reason: evaluation.reason,
+            respondBySeconds: respondBySec,
+            respondByAt: deadlineAt.toISOString(),
+            waitingFor,
+            options: ['wait', 'cancel'],
+        };
+        try {
+            RideCleanupService.hostRef?.emitToRide(ride.rideId, 'ride:stale_decision_required', {
+                ...promptBase,
+                role: 'passenger',
+                title: waitingFor === 'driver' ? 'Your driver is running late' : 'Are you at the pickup point?',
+                body: waitingFor === 'driver'
+                    ? 'Your driver has not arrived yet. Would you like to keep waiting, or cancel and book another Keke?'
+                    : 'Your driver is waiting at the pickup point. Are you still coming, or would you like to cancel?',
+            });
+            if (ride.driverId) {
+                RideCleanupService.hostRef?.emitToDriver(ride.driverId, 'ride:stale_decision_required', {
+                    ...promptBase,
+                    role: 'driver',
+                    title: waitingFor === 'driver' ? 'Are you still going to this pickup?' : 'Passenger has not arrived',
+                    body: waitingFor === 'driver'
+                        ? 'Your passenger is still waiting. Are you still on your way, or would you like to cancel?'
+                        : 'The passenger has not shown up yet. Do you want to keep waiting, or cancel this ride?',
+                });
+            }
+        } catch (err: any) {
+            console.warn(`[STALE_SWEEP] decision prompt emit failed for ${ride.rideId}: ${err?.message}`);
+        }
+
+        // Push as well, because the decisive case is a party whose app is closed —
+        // and someone who never sees the prompt must not be treated as having
+        // chosen anything.
+        try {
+            if (ride.passengerId) {
+                await NotificationService.sendToUser(
+                    ride.passengerId, UserRole.PASSENGER,
+                    waitingFor === 'driver' ? 'Your driver is running late' : 'Your driver is waiting',
+                    waitingFor === 'driver'
+                        ? 'Tap to keep waiting or cancel and book another Keke.'
+                        : 'Tap to confirm you are coming, or cancel the ride.',
+                    { type: 'STALE_RIDE_DECISION', rideId: ride.rideId, intent: 'active' },
+                );
+            }
+            if (ride.driverId) {
+                await NotificationService.sendToUser(
+                    ride.driverId, UserRole.DRIVER,
+                    waitingFor === 'driver' ? 'Still going to this pickup?' : 'Passenger has not arrived',
+                    'Tap to keep going or cancel this ride.',
+                    { type: 'STALE_RIDE_DECISION', rideId: ride.rideId, intent: 'active' },
+                );
+            }
+        } catch (err: any) {
+            console.warn(`[STALE_SWEEP] decision push failed for ${ride.rideId}: ${err?.message}`);
+        }
+
+        DispatchMonitorService.record({
+            rideId: ride.rideId,
+            eventType: DispatchEventType.STALE_DECISION_REQUESTED,
+            driverId: ride.driverId,
+            detail: {
+                reason: evaluation.reason,
+                waitingFor,
+                round: ride.staleDecisionRound + 1,
+                respondBySeconds: respondBySec,
+                askedParties: ['passenger', 'driver'],
+            },
+        });
+        console.log(JSON.stringify({
+            level: 'info', scope: 'stale_sweep', event: 'decision_requested',
+            rideId: ride.rideId, waitingFor, respondBySeconds: respondBySec,
+            round: ride.staleDecisionRound + 1,
+        }));
+        return true;
+    }
+
     /** Terminal cancel, through the shared cleanup service. */
     private static async cancel(
         ride: RideSnapshot, evaluation: StaleEvaluation,
@@ -406,20 +542,62 @@ export class StaleRideSweeper {
             },
         });
 
-        const passengerMessage = ride.status === 'accepted'
-            ? 'Your driver did not arrive, so we cancelled the ride. You can book again now.'
-            : 'Your trip never started, so we cancelled the ride. You can book again now.';
-        const driverMessage = ride.status === 'accepted'
-            ? 'This ride was cancelled because the pickup was not reached in time. You can accept new rides now.'
-            : 'This ride was cancelled because the trip was never started. You can accept new rides now.';
+        // Copy names the actual resolution, so neither party is left guessing why
+        // their ride ended — and nobody is blamed for something they did not do.
+        const res = evaluation.resolution;
+        let passengerMessage: string;
+        let driverMessage: string;
+        switch (res) {
+            case StaleResolution.PASSENGER_CHOSE_CANCEL:
+                passengerMessage = 'Your ride has been cancelled as you requested. You can book again now.';
+                driverMessage = 'The passenger cancelled this ride. You can accept new rides now.';
+                break;
+            case StaleResolution.DRIVER_CHOSE_CANCEL:
+                passengerMessage = 'Your driver could not complete this pickup, so the ride was cancelled. You can book again now.';
+                driverMessage = 'This ride has been cancelled as you requested. You can accept new rides now.';
+                break;
+            case StaleResolution.DRIVER_UNRESPONSIVE:
+                passengerMessage = 'We could not reach your driver, so we cancelled the ride. You can book again now.';
+                driverMessage = 'This ride was cancelled because we did not hear back from you. You can accept new rides now.';
+                break;
+            case StaleResolution.PASSENGER_UNRESPONSIVE:
+                passengerMessage = 'This ride was cancelled because we did not hear back from you. You can book again whenever you are ready.';
+                driverMessage = 'The passenger did not respond, so this ride was cancelled. You can accept new rides now.';
+                break;
+            default:
+                passengerMessage = 'We did not hear back about this ride, so we cancelled it. You can book again now.';
+                driverMessage = 'We did not hear back about this ride, so we cancelled it. You can accept new rides now.';
+                break;
+        }
+
+        // The window closed unanswered — record that plainly before terminating.
+        if (res === StaleResolution.NO_RESPONSE_FROM_EITHER
+            || res === StaleResolution.DRIVER_UNRESPONSIVE
+            || res === StaleResolution.PASSENGER_UNRESPONSIVE) {
+            DispatchMonitorService.record({
+                rideId: ride.rideId,
+                eventType: DispatchEventType.STALE_DECISION_TIMED_OUT,
+                driverId: ride.driverId,
+                detail: {
+                    resolution: res,
+                    rounds: ride.staleDecisionRound,
+                    answeredBy: ride.staleDecisionBy,
+                    answeredChoice: ride.staleDecisionChoice,
+                },
+            });
+        }
 
         const outcome = await RideCleanupService.terminate({
             rideId: ride.rideId,
-            reason: evaluation.reason ?? StaleActionReason.DRIVER_DID_NOT_ARRIVE,
-            // The guard that makes the whole sweep race-safe.
+            // The DECISION is the cancellation reason...
+            reason: res ?? StaleResolution.NO_RESPONSE_FROM_EITHER,
+            // ...and the SITUATION is recorded alongside it.
+            situation: evaluation.reason ?? StaleActionReason.DRIVER_DID_NOT_ARRIVE,
             expectedStatuses: [ride.status],
             passengerMessage,
             driverMessage,
+            // Refuses outright if no prompt was ever sent.
+            requireDecisionPrompt: true,
         });
 
         if (!outcome.applied) {
@@ -438,9 +616,15 @@ export class StaleRideSweeper {
             eventType: DispatchEventType.STALE_AUTO_CANCELLED,
             driverId: ride.driverId,
             detail: {
-                reason: evaluation.reason,
+                // Both facts, kept distinct.
+                situation: evaluation.reason,
+                resolution: res,
+                decidedBy: ride.staleDecisionBy,
+                decidedChoice: ride.staleDecisionChoice,
+                decisionRounds: ride.staleDecisionRound,
                 previousStatus: ride.status,
                 ageMinutes: Math.round(evaluation.ageMinutes ?? 0),
+                bothPartiesAsked: true,
             },
         });
         DispatchMonitorService.record({

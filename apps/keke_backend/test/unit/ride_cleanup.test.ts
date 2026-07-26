@@ -218,6 +218,38 @@ describe('15. dry-run performs no mutation', () => {
     });
 });
 
+describe('the cleanup service refuses a silent cancellation', () => {
+    it('requireDecisionPrompt is honoured — no prompt on record, no cancel', () => {
+        // Structural: the guard exists and fires before any write. The behavioural
+        // path needs a database and is covered by the integration suite; what is
+        // asserted here is that the refusal is unconditional and logged.
+        const source = require('fs').readFileSync(
+            require('path').join(__dirname, '../../src/services/ride_cleanup_service.ts'),
+            'utf8',
+        );
+        expect(source).toMatch(/requireDecisionPrompt && ride\.staleDecisionPromptedAt == null/);
+        expect(source).toMatch(/decision_prompt_not_sent/);
+        expect(source).toMatch(/refused_silent_cancel/);
+        // And the guard sits BEFORE the authoritative UPDATE.
+        const guardAt = source.indexOf('decision_prompt_not_sent');
+        const updateAt = source.indexOf('The authoritative conditional write');
+        expect(guardAt).toBeGreaterThan(-1);
+        expect(guardAt).toBeLessThan(updateAt);
+    });
+
+    it('every automatic stale cancellation sets requireDecisionPrompt', () => {
+        const sweeper = require('fs').readFileSync(
+            require('path').join(__dirname, '../../src/services/stale_ride_sweeper.ts'),
+            'utf8',
+        );
+        expect(sweeper).toMatch(/requireDecisionPrompt: true/);
+        // The sweeper never calls terminate without it.
+        const terminateCalls = sweeper.split('RideCleanupService.terminate(').length - 1;
+        const guarded = sweeper.split('requireDecisionPrompt: true').length - 1;
+        expect(guarded).toBe(terminateCalls);
+    });
+});
+
 // 17 ───────────────────────────────────────────────────────────────────────
 describe('17. notifications are not duplicated', () => {
     it('the push service de-duplicates per user, type and ride', async () => {

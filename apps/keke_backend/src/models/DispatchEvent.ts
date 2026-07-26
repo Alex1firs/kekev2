@@ -68,6 +68,14 @@ export enum DispatchEventType {
     OPERATIONS_REVIEW_REQUIRED = "operations_review_required",
     /** Every piece of held state for a terminated ride was released. */
     STALE_CLEANUP_COMPLETED = "stale_cleanup_completed",
+
+    // ── The decision window: no ride is cancelled before both are asked ──
+    /** Both parties were asked whether to keep waiting or cancel. */
+    STALE_DECISION_REQUESTED = "stale_decision_requested",
+    /** One party answered. `detail.by` and `detail.choice` say who and what. */
+    STALE_DECISION_RECEIVED = "stale_decision_received",
+    /** The decision window closed with nobody answering. */
+    STALE_DECISION_TIMED_OUT = "stale_decision_timed_out",
 }
 
 /**

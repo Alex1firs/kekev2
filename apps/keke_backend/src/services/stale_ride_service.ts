@@ -9,7 +9,13 @@
  * Execution lives in ride_cleanup_service.ts (terminal actions) and
  * stale_ride_sweeper.ts (scheduling). This file never mutates anything.
  */
-import { StaleRideConfig, StaleActionReason } from '../config/stale_ride_config';
+import {
+    StaleRideConfig,
+    StaleActionReason,
+    StaleResolution,
+    StaleDecisionParty,
+    StaleDecisionChoice,
+} from '../config/stale_ride_config';
 
 /** The subset of a ride the policy needs. Keeps tests free of entity plumbing. */
 export interface RideSnapshot {
@@ -32,14 +38,30 @@ export interface RideSnapshot {
     staleExtensionCount: number;
     staleDeadlineOverrideAt: Date | null;
     requiresOperationsReview: boolean;
+    // The decision window.
+    staleDecisionPromptedAt: Date | null;
+    staleDecisionDeadlineAt: Date | null;
+    staleDecisionBy: string | null;
+    staleDecisionChoice: string | null;
+    staleDecisionRound: number;
 }
 
 export type StaleAction =
     /** Nothing to do. */
     | 'none'
-    /** Send a staged warning; the deadline has not passed yet. */
+    /** Send a staged heads-up; the deadline has not passed yet. */
     | 'warn'
-    /** Terminal: cancel and run full cleanup. */
+    /**
+     * The deadline passed. Ask BOTH parties whether to keep waiting or cancel.
+     * This replaces cancelling on a timer: no ride is ever terminated before its
+     * passenger and driver have been asked.
+     */
+    | 'prompt_decision'
+    /**
+     * Terminal, and only reachable once a decision window has closed — either
+     * because somebody chose to cancel, or because the party the ride is waiting
+     * on stayed silent through the permitted rounds.
+     */
     | 'cancel'
     /** Flag for a human. Never used for accepted/arrived. */
     | 'flag_for_review';
@@ -48,7 +70,14 @@ export interface StaleEvaluation {
     rideId: string;
     status: string;
     action: StaleAction;
+    /** The SITUATION (what went wrong). */
     reason: StaleActionReason | null;
+    /** For `cancel`, WHO decided or whose silence resolved it. */
+    resolution: StaleResolution | null;
+    /** Which parties still need to answer, for `prompt_decision`. */
+    promptParties: StaleDecisionParty[];
+    /** When the decision window closes, for `prompt_decision`. */
+    decisionDeadlineAt: Date | null;
     /** Why the policy chose this, in plain words, for dry-run output and logs. */
     explanation: string;
     /** Reference instant the deadline is measured from. */
@@ -157,6 +186,9 @@ export class StaleRideService {
             status: ride.status,
             action: 'none',
             reason: null,
+            resolution: null,
+            promptParties: [],
+            decisionDeadlineAt: null,
             explanation: '',
             since: null,
             ageMinutes: null,
@@ -206,15 +238,18 @@ export class StaleRideService {
             };
 
             if (now.getTime() >= effectiveDeadlineAt.getTime()) {
-                return {
+                // Deadline reached. Ask, do not cancel.
+                return this.resolveDecision(ride, config, now, {
                     ...common,
-                    action: 'cancel',
                     reason: StaleActionReason.DRIVER_DID_NOT_ARRIVE,
-                    explanation:
+                    // The ride is waiting on the DRIVER to arrive, so the driver's
+                    // silence is what makes waiting pointless.
+                    awaitingParty: 'driver',
+                    situation:
                         `accepted ${ageMinutes.toFixed(1)}min ago, never arrived; allowance ` +
                         `${deadlineMinutes.toFixed(1)}min` +
                         (etaMinutes != null ? ` (pickup ETA ${etaMinutes.toFixed(1)}min)` : ' (no ETA available)'),
-                };
+                });
             }
 
             // Staged warning once most of the allowance is gone, and only once.
@@ -261,17 +296,19 @@ export class StaleRideService {
             };
 
             if (now.getTime() >= effectiveDeadlineAt.getTime()) {
-                return {
+                return this.resolveDecision(ride, config, now, {
                     ...common,
-                    action: 'cancel',
                     // Deliberately blames nobody. Calling this a passenger no-show
                     // would be a guess: a timer expiring is not evidence anyone
                     // failed to show up, and no driver flow collects that.
                     reason: StaleActionReason.TRIP_NOT_STARTED_AFTER_ARRIVAL,
-                    explanation:
+                    // The driver is present and waiting; the trip needs the
+                    // PASSENGER to appear, so their silence is decisive.
+                    awaitingParty: 'passenger',
+                    situation:
                         `driver arrived ${ageMinutes.toFixed(1)}min ago, trip never started; ` +
                         `grace ${deadlineMinutes}min`,
-                };
+                });
             }
 
             if (ride.staleWarnedAt == null && ageMinutes >= config.arrivedWarnMinutes) {
@@ -325,7 +362,139 @@ export class StaleRideService {
         return { ...base, explanation: `status "${ride.status}" is not swept` };
     }
 
-    /** Whether a driver confirmation may still extend this ride. */
+    /**
+     * The decision window. Called once a state's deadline has passed.
+     *
+     * This is what makes cancellation a conversation rather than a timeout. The
+     * possible outcomes, in order:
+     *
+     *  1. Nobody has been asked yet          -> `prompt_decision` (ask BOTH)
+     *  2. Somebody chose "cancel"            -> `cancel`, attributed to them
+     *  3. Somebody chose "wait"              -> `none`; the extension moved the
+     *                                           deadline, so we re-ask later
+     *  4. Window still open, nobody answered -> `none`; keep waiting
+     *  5. Window closed, nobody answered     -> `cancel` on silence
+     *  6. Window closed, only the OTHER party answered "wait", and the party the
+     *     ride is waiting on has been silent through the permitted rounds
+     *                                        -> `cancel`, naming who was silent
+     *
+     * `awaitingParty` is the party whose action the ride actually needs — the
+     * driver arriving, or the passenger appearing. Their silence is decisive
+     * because no amount of waiting substitutes for it.
+     */
+    private static resolveDecision(
+        ride: RideSnapshot,
+        config: StaleRideConfig,
+        now: Date,
+        ctx: StaleEvaluation & {
+            reason: StaleActionReason;
+            awaitingParty: StaleDecisionParty;
+            situation: string;
+        },
+    ): StaleEvaluation {
+        const { awaitingParty, situation, ...common } = ctx;
+        const bothParties: StaleDecisionParty[] = ['passenger', 'driver'];
+
+        // 1. Nobody asked yet — this is the first thing that happens at a deadline.
+        if (ride.staleDecisionPromptedAt == null) {
+            return {
+                ...common,
+                action: 'prompt_decision',
+                promptParties: bothParties,
+                decisionDeadlineAt: new Date(now.getTime() + config.decisionWindowMinutes * MS_PER_MIN),
+                explanation:
+                    `${situation}. Asking both parties whether to keep waiting or cancel ` +
+                    `(${config.decisionWindowMinutes}min to respond) — nothing is cancelled yet`,
+            };
+        }
+
+        const choice = ride.staleDecisionChoice as StaleDecisionChoice | null;
+        const by = ride.staleDecisionBy as StaleDecisionParty | null;
+
+        // 2. Somebody said cancel. Their choice is honoured immediately.
+        if (choice === 'cancel' && by) {
+            return {
+                ...common,
+                action: 'cancel',
+                resolution: by === 'passenger'
+                    ? StaleResolution.PASSENGER_CHOSE_CANCEL
+                    : StaleResolution.DRIVER_CHOSE_CANCEL,
+                explanation: `${situation}. The ${by} chose to cancel when asked`,
+            };
+        }
+
+        // 3. Somebody said wait. The extension pushed the deadline, so the outer
+        //    branch has already decided we are inside it; nothing to do now.
+        //    (If the extension has since lapsed, `staleDecisionDeadlineAt` gates
+        //    the next round below.)
+        const windowClosed = ride.staleDecisionDeadlineAt != null
+            && now.getTime() >= ride.staleDecisionDeadlineAt.getTime();
+
+        if (choice === 'wait' && by) {
+            const roundsUsed = ride.staleDecisionRound;
+            const canAskAgain = roundsUsed <= config.maxExtensions;
+            if (!windowClosed || canAskAgain) {
+                // Re-ask on the next deadline rather than acting now.
+                return {
+                    ...common,
+                    action: 'none',
+                    explanation:
+                        `${situation}. The ${by} chose to keep waiting ` +
+                        `(round ${roundsUsed}/${config.maxExtensions}); will ask again at the new deadline`,
+                };
+            }
+            // 6. One side is co-operating, the other never answered across every
+            //    permitted round. Waiting longer cannot produce the missing party.
+            if (by !== awaitingParty) {
+                return {
+                    ...common,
+                    action: 'cancel',
+                    resolution: awaitingParty === 'driver'
+                        ? StaleResolution.DRIVER_UNRESPONSIVE
+                        : StaleResolution.PASSENGER_UNRESPONSIVE,
+                    explanation:
+                        `${situation}. The ${by} kept waiting, but the ${awaitingParty} never ` +
+                        `responded across ${config.maxExtensions + 1} rounds`,
+                };
+            }
+            return {
+                ...common,
+                action: 'cancel',
+                resolution: StaleResolution.NO_RESPONSE_FROM_EITHER,
+                explanation:
+                    `${situation}. Extensions exhausted with no resolution from either party`,
+            };
+        }
+
+        // 4. Window still open and nobody has answered. Wait for them.
+        if (!windowClosed) {
+            const secondsLeft = ride.staleDecisionDeadlineAt
+                ? Math.max(0, Math.round((ride.staleDecisionDeadlineAt.getTime() - now.getTime()) / 1000))
+                : 0;
+            return {
+                ...common,
+                action: 'none',
+                promptParties: bothParties,
+                decisionDeadlineAt: ride.staleDecisionDeadlineAt,
+                explanation:
+                    `${situation}. Both parties asked; ${secondsLeft}s left to respond`,
+            };
+        }
+
+        // 5. Window closed with silence from everyone. Nobody is engaged with this
+        //    ride, so holding the passenger's booking slot and the driver's
+        //    availability open helps no one.
+        return {
+            ...common,
+            action: 'cancel',
+            resolution: StaleResolution.NO_RESPONSE_FROM_EITHER,
+            explanation:
+                `${situation}. Both parties were asked and neither responded within ` +
+                `${config.decisionWindowMinutes}min`,
+        };
+    }
+
+    /** Whether a "keep waiting" choice may still be accepted for this ride. */
     static canExtend(ride: RideSnapshot, config: StaleRideConfig): boolean {
         if (ride.status !== 'accepted' && ride.status !== 'arrived') return false;
         if (ride.startedAt != null || ride.completedAt != null) return false;

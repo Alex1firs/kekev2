@@ -21,6 +21,7 @@ const CONFIG: StaleRideConfig = {
     inProgressDurationMultiplier: 4,
     inProgressMinMinutes: 120,
     inProgressAbsoluteMinutes: 360,
+    decisionWindowMinutes: 3,
     extensionMinutes: 10,
     maxExtensions: 1,
     warnAtDeadlineFraction: 0.6,
@@ -53,6 +54,19 @@ const ride = (over: Partial<RideSnapshot> = {}): RideSnapshot => ({
     staleExtensionCount: 0,
     staleDeadlineOverrideAt: null,
     requiresOperationsReview: false,
+    staleDecisionPromptedAt: null,
+    staleDecisionDeadlineAt: null,
+    staleDecisionBy: null,
+    staleDecisionChoice: null,
+    staleDecisionRound: 0,
+    ...over,
+});
+
+/** A ride whose decision prompt has been sent and whose window is still open. */
+const prompted = (over: Partial<RideSnapshot> = {}, promptedAtMin = 0) => ride({
+    staleDecisionPromptedAt: at(promptedAtMin),
+    staleDecisionDeadlineAt: at(promptedAtMin + CONFIG.decisionWindowMinutes),
+    staleDecisionRound: 1,
     ...over,
 });
 
@@ -71,8 +85,8 @@ describe('1. an accepted ride below its deadline is untouched', () => {
 });
 
 // 2 ────────────────────────────────────────────────────────────────────────
-describe('2. an accepted ride past its ETA-aware deadline is cancelled', () => {
-    it('cancels a far-accept ride once ETA x multiplier has elapsed', () => {
+describe('2. an accepted ride past its ETA-aware deadline PROMPTS, not cancels', () => {
+    it('prompts both parties once ETA x multiplier has elapsed', () => {
         // ~2.26 km => ~9.8 min ETA => deadline ~29.5 min.
         const r = ride({ acceptLat: ACCEPT_FAR.lat, acceptLng: ACCEPT_FAR.lng });
         const eta = StaleRideService.estimatedPickupEtaMinutes(r, CONFIG)!;
@@ -83,15 +97,32 @@ describe('2. an accepted ride past its ETA-aware deadline is cancelled', () => {
         expect(before.action).not.toBe('cancel');
 
         const after = StaleRideService.evaluate(r, CONFIG, at(eta * 3 + 1));
-        expect(after.action).toBe('cancel');
+        // The deadline no longer cancels — it starts a conversation.
+        expect(after.action).toBe('prompt_decision');
         expect(after.reason).toBe(StaleActionReason.DRIVER_DID_NOT_ARRIVE);
-        expect(after.explanation).toContain('never arrived');
+        expect(after.promptParties).toEqual(['passenger', 'driver']);
+        expect(after.explanation).toContain('nothing is cancelled yet');
     });
 
-    it('cancels the four-day case from the incident outright', () => {
+    it('asks about the four-day case rather than cancelling it silently', () => {
         const e = StaleRideService.evaluate(ride(), CONFIG, at(4 * 24 * 60));
-        expect(e.action).toBe('cancel');
+        expect(e.action).toBe('prompt_decision');
         expect(e.reason).toBe(StaleActionReason.DRIVER_DID_NOT_ARRIVE);
+        expect(e.resolution).toBeNull();
+    });
+
+    it('never reaches cancel without a prompt on record', () => {
+        // The invariant, stated as a property: no un-prompted ride, at any age,
+        // for any state, may evaluate to cancel.
+        for (const status of ['accepted', 'arrived']) {
+            for (const minutes of [21, 46, 200, 5000, 4 * 24 * 60]) {
+                const e = StaleRideService.evaluate(
+                    ride({ status, arrivedAt: status === 'arrived' ? T0 : null }),
+                    CONFIG, at(minutes),
+                );
+                expect(e.action).not.toBe('cancel');
+            }
+        }
     });
 });
 
@@ -105,8 +136,9 @@ describe('3. an accepted ride with no ETA uses the configured minimum', () => {
         expect(etaMinutes).toBeNull();
         expect(deadlineMinutes).toBe(CONFIG.acceptedMinMinutes);
 
-        expect(StaleRideService.evaluate(r, CONFIG, at(19)).action).not.toBe('cancel');
-        expect(StaleRideService.evaluate(r, CONFIG, at(21)).action).toBe('cancel');
+        // 19min is past the 60% warn point but inside the 20min deadline.
+        expect(StaleRideService.evaluate(r, CONFIG, at(19)).action).toBe('warn');
+        expect(StaleRideService.evaluate(r, CONFIG, at(21)).action).toBe('prompt_decision');
     });
 
     it('treats the 0,0 no-fix sentinel as no ETA', () => {
@@ -131,7 +163,7 @@ describe('4. the deadline respects the maximum cap', () => {
         expect(etaMinutes!).toBeGreaterThan(100);
         expect(deadlineMinutes).toBe(CONFIG.acceptedMaxMinutes);
 
-        expect(StaleRideService.evaluate(r, CONFIG, at(46)).action).toBe('cancel');
+        expect(StaleRideService.evaluate(r, CONFIG, at(46)).action).toBe('prompt_decision');
     });
 });
 
@@ -178,10 +210,11 @@ describe('11 & 12. arrived-but-not-started: warn, then cancel', () => {
         expect(e.action).toBe('none');
     });
 
-    it('cancels after the grace period', () => {
+    it('prompts both parties after the grace period', () => {
         const e = StaleRideService.evaluate(arrived(), CONFIG, at(21));
-        expect(e.action).toBe('cancel');
+        expect(e.action).toBe('prompt_decision');
         expect(e.reason).toBe(StaleActionReason.TRIP_NOT_STARTED_AFTER_ARRIVAL);
+        expect(e.promptParties).toEqual(['passenger', 'driver']);
     });
 
     it('never blames the passenger for a timer expiring', () => {
@@ -257,22 +290,26 @@ describe('staged warning for accepted rides', () => {
         expect(already.action).toBe('none');
     });
 
-    it('a warned ride is still cancelled when the deadline passes', () => {
+    it('a warned ride is prompted when the deadline passes', () => {
         const e = StaleRideService.evaluate(ride({ staleWarnedAt: at(13) }), CONFIG, at(25));
-        expect(e.action).toBe('cancel');
+        expect(e.action).toBe('prompt_decision');
     });
 });
 
 describe('bounded extensions', () => {
-    it('an extension defers the cancel', () => {
+    it('an extension defers the next prompt', () => {
         const extended = ride({
             staleExtensionCount: 1,
             staleDeadlineOverrideAt: at(35),
         });
-        // Past the 20 min base deadline, but inside the extension.
+        // Past the 20min base deadline but inside the extension: not terminal.
+        // (A warn may still fire if one was never sent for this round.)
         expect(StaleRideService.evaluate(extended, CONFIG, at(30)).action).not.toBe('cancel');
-        // Past the extension too.
-        expect(StaleRideService.evaluate(extended, CONFIG, at(36)).action).toBe('cancel');
+        expect(StaleRideService.evaluate(
+            extended, CONFIG, at(30),
+        ).action).not.toBe('prompt_decision');
+        // Past the extension: ask again, still not a silent cancel.
+        expect(StaleRideService.evaluate(extended, CONFIG, at(36)).action).toBe('prompt_decision');
     });
 
     it('an extension can never shorten a deadline', () => {
@@ -310,9 +347,11 @@ describe('states outside the policy', () => {
 });
 
 describe('configuration is honoured, not hardcoded', () => {
-    it('a shorter configured minimum changes the outcome', () => {
+    it('a shorter configured minimum brings the prompt forward', () => {
         const tight = { ...CONFIG, acceptedMinMinutes: 5, acceptedMaxMinutes: 5 };
-        expect(StaleRideService.evaluate(ride(), tight, at(6)).action).toBe('cancel');
+        expect(StaleRideService.evaluate(ride(), tight, at(6)).action).toBe('prompt_decision');
+        // And with the default config, 6 minutes is still far too early.
+        expect(StaleRideService.evaluate(ride(), CONFIG, at(6)).action).toBe('none');
     });
 
     it('the in-progress floor is configurable', () => {

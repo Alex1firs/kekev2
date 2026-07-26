@@ -177,6 +177,11 @@ export function staleClassOf(ride: Ride): StaleClass {
         staleExtensionCount: ride.staleExtensionCount ?? 0,
         staleDeadlineOverrideAt: ride.staleDeadlineOverrideAt ?? null,
         requiresOperationsReview: ride.requiresOperationsReview ?? false,
+        staleDecisionPromptedAt: ride.staleDecisionPromptedAt ?? null,
+        staleDecisionDeadlineAt: ride.staleDecisionDeadlineAt ?? null,
+        staleDecisionBy: ride.staleDecisionBy ?? null,
+        staleDecisionChoice: ride.staleDecisionChoice ?? null,
+        staleDecisionRound: ride.staleDecisionRound ?? 0,
     };
 
     const evaluation = StaleRideService.evaluate(snapshot, config, new Date());

@@ -22,7 +22,7 @@
  * Bump on every shell change. The old cache is deleted on activate, so a stale
  * build cannot outlive a deploy.
  */
-const VERSION = 'v5.0.0';
+const VERSION = 'v5.1.0';   // push handlers merged in
 const SHELL_CACHE = `kd-shell-${VERSION}`;
 
 const SHELL = [
@@ -37,6 +37,120 @@ const SHELL = [
     './icons/apple-touch-icon-180.png',
     './offline.html',
 ];
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * Push
+ *
+ * These live HERE, in the app-shell worker, rather than in a second worker.
+ *
+ * A page can only have ONE service worker per scope. Registering
+ * firebase-messaging-sw.js at the same scope as this file silently REPLACED
+ * it — so the app got background push and lost offline start-up, or the other
+ * way round depending on which registered last. One worker cannot conflict
+ * with itself.
+ *
+ * Firebase's getToken() accepts any registration, so the page passes this one.
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+self.addEventListener('push', (event) => {
+    let payload = {};
+    try {
+        payload = event.data ? event.data.json() : {};
+    } catch {
+        payload = { notification: { title: 'KekeRide', body: 'You have a new request.' } };
+    }
+
+    const n = payload.notification || {};
+    const d = payload.data || {};
+
+    const title = n.title || 'New KekeRide request';
+    const options = {
+        body: n.body || 'Open Park Dispatch to assign a driver.',
+        icon: '/dispatch/icons/icon-192.png',
+        badge: '/dispatch/icons/icon-192.png',
+        /*
+         * One notification per job. A reminder REPLACES the first rather than
+         * stacking a second on the lock screen, and `renotify` makes the
+         * replacement alert again — which is the entire point of a reminder.
+         */
+        tag: d.jobId ? `park-job-${d.jobId}` : 'park-dispatch',
+        renotify: true,
+        /*
+         * Stays until the dispatcher deals with it. A request that vanishes off
+         * the lock screen after four seconds is a request nobody answers.
+         */
+        requireInteraction: true,
+        vibrate: [200, 100, 200, 100, 200],
+        data: {
+            jobId: d.jobId || null,
+            rideId: d.rideId || null,
+            parkId: d.parkId || null,
+            reason: d.reason || 'new_request',
+            url: `/dispatch/index.html${d.jobId ? `?job=${encodeURIComponent(d.jobId)}` : ''}`,
+        },
+        actions: [
+            { action: 'open', title: 'Open Park Dispatch' },
+        ],
+    };
+
+    event.waitUntil((async () => {
+        await self.registration.showNotification(title, options);
+
+        /*
+         * Tell the server the worker actually ran.
+         *
+         * This is the difference between "Google accepted it" and "the device
+         * received it" — the strongest evidence available without a human. Best
+         * effort: a failed acknowledgement must never stop the notification.
+         */
+        try {
+            await fetch('/api/v1/dispatcher/push/ack', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({
+                    state: 'service_worker_received',
+                    jobId: d.jobId || null,
+                    // The worker has no session token; the page attaches one on
+                    // its own ack. This call is a best-effort signal and the
+                    // server treats an unauthenticated one as unknown.
+                }),
+            });
+        } catch { /* the alert matters more than the evidence */ }
+
+        // If a window is open, let it react immediately too.
+        const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+        for (const c of clients) {
+            c.postMessage({ type: 'KD_PUSH_RECEIVED', jobId: d.jobId || null, reason: d.reason || 'new_request' });
+        }
+    })());
+});
+
+/**
+ * A tap.
+ *
+ * Focuses an existing window rather than opening a second one — a dispatcher
+ * with three copies of the board open is a dispatcher acting on the wrong one.
+ * The job id travels as a hint only; the app re-reads authoritative state on
+ * arrival and never assigns from what the notification said.
+ */
+self.addEventListener('notificationclick', (event) => {
+    const data = (event.notification && event.notification.data) || {};
+    event.notification.close();
+
+    event.waitUntil((async () => {
+        const url = data.url || '/dispatch/index.html';
+        const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+
+        for (const c of clients) {
+            if (c.url.includes('/dispatch/')) {
+                c.postMessage({ type: 'KD_NOTIFICATION_OPENED', jobId: data.jobId || null });
+                return c.focus();
+            }
+        }
+        return self.clients.openWindow(url);
+    })());
+});
 
 self.addEventListener('install', (event) => {
     event.waitUntil((async () => {

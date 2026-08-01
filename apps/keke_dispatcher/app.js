@@ -569,10 +569,19 @@ async function setUpPush({ interactive = false } = {}) {
         }
     }
 
-    // 3. The messaging service worker, separate from the app-shell worker.
+    /*
+     * 3. The service worker — the SAME one that caches the app shell.
+     *
+     * A page has one service worker per scope. Registering a second one for
+     * messaging at the same scope silently replaced the first, so the app
+     * ended up with either offline start-up or background push but never
+     * both. sw.js now handles push itself, and Firebase is handed that
+     * registration.
+     */
     let swReg;
     try {
-        swReg = await navigator.serviceWorker.register('./firebase-messaging-sw.js', { scope: './' });
+        swReg = await navigator.serviceWorker.getRegistration('./')
+            || await navigator.serviceWorker.register('./sw.js', { scope: './' });
         await navigator.serviceWorker.ready;
     } catch (err) {
         PUSH.error = `Could not start the alert service: ${err.message}`;

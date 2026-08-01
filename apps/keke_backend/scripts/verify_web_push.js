@@ -119,12 +119,13 @@ async function main() {
 
     // ── 3. the messaging service worker ──────────────────────────────────
     const swState = await js(`(async () => {
-        const reg = await navigator.serviceWorker.register('./firebase-messaging-sw.js', { scope: './' });
+        // The app-shell worker handles push too — one worker per scope.
+        const reg = await navigator.serviceWorker.register('./sw.js', { scope: './' });
         await navigator.serviceWorker.ready;
         return reg.active ? 'active' : (reg.installing ? 'installing' : 'waiting');
     })()`);
-    if (swState === 'active') ok('messaging service worker registered and active');
-    else bad('messaging service worker', String(swState));
+    if (swState === 'active') ok('service worker registered and active (handles shell + push)');
+    else bad('service worker', String(swState));
 
     // ── 4. an FCM token, using the VAPID key ─────────────────────────────
     const tokenResult = await js(`(async () => {
@@ -142,12 +143,21 @@ async function main() {
         if (!firebase.apps.length) firebase.initializeApp(cfg.config);
 
         const reg = await navigator.serviceWorker.getRegistration('./');
-        const messaging = firebase.messaging();
-        const token = await messaging.getToken({
-            vapidKey: cfg.config.vapidPublicKey,
-            serviceWorkerRegistration: reg,
-        });
-        return token ? 'TOKEN:' + token : 'no token returned';
+        if (!reg) return 'no service worker registration found';
+
+        try {
+            const messaging = firebase.messaging();
+            const token = await messaging.getToken({
+                vapidKey: cfg.config.vapidPublicKey,
+                serviceWorkerRegistration: reg,
+            });
+            return token ? 'TOKEN:' + token : 'getToken resolved with no token';
+        } catch (err) {
+            // Report the real reason. "Failed to fetch" and an unsupported
+            // browser look identical from the outside otherwise.
+            return 'ERROR: ' + (err && (err.code || err.name) ? (err.code || err.name) + ' — ' : '')
+                + (err && err.message ? err.message : String(err));
+        }
     })()`);
 
     let fcmToken = null;

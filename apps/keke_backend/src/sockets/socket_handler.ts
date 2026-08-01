@@ -33,6 +33,7 @@ import { SosAlert, SosAlertStatus } from '../models/SosAlert';
 import { toLocalDialable } from '../utils/phone';
 import { ContactAccessService } from '../services/contact_access_service';
 import { ParkDispatchService } from '../services/park_dispatch_service';
+import { StaffAuthService } from '../services/staff_auth_service';
 import {
     RideIntegrityConfig,
     getDriverLiveLocation,
@@ -305,6 +306,7 @@ export class SocketHandler {
                 });
                 return result.ok ? { ok: true } : { ok: false, code: result.code, message: result.message };
             },
+            offerRideToDriver: (rideId, driverId, timeoutMs) => this.offerParkRideToDriver(rideId, driverId, timeoutMs),
             emitToRide: (rideId, event, payload) => { this.io.to(`ride:${rideId}`).emit(event, payload); },
             emitToPark: (parkId, event, payload) => { this.io.to(`park:${parkId}`).emit(event, payload); },
             emitToAdmin: (event, payload) => { this.io.to('admin').emit(event, payload); },
@@ -331,10 +333,27 @@ export class SocketHandler {
             if (!token) return next(new Error('Authentication required'));
             try {
                 const decoded = jwt.verify(token, JWT_SECRET) as any;
+                // A staff token must never authenticate as a customer. Staff
+                // tokens are signed with a different secret so one normally
+                // fails the verify above; this covers a deployment misconfigured
+                // to share one secret, matching the guard in auth_middleware.
+                if (decoded?.typ === 'staff' || decoded?.aud === 'keke-staff') {
+                    return next(new Error('Invalid or expired token'));
+                }
                 (socket as any).user = decoded;
-                next();
+                return next();
             } catch {
-                next(new Error('Invalid or expired token'));
+                // Not a customer token. It may be a dispatcher device presenting
+                // a STAFF token, which is signed with a different secret and
+                // resolved against the database (status, credential version,
+                // session) exactly as an HTTP request is.
+                void StaffAuthService.identify(token)
+                    .then((identity) => {
+                        if (!identity) return next(new Error('Invalid or expired token'));
+                        (socket as any).staff = identity;
+                        return next();
+                    })
+                    .catch(() => next(new Error('Invalid or expired token')));
             }
         });
 
@@ -379,11 +398,30 @@ export class SocketHandler {
                     }
                 }
 
-                // `park` joins a park room so a dispatcher device receives
-                // offers, cancellations and expiries live. Read-only: joining a
-                // room grants no authority — every dispatcher ACTION is
-                // authorised independently by staff auth, park scope and an
-                // open shift.
+                // A PARK room carries live ride requests — pickup, destination,
+                // passenger first name. Joining one is therefore authorised, not
+                // merely namespaced: the socket must hold a STAFF identity that
+                // is park-scoped to this park.
+                //
+                // Without this check any authenticated customer could join
+                // `park:<uuid>` and watch every request a park receives.
+                if (data.role === 'park') {
+                    const staff = (socket as any).staff as { staffUserId: string } | undefined;
+                    if (!staff) {
+                        socket.emit('ride:error', { code: 'FORBIDDEN', message: 'Staff session required.' });
+                        return;
+                    }
+                    const { staffMayActAtPark } = await import('../middleware/park_scope');
+                    if (!(await staffMayActAtPark(staff.staffUserId, data.userId))) {
+                        log.warn(`[SOCKET_BLOCK] ${staff.staffUserId} tried to join park ${data.userId} without scope`);
+                        socket.emit('ride:error', { code: 'FORBIDDEN', message: 'You are not assigned to this park.' });
+                        return;
+                    }
+                    socket.join(`park:${data.userId}`);
+                    log.info(`park:${data.userId} joined by staff ${staff.staffUserId}`);
+                    return;
+                }
+
                 const room = data.role === 'ride' ? `ride:${data.userId}` : `${data.role}:${data.userId}`;
                 socket.join(room);
                 if (data.role === 'admin') socket.join('admin');
@@ -741,10 +779,19 @@ export class SocketHandler {
                 const data = validate(Schemas.rideAccept, raw, socket);
                 if (!data) return;
                 try {
+                    // A driver accepting a PARK offer taps this same button. If
+                    // a pending park assignment exists for this ride and driver,
+                    // the acceptance is recorded as park-sourced — same button,
+                    // same flow, correct provenance.
+                    const parkContext = await ParkDispatchService.pendingContextFor(data.rideId, data.driverId);
+
                     const result = await this.assignDriverToRide({
                         rideId: data.rideId,
                         driverId: data.driverId,
-                        source: 'direct',
+                        source: parkContext ? 'park' : 'direct',
+                        parkId: parkContext?.parkId ?? null,
+                        parkJobId: parkContext?.jobId ?? null,
+                        assignmentMode: parkContext ? 'electronic' : undefined,
                     });
 
                     if (!result.ok) {
@@ -767,6 +814,12 @@ export class SocketHandler {
                     }
 
                     socket.emit('ride:confirmed', { rideId: data.rideId });
+
+                    if (parkContext) {
+                        // The ride row is already flipped; this closes the job
+                        // and tells the dispatcher their driver said yes.
+                        void ParkDispatchService.completePendingAssignment(data.rideId, data.driverId);
+                    }
                 } catch (err) {
                     log.error('ride:accept failed:', err);
                     socket.emit('ride:error', { code: 'INTERNAL_ERROR', message: 'Could not accept the ride right now. Please try again.' });
@@ -1296,6 +1349,10 @@ export class SocketHandler {
                 const data = validate(Schemas.rideDriverAction, raw, socket);
                 if (!data) return;
                 this.rideExclusions.get(data.rideId)?.add(data.driverId);
+                // A decline on a PARK offer hands the request straight back to
+                // the dispatcher, who picks somebody else. The passenger is
+                // never told — from their side the search simply continues.
+                void ParkDispatchService.handleDriverDecline(data.rideId, data.driverId, 'driver_declined');
                 // Feed the evidence ledger: an explicit "no" is distinct from an
                 // offer that simply expired, and excludes this driver from round two.
                 const rejectRun = this.dispatchRuns.get(data.rideId);
@@ -2064,6 +2121,86 @@ export class SocketHandler {
         }
 
         return { ok: true, ride: currentRide, driverDetails };
+    }
+
+    /**
+     * Put a park assignment on a smartphone driver's device.
+     *
+     * Deliberately reuses `ride:request` — the SAME event the driver app has
+     * always rendered for direct dispatch, with the same card, countdown, ring
+     * and Accept/Decline buttons. A park offer therefore needs no driver app
+     * change at all, and a driver does not have to learn a second way of being
+     * offered work.
+     *
+     * Returns whether any transport carried it. A driver whose phone is
+     * unreachable is handed straight back to the dispatcher rather than having
+     * the window burned on an offer nobody will see.
+     */
+    private async offerParkRideToDriver(rideId: string, driverId: string, timeoutMs: number): Promise<boolean> {
+        try {
+            const ride = await AppDataSource.getRepository(Ride).findOne({ where: { rideId } });
+            if (!ride) return false;
+
+            const payload = {
+                rideId,
+                passengerId: ride.passengerId,
+                fare: Number(ride.fare),
+                isCash: ride.paymentMode === 'cash',
+                pickupLat: ride.pickupLat != null ? Number(ride.pickupLat) : null,
+                pickupLng: ride.pickupLng != null ? Number(ride.pickupLng) : null,
+                destinationLat: ride.destinationLat != null ? Number(ride.destinationLat) : null,
+                destinationLng: ride.destinationLng != null ? Number(ride.destinationLng) : null,
+                pickupAddress: ride.pickupAddress ?? null,
+                destinationAddress: ride.destinationAddress ?? null,
+                pickupCode: ride.pickupCode ?? null,
+                estimatedDistanceM: ride.estimatedDistanceM ?? null,
+                estimatedDurationSec: ride.estimatedDurationSec ?? null,
+                // Additive. Newer builds can label the card "from your park";
+                // older ones ignore it and show an ordinary request.
+                dispatchSource: 'park',
+                offerTimeoutMs: timeoutMs,
+                // Contact shaping goes through the same privacy layer as a
+                // direct offer — a park offer must not become a way around it.
+                ...(await this.offerContactFor(driverId, ride.passengerId)),
+            };
+
+            let socketDelivered = false;
+            try {
+                const sockets = await this.io.in(`driver:${driverId}`).fetchSockets();
+                socketDelivered = sockets.length > 0;
+            } catch {
+                /* presence check failure is not delivery failure */
+            }
+            this.io.to(`driver:${driverId}`).emit('ride:request', payload);
+
+            let pushSuccessCount = 0;
+            try {
+                const push = await NotificationService.sendToUser(
+                    driverId,
+                    UserRole.DRIVER,
+                    'Ride From Your Park',
+                    'The dispatcher has a ride for you — tap to accept.',
+                    { type: 'NEW_REQUEST', rideId, intent: 'booking', dispatchSource: 'park' },
+                );
+                pushSuccessCount = push.successCount;
+            } catch {
+                /* the socket may still have carried it */
+            }
+
+            const delivered = socketDelivered || pushSuccessCount > 0;
+            rlog('park_offer_delivery', { rideId, driverId, socketDelivered, pushSuccessCount, delivered });
+            DispatchMonitorService.record({
+                rideId,
+                eventType: DispatchEventType.PARK_DRIVER_OFFERED,
+                driverId,
+                detail: { socketDelivered, pushSuccessCount, timeoutMs },
+                withFreshness: true,
+            });
+            return delivered;
+        } catch (err: any) {
+            log.error(`[PARK_OFFER] delivery failed for ${rideId}/${driverId}: ${err?.message}`);
+            return false;
+        }
     }
 
     /**

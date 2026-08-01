@@ -11,8 +11,17 @@ import { In, LessThan, Repository } from 'typeorm';
 import { AppDataSource } from '../config/data_source';
 import { ParkDispatchJob, ParkJobStatus, ParkAssignmentMode } from '../models/ParkDispatchJob';
 
-/** Statuses in which a job is still somebody's problem. */
-export const LIVE_JOB_STATUSES = [ParkJobStatus.OFFERED, ParkJobStatus.CLAIMED];
+/**
+ * Statuses in which a job is still somebody's problem.
+ *
+ * PENDING_ACCEPTANCE counts as live: a driver holding an unanswered offer means
+ * the ride is still in this park's hands, and it must not be offered elsewhere.
+ */
+export const LIVE_JOB_STATUSES = [
+    ParkJobStatus.OFFERED,
+    ParkJobStatus.CLAIMED,
+    ParkJobStatus.PENDING_ACCEPTANCE,
+];
 
 export interface JobListQuery {
     parkId?: string;
@@ -91,8 +100,9 @@ export class ParkDispatchJobRepository {
      * succeeded, so this records what happened rather than arbitrating it. The
      * ride row remains the single arbiter of who owns a ride.
      */
-    static async markAssignedIfClaimed(
+    static async markAssignedFromStatuses(
         jobId: string,
+        fromStatuses: ParkJobStatus[],
         patch: {
             assignedDriverId: string;
             assignedByStaffId: string;
@@ -105,7 +115,7 @@ export class ParkDispatchJobRepository {
         const result = await this.repo.createQueryBuilder()
             .update()
             .set({ status: ParkJobStatus.ASSIGNED, resolvedAt: patch.assignedAt, ...patch })
-            .where('"jobId" = :jobId AND status = :expected', { jobId, expected: ParkJobStatus.CLAIMED })
+            .where('"jobId" = :jobId AND status IN (:...from)', { jobId, from: fromStatuses })
             .execute();
         return (result.affected ?? 0) > 0;
     }
@@ -138,6 +148,71 @@ export class ParkDispatchJobRepository {
             .where('"rideId" = :rideId AND status IN (:...live)', { rideId, live: LIVE_JOB_STATUSES })
             .execute();
         return result.affected ?? 0;
+    }
+
+    /**
+     * Offer a specific driver the ride, only if the job is still CLAIMED.
+     *
+     * Conditional so two dispatchers cannot put two drivers on one ride, and so
+     * a claim that expired between the dispatcher's tap and this write does not
+     * silently resurrect.
+     */
+    static async offerToDriverIfClaimed(
+        jobId: string,
+        patch: { pendingDriverId: string; pendingSince: Date; pendingExpiresAt: Date },
+    ): Promise<boolean> {
+        const result = await this.repo.createQueryBuilder()
+            .update()
+            .set({ status: ParkJobStatus.PENDING_ACCEPTANCE, ...patch })
+            .where('"jobId" = :jobId AND status = :expected', { jobId, expected: ParkJobStatus.CLAIMED })
+            .execute();
+        return (result.affected ?? 0) > 0;
+    }
+
+    /**
+     * Return a job to the dispatcher after a decline or a timeout.
+     *
+     * Conditional on the job still being PENDING for THIS driver: a decline
+     * arriving after the sweep already timed the offer out must not clobber a
+     * fresh offer the dispatcher has since made to somebody else.
+     */
+    static async returnToClaimedIfPending(
+        jobId: string,
+        driverId: string,
+        declinedDriverIds: string[],
+    ): Promise<boolean> {
+        const result = await this.repo.createQueryBuilder()
+            .update()
+            .set({
+                status: ParkJobStatus.CLAIMED,
+                pendingDriverId: null,
+                pendingSince: null,
+                pendingExpiresAt: null,
+                declineCount: () => '"declineCount" + 1',
+                declinedDriverIds,
+            })
+            .where('"jobId" = :jobId AND status = :expected AND "pendingDriverId" = :driverId', {
+                jobId, expected: ParkJobStatus.PENDING_ACCEPTANCE, driverId,
+            })
+            .execute();
+        return (result.affected ?? 0) > 0;
+    }
+
+    /** The job a driver currently holds an unanswered offer for, if any. */
+    static findPendingForDriver(rideId: string, driverId: string): Promise<ParkDispatchJob | null> {
+        return this.repo.findOne({
+            where: { rideId, pendingDriverId: driverId, status: ParkJobStatus.PENDING_ACCEPTANCE },
+        });
+    }
+
+    /** Pending offers whose window has closed. */
+    static findExpiredPending(now: Date, limit = 100): Promise<ParkDispatchJob[]> {
+        return this.repo.createQueryBuilder('j')
+            .where('j.status = :pending', { pending: ParkJobStatus.PENDING_ACCEPTANCE })
+            .andWhere('j."pendingExpiresAt" < :now', { now })
+            .orderBy('j."pendingExpiresAt"', 'ASC')
+            .take(limit)
+            .getMany();
     }
 
     /**

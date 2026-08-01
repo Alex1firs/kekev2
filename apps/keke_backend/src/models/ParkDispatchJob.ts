@@ -15,6 +15,20 @@ export enum ParkJobStatus {
     OFFERED = "offered",
     /** A dispatcher accepted responsibility for sourcing a driver. */
     CLAIMED = "claimed",
+    /**
+     * A specific SMARTPHONE driver has been offered the ride and has a short
+     * window to accept or decline.
+     *
+     * The ride is still `searching` here. A dispatcher choosing a driver is not
+     * the same as a driver agreeing to go, and treating it as such is how rides
+     * get stuck on somebody who put their phone in a pocket. A decline or a
+     * timeout returns the job to CLAIMED so the dispatcher picks somebody else.
+     *
+     * Feature-phone assignments never enter this state: the dispatcher has
+     * already heard the driver agree out loud before pressing Assign, so the
+     * confirmation has happened — just not electronically.
+     */
+    PENDING_ACCEPTANCE = "pending_acceptance",
     /** A driver was assigned; the ride is now `accepted` and belongs to them. */
     ASSIGNED = "assigned",
     /** The dispatcher has no driver for this one. Moves on immediately. */
@@ -130,6 +144,34 @@ export class ParkDispatchJob {
 
     @Column({ type: "enum", enum: ParkAssignmentMode, nullable: true })
     assignmentMode!: ParkAssignmentMode | null;
+
+    // ── pending driver acceptance (smartphone only) ─────────────────────
+
+    /** The driver currently holding an unanswered offer. */
+    @Index()
+    @Column({ type: "varchar", nullable: true })
+    pendingDriverId!: string | null;
+
+    @Column({ type: "timestamp", nullable: true })
+    pendingSince!: Date | null;
+
+    /** When the driver's window closes. The dispatcher's screen counts down to this. */
+    @Column({ type: "timestamp", nullable: true })
+    pendingExpiresAt!: Date | null;
+
+    /** How many drivers have declined or timed out on this job. */
+    @Column({ type: "int", default: 0 })
+    declineCount!: number;
+
+    /**
+     * Drivers who already said no, or let the offer lapse.
+     *
+     * Kept so the recommendation ranking stops suggesting somebody who has
+     * already refused this exact ride — the fastest way to make a dispatcher
+     * distrust a recommendation is to have it repeat itself.
+     */
+    @Column({ type: "jsonb", nullable: true })
+    declinedDriverIds!: string[] | null;
 
     // ── resolution ──────────────────────────────────────────────────────
 

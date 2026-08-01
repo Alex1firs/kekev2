@@ -113,6 +113,12 @@ export enum DispatchEventType {
     PARK_JOB_EXPIRED = "park_job_expired",
     /** No park could take the ride. It fails, exactly as it would have before. */
     PARK_DISPATCH_EXHAUSTED = "park_dispatch_exhausted",
+    /** A smartphone driver was offered a park assignment and must answer. */
+    PARK_DRIVER_OFFERED = "park_driver_offered",
+    /** The offered driver accepted. The ride is now theirs. */
+    PARK_DRIVER_ACCEPTED = "park_driver_accepted",
+    /** The offered driver declined, or let the window close. Back to the queue. */
+    PARK_DRIVER_DECLINED = "park_driver_declined",
 }
 
 /**

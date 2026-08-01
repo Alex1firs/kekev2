@@ -66,11 +66,20 @@ export class ParkJobSweeper {
             lockHeld = rows?.[0]?.locked === true;
             if (!lockHeld) return 0;
 
-            const expired = await ParkDispatchService.sweepExpired(new Date());
-            if (expired > 0) {
-                console.log(JSON.stringify({ level: 'info', event: 'park_jobs_expired', count: expired }));
+            const now = new Date();
+            // Pending driver offers first: a driver who never answered should
+            // be handed back to the dispatcher before the job's own assignment
+            // window is judged, or a slow driver would cost the dispatcher the
+            // whole window rather than just their share of it.
+            const declined = await ParkDispatchService.sweepPendingOffers(now);
+            const expired = await ParkDispatchService.sweepExpired(now);
+            if (declined > 0 || expired > 0) {
+                console.log(JSON.stringify({
+                    level: 'info', event: 'park_jobs_swept',
+                    pendingReturned: declined, jobsExpired: expired,
+                }));
             }
-            return expired;
+            return declined + expired;
         } catch (err: any) {
             // A sweep failure must never take the process down; the next tick
             // sees the same expired jobs and tries again.

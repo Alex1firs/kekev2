@@ -79,6 +79,18 @@ export interface ParkDispatchConfig {
     requireWaitingDriver: boolean;
 
     /**
+     * How long a SMARTPHONE driver has to accept a park assignment.
+     *
+     * Matches the direct-dispatch offer window (15s) because it is the same
+     * card, the same countdown and the same muscle memory — a driver should not
+     * have to learn that park offers behave differently.
+     *
+     * Feature-phone assignments do not use this: the dispatcher heard the driver
+     * agree before pressing Assign.
+     */
+    driverAcceptWindowMs: number;
+
+    /**
      * Emit a `ride:dispatch_round` event when the park phase opens.
      *
      * The passenger app has a 150-second client-side watchdog that re-arms on
@@ -100,6 +112,7 @@ export function loadParkDispatchConfig(): ParkDispatchConfig {
         metresPerMinute: num('KEKE_METRES_PER_MINUTE', 230),
         maxTravelMinutes: num('PARK_MAX_TRAVEL_MINUTES', 12),
         requireWaitingDriver: bool('PARK_REQUIRE_WAITING_DRIVER', true),
+        driverAcceptWindowMs: num('PARK_DRIVER_ACCEPT_WINDOW_MS', 18_000),
         emitRoundEvent: bool('PARK_EMIT_ROUND_EVENT', true),
     };
 }

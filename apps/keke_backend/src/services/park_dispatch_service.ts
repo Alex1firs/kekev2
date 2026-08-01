@@ -44,6 +44,8 @@ import { AuditService, AuditActor } from './audit_service';
 import { loadParkDispatchConfig, computeJobPriority, PRIORITY_LABEL } from '../config/park_dispatch_config';
 import { AppError, ErrorCode } from '../utils/errors';
 import { maskPhoneNumber } from './contact_access_service';
+import { DriverPresenceService } from './driver_presence_service';
+import { DriverPresenceState, PresenceSource } from '../models/DriverPresence';
 
 export const ParkDispatchAuditAction = {
     PARK_JOB_CLAIMED: 'PARK_JOB_CLAIMED',
@@ -51,6 +53,7 @@ export const ParkDispatchAuditAction = {
     PARK_JOB_SKIPPED: 'PARK_JOB_SKIPPED',
     PARK_JOB_REJECTED: 'PARK_JOB_REJECTED',
     PARK_JOB_ESCALATED: 'PARK_JOB_ESCALATED',
+    PARK_DRIVER_OFFERED: 'PARK_DRIVER_OFFERED',
 } as const;
 
 /**
@@ -70,10 +73,36 @@ export interface ParkDispatchHost {
         assignmentMode: 'electronic' | 'verbal';
         assignedByStaffId: string;
     }): Promise<{ ok: true } | { ok: false; code: string; message: string }>;
+    /**
+     * Put an offer on a smartphone driver's device.
+     *
+     * Deliberately reuses the EXISTING `ride:request` offer machinery — the same
+     * card, countdown, sound and Accept/Decline buttons the driver app has
+     * always shown for direct dispatch. A park-assigned offer therefore needs no
+     * driver app change at all, which is what makes this shippable.
+     */
+    offerRideToDriver(rideId: string, driverId: string, timeoutMs: number): Promise<boolean>;
     emitToRide(rideId: string, event: string, payload: Record<string, unknown>): void;
     emitToPark(parkId: string, event: string, payload: Record<string, unknown>): void;
     emitToAdmin(event: string, payload: Record<string, unknown>): void;
     notifyPassenger(passengerId: string, title: string, body: string, data: Record<string, unknown>): void;
+}
+
+/**
+ * What happened when a dispatcher pressed Assign.
+ *
+ * `pending: true` means a smartphone driver has been offered the ride and has
+ * until `expiresAt` to answer — the dispatcher's screen counts down and must
+ * not claim the job is done. `pending: false` means the ride is already the
+ * driver's, which is the feature-phone case.
+ */
+export interface ParkAssignmentResult {
+    jobId: string;
+    rideId: string;
+    driverId: string;
+    assignmentMode: ParkAssignmentMode;
+    pending: boolean;
+    expiresAt?: Date;
 }
 
 /** One card in the dispatcher's queue. */
@@ -387,7 +416,7 @@ export class ParkDispatchService {
         driverId: string,
         mode: ParkAssignmentMode,
         ctx: { ipAddress?: string | null; correlationId?: string | null } = {},
-    ): Promise<{ jobId: string; rideId: string; driverId: string; assignmentMode: ParkAssignmentMode }> {
+    ): Promise<ParkAssignmentResult> {
         const job = await this.requireJob(jobId);
         await this.requireOpenShiftAtPark(actor.staffUserId, job.parkId);
 
@@ -426,6 +455,83 @@ export class ParkDispatchService {
                     : 'This driver has no recorded presence at the park.');
         }
 
+        // ── SMARTPHONE: offer and wait ──────────────────────────────────
+        // A dispatcher choosing a driver is not the same as a driver agreeing
+        // to go. The driver gets the ordinary offer card and a short window;
+        // the ride stays `searching` until they accept. A decline or a timeout
+        // returns the job to this dispatcher rather than stranding the
+        // passenger on somebody who pocketed their phone.
+        if (mode === ParkAssignmentMode.ELECTRONIC) {
+            const config = loadParkDispatchConfig();
+            const now = new Date();
+            const offered = await ParkDispatchJobRepository.offerToDriverIfClaimed(jobId, {
+                pendingDriverId: driverId,
+                pendingSince: now,
+                pendingExpiresAt: new Date(now.getTime() + config.driverAcceptWindowMs),
+            });
+            if (!offered) {
+                throw new AppError(409, ErrorCode.VALIDATION_ERROR, 'This request moved on. Refresh and try again.');
+            }
+
+            const delivered = await this.requireHost().offerRideToDriver(job.rideId, driverId, config.driverAcceptWindowMs);
+            if (!delivered) {
+                // Nothing reached the handset. Hand it straight back rather than
+                // burning the window on an offer nobody will ever see.
+                await this.returnPendingToQueue(jobId, driverId, 'offer_not_delivered');
+                throw new AppError(409, ErrorCode.VALIDATION_ERROR,
+                    'That driver\'s phone could not be reached. Try another driver, or assign verbally.');
+            }
+
+            await AuditService.record({
+                actor,
+                action: ParkDispatchAuditAction.PARK_DRIVER_OFFERED,
+                resourceType: 'PARK_DISPATCH_JOB',
+                resourceId: jobId,
+                parkId: job.parkId,
+                rideId: job.rideId,
+                driverId,
+                metadata: { windowMs: config.driverAcceptWindowMs },
+                ...ctx,
+            });
+
+            const host = this.requireHost();
+            host.emitToPark(job.parkId, 'park:job_pending_driver', {
+                jobId, rideId: job.rideId, driverId,
+                expiresAt: new Date(now.getTime() + config.driverAcceptWindowMs),
+            });
+
+            return {
+                jobId,
+                rideId: job.rideId,
+                driverId,
+                assignmentMode: mode,
+                pending: true,
+                expiresAt: new Date(now.getTime() + config.driverAcceptWindowMs),
+            };
+        }
+
+        // ── FEATURE PHONE: the confirmation already happened ─────────────
+        // The dispatcher read the trip out and heard the driver agree before
+        // pressing Assign. There is no device to wait on, so waiting would be
+        // theatre — and would leave the passenger waiting for nothing.
+        return this.finaliseAssignment(actor, job, driverId, mode, ctx);
+    }
+
+    /**
+     * Turn a pending offer, or a verbal agreement, into a real assignment.
+     *
+     * The single funnel into the host's assignment method. Both the
+     * feature-phone path and the driver-accepted path land here, so the ride
+     * ends up in exactly the same state either way.
+     */
+    private static async finaliseAssignment(
+        actor: AuditActor,
+        job: ParkDispatchJob,
+        driverId: string,
+        mode: ParkAssignmentMode,
+        ctx: { ipAddress?: string | null; correlationId?: string | null } = {},
+    ): Promise<ParkAssignmentResult> {
+        const jobId = job.jobId;
         // Hand to the ONE assignment path. This is the same method a direct
         // acceptance goes through, so from here the ride is indistinguishable
         // from one a smartphone driver accepted themselves.
@@ -452,7 +558,9 @@ export class ParkDispatchService {
 
         const ride = await AppDataSource.getRepository(Ride).findOne({ where: { rideId: job.rideId } });
         const now = new Date();
-        await ParkDispatchJobRepository.markAssignedIfClaimed(jobId, {
+        await ParkDispatchJobRepository.markAssignedFromStatuses(jobId, [
+            ParkJobStatus.CLAIMED, ParkJobStatus.PENDING_ACCEPTANCE,
+        ], {
             assignedDriverId: driverId,
             assignedByStaffId: actor.staffUserId,
             assignmentMode: mode,
@@ -469,7 +577,7 @@ export class ParkDispatchService {
             parkId: job.parkId,
             rideId: job.rideId,
             driverId,
-            metadata: { assignmentMode: mode, attemptNumber: job.attemptNumber },
+            metadata: { assignmentMode: mode, attemptNumber: job.attemptNumber, declineCount: job.declineCount },
             ...ctx,
         });
 
@@ -481,10 +589,162 @@ export class ParkDispatchService {
         }
 
         const host = this.requireHost();
-        host.emitToPark(job.parkId, 'park:job_assigned', { jobId, rideId: job.rideId, driverId });
+        host.emitToPark(job.parkId, 'park:job_assigned', { jobId, rideId: job.rideId, driverId, assignmentMode: mode });
         host.emitToAdmin('park:job_assigned', { jobId, rideId: job.rideId, parkId: job.parkId, driverId });
 
-        return { jobId, rideId: job.rideId, driverId, assignmentMode: mode };
+        return { jobId, rideId: job.rideId, driverId, assignmentMode: mode, pending: false };
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  Driver responses to a pending offer
+    // ═══════════════════════════════════════════════════════════════════
+
+    /**
+     * A smartphone driver accepted a park offer.
+     *
+     * Called from the `ride:accept` handler when a pending park assignment
+     * exists for this ride and driver — so the driver taps the same Accept
+     * button they always have, and the ride is recorded as park-sourced rather
+     * than direct.
+     *
+     * Returns the park context the assignment path needs, or null when there is
+     * no pending offer (an ordinary direct acceptance).
+     */
+    static async pendingContextFor(rideId: string, driverId: string): Promise<{
+        jobId: string; parkId: string; assignmentMode: ParkAssignmentMode;
+    } | null> {
+        try {
+            const job = await ParkDispatchJobRepository.findPendingForDriver(rideId, driverId);
+            if (!job) return null;
+            return { jobId: job.jobId, parkId: job.parkId, assignmentMode: ParkAssignmentMode.ELECTRONIC };
+        } catch {
+            // A lookup failure must never block a driver from accepting a ride.
+            return null;
+        }
+    }
+
+    /**
+     * Record that a pending offer became a real assignment.
+     *
+     * The ride row has ALREADY been flipped by the assignment path at this
+     * point; this closes the job's books and tells the dispatcher.
+     */
+    static async completePendingAssignment(rideId: string, driverId: string): Promise<void> {
+        try {
+            const job = await ParkDispatchJobRepository.findPendingForDriver(rideId, driverId);
+            if (!job) return;
+
+            const ride = await AppDataSource.getRepository(Ride).findOne({ where: { rideId } });
+            const now = new Date();
+            await ParkDispatchJobRepository.markAssignedFromStatuses(job.jobId, [ParkJobStatus.PENDING_ACCEPTANCE], {
+                assignedDriverId: driverId,
+                assignedByStaffId: job.claimedByStaffId ?? 'SYSTEM',
+                assignmentMode: ParkAssignmentMode.ELECTRONIC,
+                assignedAt: now,
+                assignmentTimeMs: job.claimedAt ? now.getTime() - new Date(job.claimedAt).getTime() : null,
+                passengerWaitMs: ride ? now.getTime() - new Date(ride.createdAt).getTime() : null,
+            });
+
+            DispatchMonitorService.record({
+                rideId,
+                eventType: DispatchEventType.PARK_DRIVER_ACCEPTED,
+                driverId,
+                detail: {
+                    parkId: job.parkId,
+                    jobId: job.jobId,
+                    responseMs: job.pendingSince ? now.getTime() - new Date(job.pendingSince).getTime() : null,
+                },
+            });
+
+            try {
+                await ParkRosterService.leaveQueue(
+                    { staffUserId: job.claimedByStaffId ?? 'SYSTEM', roles: [], isLegacy: false },
+                    job.parkId, driverId, 'assigned to a ride',
+                );
+            } catch { /* the assignment stands regardless of queue bookkeeping */ }
+
+            const host = this.requireHost();
+            host.emitToPark(job.parkId, 'park:job_assigned', {
+                jobId: job.jobId, rideId, driverId, assignmentMode: 'electronic', acceptedByDriver: true,
+            });
+            host.emitToAdmin('park:job_assigned', { jobId: job.jobId, rideId, parkId: job.parkId, driverId });
+        } catch (err: any) {
+            console.error(JSON.stringify({
+                level: 'error', event: 'park_pending_complete_failed', rideId, driverId, error: err?.message,
+            }));
+        }
+    }
+
+    /**
+     * A driver declined, or their window closed.
+     *
+     * The job goes back to the dispatcher, who picks somebody else. The
+     * passenger is never told: from their side the search simply continues.
+     */
+    static async handleDriverDecline(rideId: string, driverId: string, reason: string): Promise<void> {
+        try {
+            const job = await ParkDispatchJobRepository.findPendingForDriver(rideId, driverId);
+            if (!job) return;
+            await this.returnPendingToQueue(job.jobId, driverId, reason);
+        } catch (err: any) {
+            console.error(JSON.stringify({
+                level: 'error', event: 'park_decline_failed', rideId, driverId, error: err?.message,
+            }));
+        }
+    }
+
+    /** Hand a pending job back to its dispatcher, remembering who said no. */
+    private static async returnPendingToQueue(jobId: string, driverId: string, reason: string): Promise<void> {
+        const job = await ParkDispatchJobRepository.findById(jobId);
+        if (!job) return;
+
+        const declined = [...new Set([...(job.declinedDriverIds ?? []), driverId])];
+        const returned = await ParkDispatchJobRepository.returnToClaimedIfPending(jobId, driverId, declined);
+        if (!returned) return;
+
+        DispatchMonitorService.record({
+            rideId: job.rideId,
+            eventType: DispatchEventType.PARK_DRIVER_DECLINED,
+            driverId,
+            detail: { parkId: job.parkId, jobId, reason, declineCount: job.declineCount + 1 },
+        });
+
+        const host = this.requireHost();
+        // The dispatcher must know immediately and loudly: a passenger is
+        // waiting and the driver they chose is not coming.
+        host.emitToPark(job.parkId, 'park:job_driver_declined', {
+            jobId, rideId: job.rideId, driverId, reason,
+            declineCount: job.declineCount + 1,
+        });
+        host.emitToAdmin('park:job_driver_declined', { jobId, rideId: job.rideId, driverId, reason });
+
+        // The driver goes back to waiting — they are still standing in the park.
+        try {
+            const presence = await DriverPresenceService.get(driverId);
+            if (presence.state === DriverPresenceState.ASSIGNED) {
+                await DriverPresenceService.setState({
+                    driverId,
+                    state: DriverPresenceState.WAITING,
+                    parkId: job.parkId,
+                    source: PresenceSource.SYSTEM,
+                }, {});
+            }
+        } catch { /* presence bookkeeping must not block the queue */ }
+    }
+
+    /** Expire pending offers whose window has closed. Called by the sweeper. */
+    static async sweepPendingOffers(now: Date = new Date()): Promise<number> {
+        const config = loadParkDispatchConfig();
+        if (!config.enabled) return 0;
+
+        const expired = await ParkDispatchJobRepository.findExpiredPending(now);
+        let count = 0;
+        for (const job of expired) {
+            if (!job.pendingDriverId) continue;
+            await this.returnPendingToQueue(job.jobId, job.pendingDriverId, 'driver_did_not_respond');
+            count += 1;
+        }
+        return count;
     }
 
     /** No driver here for this one. Resolve and move on immediately. */

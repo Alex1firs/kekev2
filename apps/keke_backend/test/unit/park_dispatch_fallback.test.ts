@@ -117,8 +117,21 @@ describe('assignable presence', () => {
 });
 
 describe('job status model', () => {
-    it('treats only offered and claimed as live', () => {
-        expect(LIVE_JOB_STATUSES).toEqual([ParkJobStatus.OFFERED, ParkJobStatus.CLAIMED]);
+    it('treats offered, claimed and pending-acceptance as live', () => {
+        // PENDING_ACCEPTANCE joined the live set when assignment timeouts
+        // landed: a driver holding an unanswered offer means the ride is still
+        // in this park's hands and must not be offered elsewhere.
+        expect(LIVE_JOB_STATUSES).toEqual([
+            ParkJobStatus.OFFERED,
+            ParkJobStatus.CLAIMED,
+            ParkJobStatus.PENDING_ACCEPTANCE,
+        ]);
+    });
+
+    it('a pending offer still blocks a second job for the same ride', () => {
+        // The partial unique index is scoped to LIVE_JOB_STATUSES, so this list
+        // growing is what keeps the one-live-job guarantee true.
+        expect(LIVE_JOB_STATUSES).toContain(ParkJobStatus.PENDING_ACCEPTANCE);
     });
 
     it('every terminal status is outside the live set', () => {
@@ -126,6 +139,8 @@ describe('job status model', () => {
             ParkJobStatus.ASSIGNED, ParkJobStatus.SKIPPED, ParkJobStatus.ESCALATED,
             ParkJobStatus.REJECTED, ParkJobStatus.EXPIRED, ParkJobStatus.CANCELLED,
         ];
+        // PENDING_ACCEPTANCE is deliberately NOT terminal — it returns to
+        // CLAIMED on a decline or a timeout.
         for (const status of terminal) expect(LIVE_JOB_STATUSES).not.toContain(status);
     });
 

@@ -297,4 +297,35 @@ export class Ride {
 
     @Column({ type: "varchar", length: 120, nullable: true })
     escalationReason!: string | null;
+
+    // --- Park Dispatch provenance ---------------------------------------
+    // How this ride came to have a driver. All nullable and back-compatible:
+    // a null dispatchMode means 'direct', which is every ride that exists
+    // today. Nothing in dispatch, settlement or the ride lifecycle reads these
+    // — they exist so reporting can tell the two supply channels apart, and so
+    // support can see at a glance why a ride has no live driver GPS.
+
+    /** 'direct' | 'park'. Null on every pre-existing ride, meaning direct. */
+    @Index()
+    @Column({ type: "varchar", length: 12, nullable: true })
+    dispatchMode!: string | null;
+
+    /** The park that sourced the driver, when one did. */
+    @Index()
+    @Column({ type: "varchar", nullable: true })
+    parkId!: string | null;
+
+    /** The ParkDispatchJob that produced the assignment. */
+    @Column({ type: "varchar", nullable: true })
+    parkJobId!: string | null;
+
+    /**
+     * 'electronic' | 'verbal'. How the driver was told about the trip.
+     *
+     * `verbal` is the honest marker that this driver has no app: their
+     * lifecycle events and live GPS may be absent, and support should not read
+     * that absence as a fault.
+     */
+    @Column({ type: "varchar", length: 12, nullable: true })
+    assignmentMode!: string | null;
 }

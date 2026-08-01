@@ -24,3 +24,4 @@ export * from "./DriverPresence";
 export * from "./DriverPresenceEvent";
 export * from "./ParkDriverRoster";
 export * from "./DriverBadge";
+export * from "./ParkDispatchJob";

@@ -658,3 +658,16 @@ kbd {
     font-size: 0.88rem;
     line-height: 1.5;
 }
+
+/* The deliberate acknowledgement when starting a shift without background alerts. */
+.push-override {
+    display: flex;
+    align-items: flex-start;
+    gap: 9px;
+    margin-top: 10px;
+    font-size: 0.85rem;
+    color: var(--text);
+    cursor: pointer;
+}
+.push-override input { margin-top: 3px; width: 18px; height: 18px; flex-shrink: 0; }
+.push-diag { font-size: 0.78rem; color: var(--text-dim); margin-top: 6px; line-height: 1.5; }

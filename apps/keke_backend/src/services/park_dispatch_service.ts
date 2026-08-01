@@ -48,6 +48,7 @@ import { DriverRecommendationService } from './driver_recommendation_service';
 import { DriverPresenceService } from './driver_presence_service';
 import { DriverPresenceState, PresenceSource } from '../models/DriverPresence';
 import { ParkDispatchSwitch } from './park_dispatch_switch';
+import { StaffPushEscalation } from './staff_push_escalation';
 
 export const ParkDispatchAuditAction = {
     PARK_JOB_CLAIMED: 'PARK_JOB_CLAIMED',
@@ -278,6 +279,30 @@ export class ParkDispatchService {
                 expiresAt: job.offerExpiresAt,
             });
             host.emitToAdmin('park:job_offered', { jobId: job.jobId, rideId, parkId: chosen.park.parkId });
+
+            /*
+             * Push, for the dispatcher whose phone is in their pocket.
+             *
+             * The socket above only reaches a board that is open and in front
+             * of somebody. This is the path that survives a locked screen.
+             *
+             * Deliberately not awaited into the critical path and deliberately
+             * swallowing its own errors: a ride must reach the park queue
+             * whether or not Firebase is reachable. The board is still the
+             * source of truth; the push is a prompt to go and look at it.
+             *
+             * The body names a LANDMARK, never the passenger — see
+             * StaffPushEscalation for what may appear on a lock screen.
+             */
+            StaffPushEscalation.onJobOffered({
+                jobId: job.jobId,
+                rideId,
+                parkId: chosen.park.parkId,
+                pickupAddress: ride.pickupAddress ?? null,
+                expiresAt: job.offerExpiresAt,
+            }).catch((err: any) => console.error(JSON.stringify({
+                level: 'warn', event: 'park_push_failed', jobId: job.jobId, error: err?.message,
+            })));
 
             // Keep the PASSENGER honestly informed. `ride:dispatch_round` is what
             // builds already in the field understand: it re-arms their 150s
@@ -518,6 +543,9 @@ export class ParkDispatchService {
         });
 
         const fresh = await this.requireJob(jobId);
+        // A human has it. Stop chasing every dispatcher at this park.
+        StaffPushEscalation.stop(jobId).catch(() => { /* best effort */ });
+
         return this.cardFor(fresh);
     }
 
@@ -925,6 +953,12 @@ export class ParkDispatchService {
         this.requireHost().emitToAdmin('park:job_escalated', { jobId, reason });
     }
 
+    /**
+     * Every terminal outcome stops the escalation.
+     *
+     * Skip, reject, escalate and expire all land here, so one call covers them
+     * rather than four call sites that can drift apart.
+     */
     private static async resolve(
         actor: AuditActor,
         jobId: string,
@@ -934,6 +968,9 @@ export class ParkDispatchService {
         auditAction: string,
         ctx: { ipAddress?: string | null; correlationId?: string | null },
     ): Promise<void> {
+        // Whatever the outcome, this job is finished: stop chasing dispatchers.
+        StaffPushEscalation.stop(jobId).catch(() => { /* best effort */ });
+
         if (!reason?.trim()) {
             throw new AppError(400, ErrorCode.VALIDATION_ERROR, 'A reason is required.');
         }
@@ -1012,6 +1049,12 @@ export class ParkDispatchService {
      * that no longer exists.
      */
     static async cancelForRide(rideId: string, reason: string): Promise<void> {
+        // The ride is gone. Nobody should be chased about it.
+        try {
+            const live = await ParkDispatchJobRepository.findLiveForRide(rideId);
+            if (live) await StaffPushEscalation.stop(live.jobId);
+        } catch { /* best effort */ }
+
         try {
             const live = await ParkDispatchJobRepository.findLiveForRide(rideId);
             if (!live) return;

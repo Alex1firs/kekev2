@@ -18,6 +18,7 @@ import { AuditService, AuditAction, AuditActor } from './audit_service';
 import { AuthService } from './auth_service';
 import { StaffRole, StaffPermissionType, isStaffRole } from '../config/staff_permissions';
 import { AppError, ErrorCode } from '../utils/errors';
+import { StaffPushService } from './staff_push_service';
 
 export interface StaffDto {
     id: string;
@@ -370,6 +371,17 @@ export class StaffService {
         });
 
         const fresh = await this.repo.findOneBy({ id: staff.id });
+        /*
+         * Silence their devices.
+         *
+         * A suspended dispatcher whose phone keeps buzzing with park requests
+         * is being told about work they can no longer do, and is holding a
+         * device that still looks like a live dispatch terminal.
+         */
+        await StaffPushService.revoke({
+            staffUserId, reason: `staff suspended: ${reason.slice(0, 120)}`,
+        }).catch(() => { /* the suspension stands regardless */ });
+
         return this.toDto(fresh!, await this.getRoles(staff.id));
     }
 

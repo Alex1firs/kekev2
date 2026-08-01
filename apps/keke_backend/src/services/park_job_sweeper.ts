@@ -16,6 +16,7 @@
  */
 import { AppDataSource } from '../config/data_source';
 import { ParkDispatchService } from './park_dispatch_service';
+import { StaffPushEscalation } from './staff_push_escalation';
 import { loadParkDispatchConfig } from '../config/park_dispatch_config';
 
 /** Distinct from the stale-ride sweeper's lock id so the two never contend. */
@@ -72,6 +73,12 @@ export class ParkJobSweeper {
             // window is judged, or a slow driver would cost the dispatcher the
             // whole window rather than just their share of it.
             const declined = await ParkDispatchService.sweepPendingOffers(now);
+                /*
+                 * Reminders ride on this tick rather than their own timer.
+                 * A setTimeout dies with the process, so a deploy mid-shift
+                 * would silently cancel every pending reminder.
+                 */
+                await StaffPushEscalation.sweep(now);
             const expired = await ParkDispatchService.sweepExpired(now);
             if (declined > 0 || expired > 0) {
                 console.log(JSON.stringify({

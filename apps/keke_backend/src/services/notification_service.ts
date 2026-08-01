@@ -59,6 +59,19 @@ export class NotificationService {
     }
 
     /**
+     * Is Firebase actually configured?
+     *
+     * Callers need to tell "we tried and it failed" apart from "this deployment
+     * has no credentials", and the difference matters: one is an incident, the
+     * other is a setup step nobody did. Push was silently off in production for
+     * weeks because nothing asked this question.
+     */
+    static isReady(): boolean {
+        if (!this.initialized) this.initialize();
+        return this.initialized;
+    }
+
+    /**
      * Send a push to all active devices of a user.
      *
      * Returns a [[PushResult]] describing what happened. Existing callers ignore

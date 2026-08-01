@@ -34,6 +34,9 @@ import { ParkAssignmentMode } from '../models/ParkDispatchJob';
 import { DispatcherDashboardService } from '../services/dispatcher_dashboard_service';
 import { errBody, ErrorCode, AppError } from '../utils/errors';
 import { ParkDispatchSwitch } from '../services/park_dispatch_switch';
+import { StaffPushService } from '../services/staff_push_service';
+import { AuditService } from '../services/audit_service';
+import { PushDeliveryState } from '../models/StaffPushDelivery';
 import { IdempotencyService, InFlightError } from '../services/idempotency_service';
 import { ParkDispatchJobRepository } from '../repositories/park_dispatch_job_repository';
 import { loadParkDispatchConfig } from '../config/park_dispatch_config';
@@ -128,6 +131,219 @@ router.get('/me', async (req: StaffRequest, res: Response) => {
     }
 });
 
+// ═══════════════════════════════════════════════════════════════════════
+//  Push notifications
+// ═══════════════════════════════════════════════════════════════════════
+
+/**
+ * GET /dispatcher/push/config
+ *
+ * The PUBLIC Firebase web configuration and VAPID public key.
+ *
+ * None of this is secret — Firebase documents these as client identifiers, and
+ * they ship in every web app that uses the JS SDK. It is served from here
+ * rather than committed to a file so that an unconfigured deployment says so
+ * once, clearly, instead of shipping placeholders that fail inside a browser.
+ *
+ * Staff session required anyway: there is no reason for an anonymous caller to
+ * enumerate our project identifiers.
+ */
+router.get('/push/config', async (req: StaffRequest, res: Response) => {
+    if (req.actor?.isLegacy) return res.status(403).json(errBody(ErrorCode.FORBIDDEN, 'Not a staff session.'));
+
+    const config = StaffPushService.webConfig();
+    if (!config) {
+        return res.json({
+            available: false,
+            missing: StaffPushService.missingConfig(),
+            message: 'Push is not configured on this server. Alerts will only work while the app is open.',
+        });
+    }
+    return res.json({ available: true, config });
+});
+
+/**
+ * POST /dispatcher/push/register
+ *
+ * Bind this browser's push token to the signed-in dispatcher.
+ *
+ * Staff auth only. A passenger or driver token cannot reach this route at all —
+ * they authenticate against a different middleware with a different JWT
+ * audience, and `req.actor` is only ever a StaffUser.
+ */
+router.post('/push/register', async (req: StaffRequest, res: Response) => {
+    try {
+        if (req.actor?.isLegacy) {
+            // The shared key has no human behind it and no device.
+            return res.status(403).json(errBody(ErrorCode.FORBIDDEN, 'The shared admin key cannot register a device.'));
+        }
+
+        const token = String(req.body?.token ?? '');
+        const deviceId = req.body?.deviceId ? String(req.body.deviceId).slice(0, 100) : null;
+
+        /*
+         * The park comes from the OPEN SHIFT, never from the request body.
+         * A device that could name its own park would be a way to receive
+         * another park's requests, which is the whole scoping model undone by
+         * one field.
+         */
+        const shift = await DispatcherShiftService.current(req.actor!.staffUserId);
+
+        const row = await StaffPushService.register({
+            staffUserId: req.actor!.staffUserId,
+            token,
+            parkId: shift?.parkId ?? null,
+            shiftId: shift?.shiftId ?? null,
+            deviceId,
+            deviceLabel: req.body?.deviceLabel ? String(req.body.deviceLabel).slice(0, 120) : null,
+            userAgent: req.headers['user-agent'] ?? null,
+        });
+
+        return res.json({
+            registered: true,
+            deviceTokenId: row.id,
+            parkId: row.parkId,
+            boundToShift: row.shiftId != null,
+            // Said plainly: a device with no shift is registered but will not
+            // receive job alerts, because alerts are addressed by park.
+            message: row.parkId
+                ? 'This device will receive alerts for your park.'
+                : 'Registered. Open a shift to start receiving alerts for a park.',
+        });
+    } catch (err: any) {
+        return fail(res, err, "We couldn't register this device for alerts.");
+    }
+});
+
+/** POST /dispatcher/push/unregister — sign-out and device replacement. */
+router.post('/push/unregister', async (req: StaffRequest, res: Response) => {
+    try {
+        if (req.actor?.isLegacy) return res.status(403).json(errBody(ErrorCode.FORBIDDEN, 'Not a staff session.'));
+        const revoked = await StaffPushService.revoke({
+            staffUserId: req.actor!.staffUserId,
+            token: req.body?.token ? String(req.body.token) : undefined,
+            deviceId: req.body?.deviceId ? String(req.body.deviceId) : undefined,
+            reason: String(req.body?.reason ?? 'signed out'),
+        });
+        return res.json({ revoked });
+    } catch (err: any) {
+        return fail(res, err, "We couldn't remove this device.");
+    }
+});
+
+/**
+ * POST /dispatcher/push/ack
+ *
+ * The device reporting what actually happened: the service worker ran, or a
+ * human opened the notification, or the request was displayed.
+ *
+ * This is the only evidence that distinguishes "Google accepted it" from
+ * "somebody saw it", so it is worth the extra round trip.
+ */
+router.post('/push/ack', async (req: StaffRequest, res: Response) => {
+    try {
+        if (req.actor?.isLegacy) return res.status(403).json(errBody(ErrorCode.FORBIDDEN, 'Not a staff session.'));
+
+        // Only these three may be self-reported. A device cannot claim
+        // "provider accepted" — that is the server's observation, not the
+        // client's, and letting a client assert it would let a broken device
+        // manufacture evidence that an alert was delivered.
+        const ACKNOWLEDGEABLE = [
+            PushDeliveryState.SERVICE_WORKER_RECEIVED,
+            PushDeliveryState.NOTIFICATION_OPENED,
+            PushDeliveryState.REQUEST_VIEWED,
+        ] as const;
+        type Ackable = typeof ACKNOWLEDGEABLE[number];
+
+        const raw = String(req.body?.state ?? '');
+        const state = ACKNOWLEDGEABLE.find((s) => s === raw) as Ackable | undefined;
+        if (!state) {
+            return res.status(400).json(errBody(ErrorCode.VALIDATION_ERROR, 'Unknown acknowledgement state.'));
+        }
+
+        await StaffPushService.acknowledge({
+            staffUserId: req.actor!.staffUserId,
+            jobId: req.body?.jobId ? String(req.body.jobId) : null,
+            token: req.body?.token ? String(req.body.token) : null,
+            state,
+        });
+        return res.json({ recorded: true });
+    } catch (err: any) {
+        return fail(res, err, "We couldn't record that acknowledgement.");
+    }
+});
+
+/** POST /dispatcher/push/test — a real push to one of your own devices. */
+router.post('/push/test', async (req: StaffRequest, res: Response) => {
+    try {
+        if (req.actor?.isLegacy) return res.status(403).json(errBody(ErrorCode.FORBIDDEN, 'Not a staff session.'));
+        const result = await StaffPushService.sendTest(
+            req.actor!.staffUserId, String(req.body?.deviceTokenId ?? ''));
+        return res.json(result);
+    } catch (err: any) {
+        return fail(res, err, "We couldn't send a test alert.");
+    }
+});
+
+/**
+ * GET /dispatcher/push/status
+ *
+ * Everything the setup and diagnostics screen shows, and the thing that decides
+ * whether a shift may start.
+ */
+router.get('/push/status', async (req: StaffRequest, res: Response) => {
+    try {
+        if (req.actor?.isLegacy) return res.status(403).json(errBody(ErrorCode.FORBIDDEN, 'Not a staff session.'));
+
+        const staffUserId = req.actor!.staffUserId;
+        const [devices, recent, shift] = await Promise.all([
+            StaffPushService.activeForStaff(staffUserId),
+            StaffPushService.recentFor(staffUserId, 10),
+            DispatcherShiftService.current(staffUserId),
+        ]);
+
+        const configured = StaffPushService.webConfig() != null;
+        const lastAccepted = devices.map((d) => d.lastPushAcceptedAt).filter(Boolean).sort().pop() ?? null;
+        const lastReceived = devices.map((d) => d.lastPushReceivedAt).filter(Boolean).sort().pop() ?? null;
+        const lastOpened = devices.map((d) => d.lastNotificationOpenedAt).filter(Boolean).sort().pop() ?? null;
+
+        return res.json({
+            pushConfigured: configured,
+            missingConfig: configured ? [] : StaffPushService.missingConfig(),
+            devices: devices.map((d) => ({
+                id: d.id,
+                deviceLabel: d.deviceLabel,
+                deviceId: d.deviceId,
+                platform: d.platform,
+                parkId: d.parkId,
+                boundToShift: d.shiftId != null,
+                lastSeenAt: d.lastSeenAt,
+                lastPushAcceptedAt: d.lastPushAcceptedAt,
+                lastPushReceivedAt: d.lastPushReceivedAt,
+                lastNotificationOpenedAt: d.lastNotificationOpenedAt,
+                tokenRef: d.token.length > 12 ? `…${d.token.slice(-12)}` : d.token,
+            })),
+            shift: shift ? { shiftId: shift.shiftId, parkId: shift.parkId } : null,
+            lastPushAcceptedAt: lastAccepted,
+            lastPushReceivedAt: lastReceived,
+            lastNotificationOpenedAt: lastOpened,
+            recent: recent.map((r) => ({
+                state: r.state, reason: r.reason, jobId: r.jobId,
+                providerRef: r.providerRef, createdAt: r.createdAt,
+                receivedAt: r.receivedAt, openedAt: r.openedAt,
+            })),
+            /*
+             * Whether a shift may start silently. The client blocks on this and
+             * a supervisor override is the only way past it — see
+             * POST /dispatcher/shifts/open.
+             */
+            readyForShift: configured && devices.length > 0,
+        });
+    } catch (err: any) {
+        return fail(res, err, "We couldn't check your alert setup.");
+    }
+});
+
 /**
  * GET /dispatcher/switch-state
  *
@@ -161,6 +377,36 @@ router.post('/shifts/open', requireStaffPermission(StaffPermission.SHIFT_OPEN), 
             lng: req.body?.lng != null ? Number(req.body.lng) : null,
             deviceId: req.body?.deviceId ?? null,
         }, ctxOf(req));
+
+        /*
+         * Bind this dispatcher's devices to the park they just opened at.
+         *
+         * Push is addressed by PARK, so a device registered before a shift has
+         * no park and receives nothing. This is the moment it gains one.
+         */
+        await StaffPushService.bindToShift(req.actor!.staffUserId, shift.parkId, shift.shiftId)
+            .catch(() => { /* the shift stands regardless */ });
+
+        /*
+         * A shift started without working background alerts is recorded as
+         * such. Nobody is stopped — a dispatcher who will keep the app open is
+         * still better than an unstaffed park — but operations can see which
+         * shifts ran with a dispatcher reachable only while looking at a
+         * screen, which is exactly the sort of thing that explains a missed
+         * request three days later.
+         */
+        if (req.body?.pushUnavailableAcknowledged === true) {
+            await AuditService.record({
+                actor: auditActorOf(req.actor),
+                action: 'SHIFT_OPENED_WITHOUT_PUSH',
+                resourceType: 'DISPATCHER_SHIFT',
+                resourceId: shift.shiftId,
+                parkId: shift.parkId,
+                reason: 'dispatcher acknowledged background alerts are unavailable',
+                ...ctxOf(req),
+            }).catch(() => { /* never block a shift on an audit write */ });
+        }
+
         return res.status(201).json({ shift });
     } catch (err: any) {
         return fail(res, err, "We couldn't start your shift.");

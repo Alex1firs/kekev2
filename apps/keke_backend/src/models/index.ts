@@ -25,3 +25,6 @@ export * from "./DriverPresenceEvent";
 export * from "./ParkDriverRoster";
 export * from "./DriverBadge";
 export * from "./ParkDispatchJob";
+// Dispatcher push: staff-scoped tokens and delivery evidence.
+export * from './StaffDeviceToken';
+export * from './StaffPushDelivery';

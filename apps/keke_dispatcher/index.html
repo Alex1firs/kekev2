@@ -77,6 +77,17 @@
                 <button type="button" id="notif-enable" class="btn btn-small">Allow alerts</button>
                 <span id="notif-state" class="setup-state"></span>
             </div>
+            <!--
+              Background alerts are the difference between a dispatcher who
+              answers with the phone in their pocket and one who only answers
+              while staring at the screen.
+            -->
+            <div class="setup-row">
+                <span class="setup-label">Background alerts</span>
+                <button type="button" id="push-enable" class="btn btn-small">Set up</button>
+                <button type="button" id="push-test" class="btn btn-small hidden">Send test</button>
+                <span id="push-state" class="setup-state"></span>
+            </div>
             <div class="setup-row">
                 <span class="setup-label">Park Dispatch</span>
                 <span id="setup-dispatch-state" class="setup-state">checking…</span>
@@ -100,6 +111,20 @@
         </p>
 
         <button id="shift-start" class="btn btn-primary btn-block">Start shift</button>
+        <!--
+          A dispatcher must not start a normal shift silently. If background
+          alerts are not working they are told why, and starting anyway is a
+          deliberate, recorded choice rather than an accident.
+        -->
+        <div id="push-block" class="sheet-mode sheet-mode-verbal hidden">
+            <b>Background alerts are not working on this device.</b>
+            <span id="push-block-reason"></span>
+            <label class="push-override">
+                <input type="checkbox" id="push-override">
+                Start anyway — I will keep this app open and visible for the whole shift
+            </label>
+        </div>
+
         <p id="shift-error" class="login-error hidden"></p>
         <p class="login-foot">
             You can read the board without a shift. Taking requests and assigning

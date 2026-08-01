@@ -456,6 +456,224 @@ window.addEventListener('online', () => {
 });
 window.addEventListener('offline', renderNetwork);
 
+
+// ── Push notifications ───────────────────────────────────────────────────
+
+/**
+ * The alert that survives a locked screen.
+ *
+ * Everything above this — the chime, the vibration, the banner — only works
+ * while the board is open and in front of somebody. This is the path that
+ * reaches a dispatcher whose phone is in their pocket.
+ *
+ * Read docs/dispatcher_web_push_audit.md §4 before relying on it. The web gets
+ * no custom sound and no high-importance channel, and an OEM battery manager
+ * can kill the browser's background process on Xiaomi, Huawei and Oppo
+ * regardless of anything written here.
+ */
+const PUSH = {
+    supported: 'Notification' in window && 'serviceWorker' in navigator && 'PushManager' in window,
+    config: null,
+    token: null,
+    deviceTokenId: null,
+    messaging: null,
+    error: null,
+};
+
+/**
+ * A stable identity for THIS browser, kept across token rotations.
+ *
+ * The FCM token changes; this does not. It is what lets the server say "the
+ * same tablet as yesterday, with a new token" rather than counting a second
+ * device and sending two copies of every alert.
+ */
+function deviceId() {
+    try {
+        let id = localStorage.getItem('KD_DEVICE_ID');
+        if (!id) {
+            id = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random()));
+            localStorage.setItem('KD_DEVICE_ID', id);
+        }
+        return id;
+    } catch {
+        // Private mode. A per-session id still deduplicates within the session.
+        return 'ephemeral-' + Math.random().toString(36).slice(2);
+    }
+}
+
+function deviceLabel() {
+    const ua = navigator.userAgent;
+    const m = ua.match(/\((?:Linux; )?Android [\d.]+; ([^)]+?)(?: Build|\))/i);
+    if (m) return m[1].slice(0, 60);
+    if (/iPhone|iPad/.test(ua)) return 'iOS device';
+    return (navigator.platform || 'Browser').slice(0, 60);
+}
+
+/** Load the vendored SDK once. Served from our own origin because of the CSP. */
+function loadFirebaseSdk() {
+    if (window.firebase && window.firebase.messaging) return Promise.resolve();
+    const add = (src) => new Promise((resolve, reject) => {
+        const el = document.createElement('script');
+        el.src = src; el.onload = resolve; el.onerror = () => reject(new Error(`could not load ${src}`));
+        document.head.appendChild(el);
+    });
+    return add('vendor/firebase-app-compat.js').then(() => add('vendor/firebase-messaging-compat.js'));
+}
+
+/**
+ * Set push up for the signed-in dispatcher.
+ *
+ * Returns a state object rather than throwing: every failure here is something
+ * the setup screen has to explain to a person, and an exception would just
+ * become "something went wrong".
+ */
+async function setUpPush({ interactive = false } = {}) {
+    PUSH.error = null;
+
+    if (!PUSH.supported) {
+        PUSH.error = 'This browser cannot receive background alerts.';
+        return PUSH;
+    }
+    if (!window.isSecureContext) {
+        // The commonest cause of "it works on my laptop but not the tablet".
+        PUSH.error = 'Background alerts need a secure (https) connection. On plain http they cannot be enabled.';
+        return PUSH;
+    }
+
+    // 1. Server configuration.
+    try {
+        const cfg = await api('/dispatcher/push/config');
+        if (!cfg.available) {
+            PUSH.error = cfg.message || 'Push is not configured on this server.';
+            PUSH.missing = cfg.missing || [];
+            return PUSH;
+        }
+        PUSH.config = cfg.config;
+    } catch (err) {
+        PUSH.error = `Could not read push settings: ${err.message}`;
+        return PUSH;
+    }
+
+    // 2. Permission. Only ASK during a deliberate setup step — a permission
+    //    prompt on page load is the fastest way to get permanently blocked.
+    if (Notification.permission === 'denied') {
+        PUSH.error = 'Notifications are blocked for this site. Allow them in the browser settings for this page, then try again.';
+        return PUSH;
+    }
+    if (Notification.permission !== 'granted') {
+        if (!interactive) { PUSH.error = 'Notifications are not enabled yet.'; return PUSH; }
+        const result = await Notification.requestPermission().catch(() => 'denied');
+        if (result !== 'granted') {
+            PUSH.error = 'Notifications were not allowed. Alerts will only work while this app is open.';
+            return PUSH;
+        }
+    }
+
+    // 3. The messaging service worker, separate from the app-shell worker.
+    let swReg;
+    try {
+        swReg = await navigator.serviceWorker.register('./firebase-messaging-sw.js', { scope: './' });
+        await navigator.serviceWorker.ready;
+    } catch (err) {
+        PUSH.error = `Could not start the alert service: ${err.message}`;
+        return PUSH;
+    }
+
+    // 4. A token.
+    try {
+        await loadFirebaseSdk();
+        if (!window.firebase.apps.length) window.firebase.initializeApp(PUSH.config);
+        PUSH.messaging = window.firebase.messaging();
+
+        PUSH.token = await PUSH.messaging.getToken({
+            vapidKey: PUSH.config.vapidPublicKey,
+            serviceWorkerRegistration: swReg,
+        });
+        if (!PUSH.token) { PUSH.error = 'The browser did not return an alert token.'; return PUSH; }
+    } catch (err) {
+        PUSH.error = `Could not register for alerts: ${err.message}`;
+        return PUSH;
+    }
+
+    // 5. Bind it to this staff member. The PARK comes from their open shift on
+    //    the server — never from anything this client says.
+    try {
+        const res = await api('/dispatcher/push/register', 'POST', {
+            token: PUSH.token,
+            deviceId: deviceId(),
+            deviceLabel: deviceLabel(),
+        });
+        PUSH.deviceTokenId = res.deviceTokenId;
+        PUSH.registered = true;
+        PUSH.boundToShift = res.boundToShift;
+    } catch (err) {
+        PUSH.error = `Could not save this device: ${err.message}`;
+        return PUSH;
+    }
+
+    // 6. Hand the worker its configuration and listen for what it reports.
+    try {
+        navigator.serviceWorker.controller?.postMessage({ type: 'KD_PUSH_CONFIG', config: PUSH.config });
+        PUSH.messaging.onMessage((payload) => {
+            // Arrived while the app is in the foreground: the OS will not show
+            // it, so the in-app alert is what the dispatcher gets.
+            chime(true); buzz([160, 90, 160]);
+            refreshDashboard().catch(() => {});
+            ackPush('service_worker_received', payload?.data?.jobId);
+        });
+    } catch { /* the registration stands regardless */ }
+
+    return PUSH;
+}
+
+/** Tell the server what actually happened on this device. */
+function ackPush(state, jobId) {
+    if (!PUSH.token) return;
+    api('/dispatcher/push/ack', 'POST', { state, jobId: jobId || null, token: PUSH.token })
+        .catch(() => { /* evidence is best effort; the alert already happened */ });
+}
+
+/*
+ * The worker talks to us: a push arrived, or a notification was opened. Opening
+ * carries a job id as a HINT — the board is re-read from the server and the
+ * selection is only honoured if that job is still really there.
+ */
+navigator.serviceWorker?.addEventListener('message', async (event) => {
+    const d = event.data || {};
+    if (d.type === 'KD_PUSH_RECEIVED') {
+        ackPush('service_worker_received', d.jobId);
+        refreshDashboard().catch(() => {});
+    }
+    if (d.type === 'KD_NOTIFICATION_OPENED') {
+        ackPush('notification_opened', d.jobId);
+        await refreshDashboard().catch(() => {});
+        openJobFromNotification(d.jobId);
+    }
+});
+
+/**
+ * Select the job a notification pointed at — if it still exists.
+ *
+ * Never assigns, never acts on what the notification said. A notification can
+ * be minutes old, and the request may have been taken, cancelled or expired
+ * since; the board is the truth and this only moves the cursor.
+ */
+function openJobFromNotification(jobId) {
+    if (!jobId) return;
+    const job = S.queue.find((c) => c.jobId === jobId);
+    if (job) {
+        selectJob(jobId);
+        ackPush('request_viewed', jobId);
+    } else {
+        toast('That request is no longer waiting — it was taken, cancelled or it expired.', 'warn', 6000);
+    }
+}
+
+/** A job id in the URL, from a cold start via the notification's link. */
+function jobFromUrl() {
+    try { return new URLSearchParams(location.search).get('job'); } catch { return null; }
+}
+
 // ── Sign in ──────────────────────────────────────────────────────────────
 
 $('login-form').addEventListener('submit', async (e) => {
@@ -513,6 +731,14 @@ async function signOut() {
         method: 'POST', headers: { Authorization: `Bearer ${S.accessToken}` },
     }).catch(() => {});
 
+    // Stop alerts for this device before the session goes away, or the next
+    // person to pick up the tablet keeps receiving the last dispatcher's work.
+    if (PUSH.token) {
+        await api('/dispatcher/push/unregister', 'POST', {
+            token: PUSH.token, deviceId: deviceId(), reason: 'signed out',
+        }).catch(() => {});
+    }
+
     await clearServiceWorkerCaches();
     sessionStorage.clear();
     try { localStorage.removeItem('KD_LAST_PARK'); } catch { /* private mode */ }
@@ -555,6 +781,22 @@ async function boot() {
     await refreshDashboard(true);
     connectSocket();
     startTicker();
+
+    /*
+     * Opened from a notification while the app was closed. The job id is a
+     * hint; refreshDashboard has already fetched the authoritative board, and
+     * openJobFromNotification only selects it if it is genuinely still there.
+     */
+    const fromNotification = jobFromUrl();
+    if (fromNotification) {
+        ackPush('notification_opened', fromNotification);
+        openJobFromNotification(fromNotification);
+        // Clear it so a later refresh does not re-open a stale request.
+        history.replaceState(null, '', location.pathname);
+    }
+
+    // Re-register quietly: tokens rotate, and a shift binds the device to a park.
+    setUpPush({ interactive: false }).catch(() => {});
 }
 
 function showScreen(which) {
@@ -584,6 +826,7 @@ function showShiftGate() {
     } catch { /* private mode */ }
 
     renderSetupChecks();
+    renderPushState().catch(() => {});
 }
 
 /**
@@ -632,6 +875,85 @@ function renderSetupChecks() {
         .catch(() => { $('setup-dispatch-state').textContent = 'Unknown'; });
 }
 
+/**
+ * Reflect the push state, and decide whether a shift may start silently.
+ *
+ * "Not working" covers every reason a dispatcher might not be reachable —
+ * server not configured, permission denied, no token, insecure origin — and
+ * each of them gets its own sentence, because the fix is different in each
+ * case and "notifications failed" helps nobody.
+ */
+async function renderPushState() {
+    const stateEl = $('push-state');
+    const block = $('push-block');
+    const enableBtn = $('push-enable');
+    const testBtn = $('push-test');
+
+    let status = null;
+    try { status = await api('/dispatcher/push/status'); } catch { /* offline */ }
+
+    const working = !!(status && status.pushConfigured && status.devices.length > 0 && !PUSH.error
+        && Notification.permission === 'granted');
+
+    if (working) {
+        stateEl.textContent = 'On';
+        stateEl.className = 'setup-state setup-ok';
+        enableBtn.classList.add('hidden');
+        testBtn.classList.remove('hidden');
+        block.classList.add('hidden');
+        $('push-override').checked = false;
+    } else {
+        const reason = PUSH.error
+            || (status && !status.pushConfigured
+                ? `The server has no push configuration (${(status.missingConfig || []).join(', ') || 'unset'}).`
+                : null)
+            || (Notification.permission === 'denied'
+                ? 'Notifications are blocked for this site in the browser settings.'
+                : null)
+            || 'Not set up on this device yet.';
+
+        stateEl.textContent = 'Off';
+        stateEl.className = 'setup-state setup-warn';
+        enableBtn.classList.remove('hidden');
+        testBtn.classList.add('hidden');
+
+        block.classList.remove('hidden');
+        $('push-block-reason').textContent = ` ${reason} `
+            + 'Without them you will only be alerted while this app is open and on screen.';
+    }
+
+    // The start button is gated on either working alerts or an explicit,
+    // recorded acknowledgement.
+    updateShiftStartGate();
+}
+
+function updateShiftStartGate() {
+    const parks = ($('shift-park').value || '') !== '';
+    const blocked = !$('push-block').classList.contains('hidden');
+    const acknowledged = $('push-override').checked;
+    $('shift-start').disabled = !parks || (blocked && !acknowledged);
+}
+
+$('push-override').addEventListener('change', updateShiftStartGate);
+
+$('push-enable').addEventListener('click', async () => {
+    const btn = $('push-enable');
+    btn.disabled = true; btn.textContent = 'Setting up…';
+    await setUpPush({ interactive: true });
+    btn.disabled = false; btn.textContent = 'Set up';
+    await renderPushState();
+    if (!PUSH.error) toast('Background alerts are on for this device.', 'success');
+});
+
+$('push-test').addEventListener('click', async () => {
+    if (!PUSH.deviceTokenId) { toast('Set up background alerts first.', 'warn'); return; }
+    try {
+        const r = await api('/dispatcher/push/test', 'POST', { deviceTokenId: PUSH.deviceTokenId });
+        // Careful wording: the server can only tell us it was ACCEPTED.
+        toast(r.detail, r.accepted ? 'info' : 'error', 8000);
+    } catch (err) { toast(err.message, 'error'); }
+});
+
 $('sound-test').addEventListener('click', () => {
     // A real alert, not a different beep: the point is to confirm THIS sound is
     // audible over a park, at this device's volume.
@@ -670,7 +992,17 @@ $('shift-start').addEventListener('click', async () => {
                 { timeout: 5000, maximumAge: 60_000 },
             );
         });
-        await api('/dispatcher/shifts/open', 'POST', { parkId, ...(coords || {}) });
+        await api('/dispatcher/shifts/open', 'POST', {
+            parkId,
+            ...(coords || {}),
+            deviceId: deviceId(),
+            /*
+             * Starting without background alerts is a deliberate choice and is
+             * recorded as one. Operations can then see which shifts ran with a
+             * dispatcher who could only be reached while looking at the screen.
+             */
+            pushUnavailableAcknowledged: $('push-override').checked || undefined,
+        });
         try { localStorage.setItem('KD_LAST_PARK', parkId); } catch { /* private mode */ }
         await boot();
     } catch (err) {

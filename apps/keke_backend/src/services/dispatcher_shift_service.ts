@@ -27,6 +27,7 @@ import { ParkService } from './park_service';
 import { AuditService, AuditActor } from './audit_service';
 import { AppError, ErrorCode } from '../utils/errors';
 import { haversineMeters } from './ride_integrity_service';
+import { StaffPushService } from './staff_push_service';
 import { staffHoldsParkRole } from '../middleware/park_scope';
 import { StaffRole } from '../config/staff_permissions';
 
@@ -320,6 +321,17 @@ export class DispatcherShiftService {
         });
 
         const fresh = await DispatcherShiftRepository.findById(shift.shiftId);
+        /*
+         * Unbind this dispatcher's devices from the park.
+         *
+         * Push is addressed by park, so a device left bound after the shift
+         * ends keeps alerting somebody who has gone home — and worse, keeps
+         * them alerted about a park they are no longer responsible for.
+         */
+        await StaffPushService.revoke({
+            staffUserId: actor.staffUserId, reason: 'shift closed',
+        }).catch(() => { /* the close stands regardless */ });
+
         return this.toDto(fresh!);
     }
 

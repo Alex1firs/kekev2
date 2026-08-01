@@ -77,6 +77,9 @@ describeDb('park dispatch fallback (database)', () => {
                 ? { ok: true as const }
                 : { ok: false as const, code: 'RIDE_ALREADY_TAKEN', message: 'This ride is no longer available.' };
         },
+        // Phase 4 added a driver-offer step for smartphone assignments; these
+        // tests treat every offer as delivered so they can focus on the flow.
+        offerRideToDriver: async () => true,
         emitToRide: (rideId: string, event: string, payload: any) => emitted.push({ target: `ride:${rideId}`, event, payload }),
         emitToPark: (parkId: string, event: string, payload: any) => emitted.push({ target: `park:${parkId}`, event, payload }),
         emitToAdmin: (event: string, payload: any) => emitted.push({ target: 'admin', event, payload }),
@@ -392,6 +395,28 @@ describeDb('park dispatch fallback (database)', () => {
         });
     });
 
+    /**
+     * Assign electronically AND simulate the driver accepting.
+     *
+     * Phase 4 made smartphone assignment two-step: the dispatcher offers, the
+     * driver answers. These tests care about the end state, so they drive both
+     * halves — the driver-decline paths are covered in
+     * park_assignment_timeout_db.test.ts.
+     */
+    const assignAndAccept = async (actor: any, jobId: string, rideId: string, driverId: string) => {
+        const result = await ParkDispatchService.assignDriver(actor, jobId, driverId, ParkAssignmentMode.ELECTRONIC);
+        if (result.pending) {
+            const ctx = await ParkDispatchService.pendingContextFor(rideId, driverId);
+            if (ctx) {
+                await stubHost.assignDriver({
+                    rideId, driverId, parkId: ctx.parkId, parkJobId: ctx.jobId, assignmentMode: 'electronic',
+                });
+                await ParkDispatchService.completePendingAssignment(rideId, driverId);
+            }
+        }
+        return result;
+    };
+
     // ── assignment ──────────────────────────────────────────────────────
     describe('assignment', () => {
         const setup = async (driverOver: Partial<DriverProfile> = {}) => {
@@ -412,7 +437,7 @@ describeDb('park dispatch fallback (database)', () => {
         it('makes the ride ACCEPTED and owned by the driver', async () => {
             const { dispatcherActor, driverId, ride, jobId } = await setup();
 
-            await ParkDispatchService.assignDriver(dispatcherActor, jobId, driverId, ParkAssignmentMode.ELECTRONIC);
+            await assignAndAccept(dispatcherActor, jobId, ride.rideId, driverId);
 
             const fresh = await ds.getRepository(Ride).findOneBy({ rideId: ride.rideId });
             expect(String(fresh!.status)).toBe('accepted');
@@ -424,8 +449,8 @@ describeDb('park dispatch fallback (database)', () => {
         });
 
         it('records the job as assigned with its timings', async () => {
-            const { dispatcherActor, driverId, jobId } = await setup();
-            await ParkDispatchService.assignDriver(dispatcherActor, jobId, driverId, ParkAssignmentMode.ELECTRONIC);
+            const { dispatcherActor, driverId, jobId, ride } = await setup();
+            await assignAndAccept(dispatcherActor, jobId, ride.rideId, driverId);
 
             const job = await ParkDispatchJobRepository.findById(jobId);
             expect(job!.status).toBe(ParkJobStatus.ASSIGNED);
@@ -447,10 +472,10 @@ describeDb('park dispatch fallback (database)', () => {
         });
 
         it('takes the assigned driver out of the queue', async () => {
-            const { dispatcherActor, parkId, driverId, jobId } = await setup();
+            const { dispatcherActor, parkId, driverId, jobId, ride } = await setup();
             expect(await ParkRosterService.queue(parkId)).toHaveLength(1);
 
-            await ParkDispatchService.assignDriver(dispatcherActor, jobId, driverId, ParkAssignmentMode.ELECTRONIC);
+            await assignAndAccept(dispatcherActor, jobId, ride.rideId, driverId);
             expect(await ParkRosterService.queue(parkId)).toHaveLength(0);
         });
 
@@ -530,9 +555,17 @@ describeDb('park dispatch fallback (database)', () => {
                 .where('"rideId" = :rideId AND status = :status', { rideId: ride.rideId, status: 'searching' })
                 .execute();
 
-            await expect(ParkDispatchService.assignDriver(
-                park.dispatcherActor, job!.jobId, park.drivers[0], ParkAssignmentMode.ELECTRONIC,
-            )).rejects.toMatchObject({ statusCode: 409 });
+            // The offer step succeeds (the job is still claimed), but the ride
+            // flip loses to the direct driver — which is the point.
+            const result = await ParkDispatchService.assignDriver(
+                park.dispatcherActor, job!.jobId, park.drivers[0], ParkAssignmentMode.ELECTRONIC);
+            const ctx = await ParkDispatchService.pendingContextFor(ride.rideId, park.drivers[0]);
+            const flip = ctx ? await stubHost.assignDriver({
+                rideId: ride.rideId, driverId: park.drivers[0], parkId: ctx.parkId,
+                parkJobId: ctx.jobId, assignmentMode: 'electronic',
+            }) : { ok: false as const };
+            expect(result.pending).toBe(true);
+            expect(flip.ok).toBe(false);
 
             const fresh = await ds.getRepository(Ride).findOneBy({ rideId: ride.rideId });
             expect(fresh!.driverId).toBe(directDriver);
@@ -689,7 +722,7 @@ describeDb('park dispatch fallback (database)', () => {
             await ParkDispatchService.offerToPark(ride.rideId);
             const job = await ParkDispatchJobRepository.findLiveForRide(ride.rideId);
             await ParkDispatchService.claim(park.dispatcherActor, job!.jobId);
-            await ParkDispatchService.assignDriver(park.dispatcherActor, job!.jobId, driverId, ParkAssignmentMode.ELECTRONIC);
+            await assignAndAccept(park.dispatcherActor, job!.jobId, ride.rideId, driverId);
 
             const metrics = await ParkDispatchJobRepository.metrics(new Date(Date.now() - 3600_000), park.parkId);
             expect(metrics.offered).toBe(1);

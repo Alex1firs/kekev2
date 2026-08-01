@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Keke Admin | Dashboard</title>
-    <link rel="stylesheet" href="styles.css?v=4.1">
+    <link rel="stylesheet" href="styles.css?v=4.2">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 </head>
@@ -123,6 +123,9 @@
                 </li>
                 <li data-section="park-detail" class="hidden-nav" data-requires-permission="park:read">
                     <i class="fas fa-map-location-dot"></i> <span>Park Detail</span>
+                </li>
+                <li data-section="park-dispatch" data-requires-permission="park:read">
+                    <i class="fas fa-diagram-project"></i> <span>Park Dispatch</span>
                 </li>
                 <li data-section="badges" data-requires-permission="badge:read">
                     <i class="fas fa-id-badge"></i> <span>Driver Badges</span>
@@ -544,6 +547,48 @@
                     <div id="park-detail-body"></div>
                 </section>
 
+                <!-- Park Dispatch monitoring -->
+                <section id="park-dispatch" class="content-section hidden">
+                    <div class="staff-toolbar">
+                        <select id="pd-window">
+                            <option value="1">Last hour</option>
+                            <option value="24" selected>Last 24 hours</option>
+                            <option value="168">Last 7 days</option>
+                        </select>
+                        <button id="btn-pd-refresh" class="btn-primary"><i class="fas fa-rotate"></i> Refresh</button>
+                        <span id="pd-flag" class="chip chip-muted">—</span>
+                    </div>
+
+                    <div id="pd-metrics" class="badge-counts"></div>
+
+                    <h4>Live queue</h4>
+                    <p class="section-note">
+                        Requests direct dispatch could not fill, currently in a park's hands.
+                        A ride here is still <strong>searching</strong> — it becomes
+                        <strong>accepted</strong> only when a dispatcher assigns a driver.
+                    </p>
+                    <div class="table-container">
+                        <table>
+                            <thead><tr>
+                                <th>Ride</th><th>Park</th><th>Status</th><th>Priority</th>
+                                <th>Offered</th><th>Claimed by</th><th>Attempt</th>
+                            </tr></thead>
+                            <tbody id="pd-live-list"></tbody>
+                        </table>
+                    </div>
+
+                    <h4>Dispatcher response</h4>
+                    <div class="table-container compact">
+                        <table>
+                            <thead><tr><th>Dispatcher</th><th>Claimed</th><th>Assigned</th><th>Skipped</th><th>Avg response</th></tr></thead>
+                            <tbody id="pd-dispatchers"></tbody>
+                        </table>
+                    </div>
+
+                    <h4>Park utilisation</h4>
+                    <div id="pd-utilisation" class="park-grid"></div>
+                </section>
+
                 <!-- Badges -->
                 <section id="badges" class="content-section hidden">
                     <div class="staff-toolbar">
@@ -746,6 +791,6 @@
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="live_requests.js?v=1.2"></script>
-    <script src="app.js?v=4.1"></script>
+    <script src="app.js?v=4.2"></script>
 </body>
 </html>

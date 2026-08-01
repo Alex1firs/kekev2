@@ -160,6 +160,7 @@ function switchSection(id) {
     if (id === 'sos-alerts')    fetchSosAlerts();
     if (id === 'audit-log')     fetchAuditLog();
     if (id === 'parks')         fetchParks();
+    if (id === 'park-dispatch') fetchParkDispatch();
     if (id === 'badges')        fetchBadges();
     if (id === 'staff')         fetchStaffList();
     if (id === 'role-matrix')   fetchRoleMatrix();
@@ -1748,6 +1749,9 @@ function setupParkListeners() {
     });
     document.getElementById('badge-status-filter')?.addEventListener('change', fetchBadges);
     document.getElementById('btn-issue-badge')?.addEventListener('click', openIssueBadgeModal);
+
+    document.getElementById('btn-pd-refresh')?.addEventListener('click', fetchParkDispatch);
+    document.getElementById('pd-window')?.addEventListener('change', fetchParkDispatch);
 }
 
 function parkStatusChip(status) {
@@ -2230,6 +2234,87 @@ async function revokeBadge(serial) {
         showToast('Badge revoked', 'success');
         fetchBadges();
     } catch { /* surfaced */ }
+}
+
+// ── Park Dispatch monitoring (Phase 3) ─────────────────────────────────────
+
+function fmtMs(ms) {
+    if (ms == null) return '—';
+    const s = Math.round(ms / 1000);
+    if (s < 60) return `${s}s`;
+    return `${Math.floor(s / 60)}m ${s % 60}s`;
+}
+
+async function fetchParkDispatch() {
+    if (!can('park:read')) return;
+    const hours = document.getElementById('pd-window')?.value || '24';
+    try {
+        const data = await adminFetch(`/park-dispatch/overview?hours=${hours}`);
+        const m = data.metrics || {};
+
+        // The feature flag is the first thing an operator needs to see. A
+        // dashboard of zeroes means something very different when the fallback
+        // is switched off than when it is on and nothing is happening.
+        const flag = document.getElementById('pd-flag');
+        if (flag) {
+            flag.className = `chip chip-${data.enabled ? 'success' : 'muted'}`;
+            flag.textContent = data.enabled ? 'fallback ENABLED' : 'fallback disabled';
+        }
+
+        document.getElementById('pd-metrics').innerHTML = `
+            <div class="count-tile"><span>${m.offered ?? 0}</span><label>Offered</label></div>
+            <div class="count-tile"><span>${m.assigned ?? 0}</span><label>Assigned</label></div>
+            <div class="count-tile"><span>${m.assignmentSuccessRatePct ?? 0}%</span><label>Success rate</label></div>
+            <div class="count-tile"><span>${fmtMs(m.medianResponseTimeMs)}</span><label>Median response</label></div>
+            <div class="count-tile"><span>${fmtMs(m.medianAssignmentTimeMs)}</span><label>Median assign</label></div>
+            <div class="count-tile"><span>${fmtMs(m.avgPassengerWaitMs)}</span><label>Avg passenger wait</label></div>
+            <div class="count-tile"><span>${m.expired ?? 0}</span><label>Expired</label></div>
+            <div class="count-tile"><span>${(m.skipped ?? 0) + (m.rejected ?? 0)}</span><label>Skipped / rejected</label></div>`;
+
+        const live = document.getElementById('pd-live-list');
+        live.innerHTML = data.liveJobs.length ? data.liveJobs.map(j => `
+            <tr>
+                <td style="font-family:monospace;font-size:11px">${escapeHtml(j.rideId)}</td>
+                <td style="font-family:monospace;font-size:11px">${escapeHtml(j.parkId.slice(0, 8))}…</td>
+                <td><span class="chip chip-${j.status === 'claimed' ? 'warn' : 'info'}">${escapeHtml(j.status)}</span></td>
+                <td>${escapeHtml(String(j.priority))}</td>
+                <td>${new Date(j.offeredAt).toLocaleTimeString()}</td>
+                <td>${escapeHtml(j.claimedByStaffId ? j.claimedByStaffId.slice(0, 8) + '…' : '—')}</td>
+                <td>${j.attemptNumber}</td>
+            </tr>`).join('')
+            : '<tr><td colspan="7">Nothing in a park queue right now.</td></tr>';
+
+        const disp = document.getElementById('pd-dispatchers');
+        disp.innerHTML = data.dispatchers.length ? data.dispatchers.map(d => `
+            <tr>
+                <td>${escapeHtml(d.name)}</td>
+                <td>${d.claimed}</td>
+                <td>${d.assigned}</td>
+                <td>${d.skipped}</td>
+                <td>${fmtMs(d.avgResponseMs)}</td>
+            </tr>`).join('')
+            : '<tr><td colspan="5">No dispatcher activity in this window.</td></tr>';
+
+        document.getElementById('pd-utilisation').innerHTML = data.parkUtilisation.length
+            ? data.parkUtilisation.map(p => {
+                const c = p.counts || {};
+                const w = p.windowMetrics || {};
+                return `
+                <div class="park-card" onclick="openParkDetail('${escapeHtml(p.parkId)}')">
+                    <div class="park-card-head">
+                        <div><h3>${escapeHtml(p.name)}</h3><code class="park-code">${escapeHtml(p.code)}</code></div>
+                        <span class="chip chip-${p.liveJobs > 0 ? 'warn' : 'muted'}">${p.liveJobs} live</span>
+                    </div>
+                    <div class="park-metrics">
+                        <div><span>${c.waitingDriverCount ?? 0}</span><label>Waiting</label></div>
+                        <div><span>${c.capacityUtilisationPct ?? 0}%</span><label>Capacity</label></div>
+                        <div><span>${w.offered ?? 0}</span><label>Offered</label></div>
+                        <div><span>${w.assignmentSuccessRatePct ?? 0}%</span><label>Success</label></div>
+                    </div>
+                </div>`;
+            }).join('')
+            : '<p class="section-note">No active parks.</p>';
+    } catch { /* surfaced by adminFetch */ }
 }
 
 document.addEventListener('DOMContentLoaded', () => {

@@ -1,7 +1,7 @@
 # Dispatcher Operations
 
-**Phase 4.** How a trained dispatcher at a Keke park actually works a shift, and
-what the software does and does not let them do.
+**Phases 4–5.** How a trained dispatcher at a Keke park actually works a shift,
+and what the software does and does not let them do.
 
 Written for two readers: the person training dispatchers, and the engineer who
 gets paged when a park goes quiet.
@@ -34,8 +34,10 @@ server, not by hiding buttons — see §7.
 
 ## 2. The screen
 
-One screen, two panels, no navigation. Served at `/dispatcher` from the same
-origin as the API.
+One screen, two panels, no navigation. An installable PWA served at
+`/dispatch` from the same origin as the API — in production,
+`https://dispatch.kekeride.ng`. `/dispatcher` still works so early bookmarks
+keep opening.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
@@ -97,20 +99,27 @@ so the dispatcher can fix it rather than wonder.
    disappears from every other dispatcher's actionable set.
 3. The driver panel re-ranks itself for that specific ride and tells you who to
    ask first.
-4. **One tap on a driver assigns them.** There is no confirmation modal. A
-   dispatcher with a passenger waiting should not have to confirm what they
-   just deliberately pressed.
+4. **Tap a driver.** A short review sheet appears: their photo and unit, the
+   pickup, destination, passenger and fare, and which handoff applies.
+5. **Confirm once.** That is the assignment.
+
+Two steps, not one. The first version assigned on the first tap, on the
+reasoning that a dispatcher with a passenger waiting should not have to confirm
+what they deliberately pressed. That holds right up until the list re-ranks
+under a moving thumb — and then it hands a real trip to the wrong driver with
+no moment at which anyone could have noticed. The sheet costs one tap.
 
 Keyboard equivalents exist for every step (`↑↓`, `Enter`, `1`–`9`, `V`, `K`,
 `E`, `/`, `S`) because a tablet on a counter with a keyboard is faster than
-tapping, and some parks will run this on a desktop.
+tapping, and some parks will run this on a desktop. `1`–`9` and `V` open the
+sheet; nothing assigns without the confirm.
 
 ### What happens next depends on the driver's phone
 
 | Driver | What Assign does |
 |---|---|
 | **Smartphone** | Sends the offer to their device — the same card, countdown and Accept/Decline they already know from direct dispatch. The job goes to `pending_acceptance` and the dispatcher's card counts down. |
-| **Feature phone** | You have *already spoken to them*. Press `V` (verbal). The ride is theirs immediately. |
+| **Feature phone** | You have *already spoken to them*. The sheet says "Verbal handoff"; confirming makes the ride theirs immediately. |
 
 The verbal path is not a degraded fallback; it is the primary path for most of
 the fleet. The dispatcher walking three metres and asking "Uche, Zik Avenue to
@@ -191,9 +200,16 @@ the server was still working.
 The queue card shows a passenger's **first name** and a **masked** number
 (`0815•••942`). A dispatcher needs to greet someone, not identify them.
 
-Revealing a full number is a supervisor action, audited, with a reason. The
-driver gets the passenger's contact through the existing ride flow once
-assigned, exactly as with direct dispatch — the dispatcher is not in that path.
+Revealing a full number is a **support** action, not a park one. It needs
+`monitor:reveal_contact`, which only SUPER_ADMIN and SUPPORT_OFFICER hold —
+deliberately, not by oversight. A park supervisor cannot do it either.
+
+So a dispatcher who genuinely needs to reach a passenger escalates the request
+and support makes the call, through
+`POST /admin/live-requests/:rideId/reveal-contact` — audited, with a reason.
+
+The driver gets the passenger's contact through the existing ride flow once
+assigned, exactly as with direct dispatch. The dispatcher is never in that path.
 
 ---
 

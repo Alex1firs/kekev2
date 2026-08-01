@@ -34,7 +34,6 @@ import { ParkAssignmentMode } from '../models/ParkDispatchJob';
 import { DispatcherDashboardService } from '../services/dispatcher_dashboard_service';
 import { errBody, ErrorCode, AppError } from '../utils/errors';
 import { ParkDispatchSwitch } from '../services/park_dispatch_switch';
-import { ContactAccessService } from '../services/contact_access_service';
 import { IdempotencyService, InFlightError } from '../services/idempotency_service';
 import { ParkDispatchJobRepository } from '../repositories/park_dispatch_job_repository';
 import { loadParkDispatchConfig } from '../config/park_dispatch_config';
@@ -409,51 +408,23 @@ router.get('/requests/:jobId/drivers', async (req: StaffRequest, res: Response) 
     }
 });
 
-/**
- * POST /dispatcher/requests/:jobId/reveal-contact
+/*
+ * There is deliberately NO contact-reveal endpoint here.
  *
- * The passenger's real number, for the rare case that needs it — a pickup
- * nobody can find, a passenger who has to be told the Keke is a different
- * colour than the app says.
+ * One was added in Phase 5 and it could never have worked: it required an open
+ * dispatcher shift AND `monitor:reveal_contact`, and no role holds both.
+ * `monitor:reveal_contact` belongs to SUPER_ADMIN and SUPPORT_OFFICER, neither
+ * of whom opens a shift at a park. Every call would have returned 403 — an
+ * endpoint that looks like a way out of a problem and never is.
  *
- * Gated on MONITOR_REVEAL_CONTACT, which a PARK_DISPATCHER does NOT hold: this
- * is a supervisor action taken on a dispatcher's behalf, not part of the
- * ordinary flow. A reason is mandatory, the audit row is written before the
- * number is returned, and the reveal expires.
+ * Revealing a passenger's number is a support action, and the route for it
+ * already exists: POST /admin/live-requests/:rideId/reveal-contact, gated on
+ * the same permission, audited, with no shift requirement. A dispatcher who
+ * genuinely needs a number escalates the request; support makes the call.
  *
- * Park-scoped like everything else here — a supervisor cannot use it to read
- * numbers from a park they have no business in.
+ * That the park cannot self-serve here is the Phase 1 privacy posture working
+ * as designed, not a gap.
  */
-router.post('/requests/:jobId/reveal-contact',
-    requireStaffPermission(StaffPermission.MONITOR_REVEAL_CONTACT),
-    async (req: StaffRequest, res: Response) => {
-        try {
-            const shift = await requireOpenShift(req);
-            const jobId = String(req.params.jobId);
-
-            const job = await ParkDispatchJobRepository.findById(jobId);
-            if (!job) return res.status(404).json(errBody(ErrorCode.NOT_FOUND, 'Request not found.'));
-            if (job.parkId !== shift.parkId) {
-                return res.status(403).json(errBody(ErrorCode.FORBIDDEN, 'That request belongs to another park.'));
-            }
-
-            const reason = String(req.body?.reason ?? '').trim();
-            if (reason.length < 5) {
-                return res.status(400).json(errBody(ErrorCode.VALIDATION_ERROR,
-                    'Say why you need the number. It is recorded against your name.'));
-            }
-
-            const contact = await ContactAccessService.revealPassengerContactForStaff({
-                rideId: job.rideId,
-                actor: auditActorOf(req.actor),
-                reason,
-                ...ctxOf(req),
-            });
-            return res.json({ contact });
-        } catch (err: any) {
-            return fail(res, err, "We couldn't reveal that contact.");
-        }
-    });
 
 /** POST /dispatcher/requests/:jobId/claim — take responsibility for sourcing a driver. */
 router.post('/requests/:jobId/claim', requireStaffPermission(StaffPermission.DISPATCH_CLAIM), async (req: StaffRequest, res: Response) => {

@@ -406,8 +406,8 @@ client has no code path expecting otherwise.
 
 ## 9. Known limitations
 
-1. **Park request assignment does not exist.** By design — that is Phase 4. `dispatch:claim` and
-   `dispatch:assign_driver` are granted to dispatchers but no route consumes them yet.
+1. ~~**Park request assignment does not exist.**~~ **DELIVERED in Phase 3.** See
+   [park_dispatch_integration.md](./park_dispatch_integration.md).
 2. **Badge scanning is not implemented.** `verifyPayload` settles the format and is tested; the scan →
    photo-confirm → assign flow is Phase 4.
 3. **Shift counters are always zero.** `requestsReceived` / `assignmentsMade` are maintained by later

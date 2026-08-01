@@ -71,6 +71,36 @@ app.post('/api/v1/finance/webhook', express.raw({ type: 'application/json' }), a
 app.use(express.json({ limit: '1mb' }));
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
+/**
+ * The dispatcher workspace, served from the backend itself.
+ *
+ * Same-origin on purpose: the app talks to /api/v1 and opens a Socket.IO
+ * connection, and serving it from anywhere else would mean CORS on both plus a
+ * second thing to deploy. A park device opens one URL and works.
+ *
+ * The directory sits outside the compiled output, so the path is resolved
+ * relative to the source tree in development and to dist/ in production —
+ * hence the two candidates.
+ */
+const dispatcherAppDir = [
+  path.join(__dirname, '../../keke_dispatcher'),
+  path.join(__dirname, '../../../keke_dispatcher'),
+].find((candidate) => {
+  try { return require('fs').existsSync(path.join(candidate, 'index.html')); } catch { return false; }
+});
+if (dispatcherAppDir) {
+  app.use('/dispatcher', express.static(dispatcherAppDir, {
+    // The shell must never be cached: a dispatcher on a stale build during a
+    // shift is a support call nobody can diagnose over the phone.
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+    },
+  }));
+  console.log(JSON.stringify({ level: 'info', message: `Dispatcher workspace served from ${dispatcherAppDir} at /dispatcher` }));
+} else {
+  console.warn(JSON.stringify({ level: 'warn', message: 'Dispatcher workspace directory not found — /dispatcher will 404' }));
+}
+
 app.use((req, res, next) => {
   const start = Date.now();
   const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;

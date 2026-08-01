@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <!-- viewport-fit=cover + user-scalable=no: this runs full-screen on a park
+         tablet where an accidental pinch-zoom mid-shift is a real problem. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+    <meta name="theme-color" content="#12161d">
+    <title>KekeRide Dispatcher</title>
+    <link rel="stylesheet" href="styles.css?v=1.0">
+</head>
+<body class="booting">
+
+<!-- ═══ Sign in ═══════════════════════════════════════════════════════ -->
+<div id="login" class="login-screen">
+    <div class="login-card">
+        <div class="brand"><span class="brand-mark">◆</span> KekeRide <strong>Dispatcher</strong></div>
+        <p class="login-sub">Sign in with your staff account.</p>
+        <form id="login-form">
+            <label>Email
+                <input type="email" id="login-email" autocomplete="username" required
+                       inputmode="email" autocapitalize="off" spellcheck="false">
+            </label>
+            <label>Password
+                <input type="password" id="login-password" autocomplete="current-password" required>
+            </label>
+            <button type="submit" id="login-btn" class="btn btn-primary btn-block">Sign in</button>
+        </form>
+        <p id="login-error" class="login-error hidden"></p>
+        <p class="login-foot">Your actions are recorded against your name.</p>
+    </div>
+</div>
+
+<!-- ═══ Shift not started ═════════════════════════════════════════════ -->
+<div id="shift-gate" class="login-screen hidden">
+    <div class="login-card">
+        <div class="brand"><span class="brand-mark">◆</span> Start your shift</div>
+        <p class="login-sub" id="shift-who"></p>
+        <label>Park
+            <select id="shift-park"></select>
+        </label>
+        <button id="shift-start" class="btn btn-primary btn-block">Start shift</button>
+        <p id="shift-error" class="login-error hidden"></p>
+        <p class="login-foot">
+            You can read the board without a shift. Taking requests and assigning
+            drivers needs one open.
+        </p>
+        <button id="shift-signout" class="btn btn-ghost btn-block">Sign out</button>
+    </div>
+</div>
+
+<!-- ═══ Workspace ════════════════════════════════════════════════════ -->
+<div id="workspace" class="workspace hidden">
+
+    <header class="topbar">
+        <div class="topbar-left">
+            <span class="brand-mark">◆</span>
+            <div>
+                <div class="park-name" id="hdr-park">—</div>
+                <div class="park-sub"><span id="hdr-code">—</span> · <span id="hdr-shift">—</span></div>
+            </div>
+        </div>
+
+        <div class="counters" id="counters"></div>
+
+        <div class="topbar-right">
+            <span id="conn" class="conn conn-down" title="Realtime connection">offline</span>
+            <button id="btn-sound" class="btn btn-icon" title="Alert sound (S)" aria-label="Toggle alert sound">🔔</button>
+            <button id="btn-end-shift" class="btn btn-ghost">End shift</button>
+        </div>
+    </header>
+
+    <main class="grid">
+        <!-- Queue -->
+        <section class="panel panel-queue">
+            <div class="panel-head">
+                <h2>Incoming requests <span id="queue-count" class="pill">0</span></h2>
+                <input type="search" id="queue-search" class="search" placeholder="Filter by pickup, destination or name">
+            </div>
+            <div id="queue" class="queue" role="list"></div>
+            <div id="queue-empty" class="empty">
+                <div class="empty-mark">◆</div>
+                <p>No requests waiting.</p>
+                <small>Rides arrive here only when no nearby driver accepted directly.</small>
+            </div>
+        </section>
+
+        <!-- Drivers -->
+        <section class="panel panel-drivers">
+            <div class="panel-head">
+                <h2>Park drivers <span id="driver-count" class="pill">0</span></h2>
+                <input type="search" id="driver-search" class="search" placeholder="Filter by name, unit or plate">
+            </div>
+            <div id="selected-banner" class="selected-banner hidden"></div>
+            <div id="drivers" class="drivers" role="list"></div>
+            <div id="drivers-empty" class="empty">
+                <div class="empty-mark">◆</div>
+                <p>No drivers on this roster.</p>
+            </div>
+        </section>
+    </main>
+
+    <footer class="shortcuts">
+        <span><kbd>↑</kbd><kbd>↓</kbd> request</span>
+        <span><kbd>Enter</kbd> take</span>
+        <span><kbd>1</kbd>–<kbd>9</kbd> assign driver</span>
+        <span><kbd>V</kbd> verbal assign</span>
+        <span><kbd>K</kbd> skip</span>
+        <span><kbd>E</kbd> escalate</span>
+        <span><kbd>/</kbd> search</span>
+        <span><kbd>S</kbd> sound</span>
+    </footer>
+</div>
+
+<div id="toasts" class="toasts" aria-live="polite"></div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="app.js?v=1.0"></script>
+</body>
+</html>

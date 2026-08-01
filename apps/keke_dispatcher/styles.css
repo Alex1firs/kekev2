@@ -1,0 +1,448 @@
+/*
+ * KekeRide Dispatcher workspace.
+ *
+ * Designed for a park: a cheap Android tablet propped on a table, often in
+ * daylight, operated by someone standing up who has seconds to act. That drives
+ * every choice here.
+ *
+ *   - High contrast, large type. A 13px label is unreadable at arm's length in
+ *     sun through a windscreen.
+ *   - 56px minimum touch targets. A mis-tap costs a passenger a minute.
+ *   - Almost no animation. Two exceptions earn their place: a new request must
+ *     catch the eye, and an expiring one must feel urgent. Everything else is
+ *     instant, because motion on a repainting board is noise.
+ *   - Layout collapses to one column below 900px so the same build works on a
+ *     phone when the tablet dies.
+ */
+
+:root {
+    --bg: #0d1014;
+    --surface: #161b22;
+    --surface-2: #1d242e;
+    --border: #2a323d;
+    --text: #e8edf3;
+    --text-dim: #8b97a6;
+    --amber: #ffc400;
+    --green: #22c55e;
+    --red: #f43f5e;
+    --orange: #fb923c;
+    --blue: #60a5fa;
+    --purple: #a78bfa;
+
+    --radius: 14px;
+    --tap: 56px;             /* minimum touch target */
+    --gap: 14px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: 16px;
+    -webkit-font-smoothing: antialiased;
+    /* A dispatcher never wants to select text; they want to tap. */
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior: none;
+}
+
+body.booting > *:not(#login) { display: none; }
+.hidden { display: none !important; }
+
+kbd {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-bottom-width: 2px;
+    border-radius: 5px;
+    padding: 1px 6px;
+    font-size: 0.72rem;
+    font-family: ui-monospace, monospace;
+    color: var(--text-dim);
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────────── */
+
+.btn {
+    min-height: var(--tap);
+    padding: 0 20px;
+    border: 1px solid var(--border);
+    border-radius: 11px;
+    background: var(--surface-2);
+    color: var(--text);
+    font-size: 1rem;
+    font-weight: 650;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    /* No transition on background: a dispatcher tapping Assign should see the
+       result, not a fade. */
+}
+.btn:active { transform: scale(0.985); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-primary { background: var(--amber); color: #14181f; border-color: var(--amber); }
+.btn-danger { background: rgba(244,63,94,0.14); color: #fb7185; border-color: rgba(244,63,94,0.45); }
+.btn-ghost { background: transparent; }
+.btn-block { width: 100%; }
+.btn-icon { min-width: var(--tap); padding: 0; font-size: 1.3rem; }
+.btn-sm { min-height: 44px; padding: 0 14px; font-size: 0.9rem; }
+
+/* ── Sign in / shift gate ────────────────────────────────────────────── */
+
+.login-screen {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: var(--bg);
+    z-index: 100;
+}
+.login-card {
+    width: min(440px, 100%);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+.brand { font-size: 1.35rem; font-weight: 700; display: flex; align-items: center; gap: 10px; }
+.brand-mark { color: var(--amber); font-size: 1.2rem; }
+.login-sub { color: var(--text-dim); font-size: 0.95rem; }
+.login-card label { display: flex; flex-direction: column; gap: 7px; font-size: 0.88rem; color: var(--text-dim); }
+.login-card input, .login-card select {
+    min-height: var(--tap);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 11px;
+    color: var(--text);
+    padding: 0 16px;
+    font-size: 1.05rem;
+}
+.login-card input:focus, .login-card select:focus { outline: 2px solid var(--amber); outline-offset: 1px; }
+.login-error { color: #fb7185; font-size: 0.9rem; }
+.login-foot { color: var(--text-dim); font-size: 0.8rem; line-height: 1.5; }
+
+/* ── Workspace shell ─────────────────────────────────────────────────── */
+
+.workspace { height: 100%; display: flex; flex-direction: column; }
+
+.topbar {
+    display: flex;
+    align-items: center;
+    gap: var(--gap);
+    padding: 12px 18px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+    padding-top: max(12px, env(safe-area-inset-top));
+}
+.topbar-left { display: flex; align-items: center; gap: 12px; }
+.topbar-right { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+.park-name { font-size: 1.1rem; font-weight: 700; line-height: 1.2; }
+.park-sub { font-size: 0.76rem; color: var(--text-dim); }
+
+.conn {
+    font-size: 0.7rem;
+    font-weight: 700;
+    padding: 5px 11px;
+    border-radius: 20px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.conn-up { background: rgba(34,197,94,0.16); color: #4ade80; }
+/* Losing realtime is not cosmetic — the dispatcher stops seeing new work.
+   It has to be loud. */
+.conn-down { background: rgba(244,63,94,0.18); color: #fb7185; }
+
+/* ── Counters ────────────────────────────────────────────────────────── */
+
+.counters {
+    display: flex;
+    gap: 8px;
+    flex: 1;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+.counters::-webkit-scrollbar { display: none; }
+.counter {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 11px;
+    padding: 7px 14px;
+    text-align: center;
+    min-width: 78px;
+    flex-shrink: 0;
+}
+.counter b { display: block; font-size: 1.3rem; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.counter span { font-size: 0.62rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; }
+.counter-alert { border-color: rgba(244,63,94,0.5); background: rgba(244,63,94,0.1); }
+.counter-alert b { color: #fb7185; }
+.counter-good b { color: var(--green); }
+
+/* ── Grid ────────────────────────────────────────────────────────────── */
+
+.grid {
+    flex: 1;
+    display: grid;
+    grid-template-columns: minmax(380px, 1.05fr) minmax(380px, 1fr);
+    gap: var(--gap);
+    padding: var(--gap);
+    min-height: 0;
+}
+.panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+.panel-head {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+.panel-head h2 { font-size: 0.95rem; display: flex; align-items: center; gap: 9px; }
+.pill {
+    background: var(--amber);
+    color: #14181f;
+    font-size: 0.75rem;
+    font-weight: 800;
+    padding: 2px 9px;
+    border-radius: 20px;
+    font-variant-numeric: tabular-nums;
+}
+.pill-zero { background: var(--surface-2); color: var(--text-dim); }
+.search {
+    flex: 1;
+    min-width: 150px;
+    min-height: 44px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    color: var(--text);
+    padding: 0 14px;
+    font-size: 0.92rem;
+}
+.search:focus { outline: 2px solid var(--amber); outline-offset: 1px; }
+
+.queue, .drivers { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 11px; }
+
+.empty { flex: 1; display: none; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--text-dim); padding: 40px 20px; text-align: center; }
+.empty-mark { font-size: 2rem; color: var(--border); }
+.empty small { font-size: 0.78rem; max-width: 280px; line-height: 1.5; }
+
+/* ── Ride card ───────────────────────────────────────────────────────── */
+
+.card {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--border);
+    border-radius: 12px;
+    padding: 14px;
+    cursor: pointer;
+}
+.card-p1 { border-left-color: var(--blue); }
+.card-p2 { border-left-color: var(--orange); }
+.card-p3 { border-left-color: var(--red); }
+.card.selected { border-color: var(--amber); border-left-color: var(--amber); background: #232b36; }
+
+/* The only two animations in the product. A new request has to catch an eye
+   that is looking somewhere else; an expiring one has to feel like it is
+   running out. Everything else is instant. */
+@keyframes arrive { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+.card-new { animation: arrive 180ms ease-out; }
+@keyframes urgent-pulse { 0%,100% { border-left-color: var(--red); } 50% { border-left-color: #ff8fa3; } }
+.card-expiring { animation: urgent-pulse 1s ease-in-out infinite; }
+
+.card-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin-bottom: 10px; }
+.card-name { font-size: 1.05rem; font-weight: 700; }
+.card-meta { font-size: 0.75rem; color: var(--text-dim); margin-top: 2px; }
+.card-fare { font-size: 1.15rem; font-weight: 800; color: var(--amber); font-variant-numeric: tabular-nums; }
+
+.route { display: flex; flex-direction: column; gap: 6px; margin-bottom: 11px; }
+.route-line { display: flex; align-items: flex-start; gap: 9px; font-size: 0.92rem; line-height: 1.35; }
+.route-dot { width: 9px; height: 9px; border-radius: 50%; margin-top: 5px; flex-shrink: 0; }
+.dot-pickup { background: var(--green); }
+.dot-drop { background: var(--red); }
+
+.card-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 11px; }
+.tag {
+    font-size: 0.68rem;
+    font-weight: 700;
+    padding: 3px 9px;
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--text-dim);
+    border: 1px solid var(--border);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+.tag-urgent { background: rgba(244,63,94,0.18); color: #fb7185; border-color: rgba(244,63,94,0.4); }
+.tag-elevated { background: rgba(251,146,60,0.16); color: var(--orange); border-color: rgba(251,146,60,0.35); }
+.tag-wait { background: rgba(96,165,250,0.14); color: var(--blue); border-color: rgba(96,165,250,0.3); }
+.tag-pending { background: rgba(167,139,250,0.16); color: var(--purple); border-color: rgba(167,139,250,0.4); }
+
+.card-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.card-actions .btn { flex: 1; min-width: 96px; }
+
+.countdown {
+    font-variant-numeric: tabular-nums;
+    font-weight: 800;
+    font-size: 0.95rem;
+}
+.countdown-ok { color: var(--text-dim); }
+.countdown-warn { color: var(--orange); }
+.countdown-crit { color: #fb7185; }
+
+/* ── Driver row ──────────────────────────────────────────────────────── */
+
+.selected-banner {
+    margin: 12px 12px 0;
+    padding: 11px 14px;
+    background: rgba(255,196,0,0.1);
+    border: 1px solid rgba(255,196,0,0.4);
+    border-radius: 10px;
+    font-size: 0.88rem;
+    line-height: 1.4;
+}
+.selected-banner b { color: var(--amber); }
+
+.driver {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px 14px;
+    min-height: var(--tap);
+}
+.driver-recommended { border-color: var(--amber); background: #232b36; }
+.driver-blocked { opacity: 0.55; }
+
+.driver-key {
+    width: 30px; height: 30px;
+    flex-shrink: 0;
+    border-radius: 8px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.8rem; font-weight: 800; color: var(--text-dim);
+    font-family: ui-monospace, monospace;
+}
+.driver-main { flex: 1; min-width: 0; }
+.driver-name { font-size: 1rem; font-weight: 700; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.driver-unit { font-size: 0.75rem; color: var(--text-dim); font-family: ui-monospace, monospace; }
+.driver-reason { font-size: 0.78rem; color: var(--text-dim); margin-top: 3px; }
+.driver-badges { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+
+.badge {
+    font-size: 0.63rem;
+    font-weight: 800;
+    padding: 2px 7px;
+    border-radius: 5px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.badge-recommended { background: var(--amber); color: #14181f; }
+.badge-nearby { background: rgba(34,197,94,0.16); color: #4ade80; }
+.badge-returning_soon { background: rgba(96,165,250,0.16); color: var(--blue); }
+.badge-busy { background: rgba(251,146,60,0.16); color: var(--orange); }
+.badge-offline { background: rgba(139,151,166,0.15); color: var(--text-dim); }
+.badge-out_of_park { background: rgba(139,151,166,0.15); color: var(--text-dim); }
+.badge-wallet_blocked { background: rgba(244,63,94,0.18); color: #fb7185; }
+.badge-suspended { background: rgba(244,63,94,0.18); color: #fb7185; }
+.badge-no_badge { background: rgba(244,63,94,0.14); color: #fb7185; }
+.badge-declined_this_ride { background: rgba(244,63,94,0.18); color: #fb7185; }
+.badge-smartphone { background: rgba(96,165,250,0.14); color: var(--blue); }
+/* Feature phone is not a lesser status — it is a different workflow, and the
+   dispatcher must see it before they tap, not after. */
+.badge-feature_phone { background: rgba(167,139,250,0.18); color: var(--purple); }
+
+.driver-assign { flex-shrink: 0; }
+
+/* ── Toasts ──────────────────────────────────────────────────────────── */
+
+.toasts {
+    position: fixed;
+    bottom: max(20px, env(safe-area-inset-bottom));
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 9px;
+    z-index: 200;
+    pointer-events: none;
+    width: min(560px, calc(100vw - 32px));
+}
+.toast {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--amber);
+    border-radius: 11px;
+    padding: 14px 18px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    box-shadow: 0 10px 34px rgba(0,0,0,0.5);
+}
+.toast-success { border-left-color: var(--green); }
+.toast-error { border-left-color: var(--red); }
+.toast-warn { border-left-color: var(--orange); }
+
+/* ── Shortcut bar ────────────────────────────────────────────────────── */
+
+.shortcuts {
+    display: flex;
+    gap: 18px;
+    padding: 9px 18px;
+    padding-bottom: max(9px, env(safe-area-inset-bottom));
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    font-size: 0.72rem;
+    color: var(--text-dim);
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+.shortcuts::-webkit-scrollbar { display: none; }
+.shortcuts span { display: flex; align-items: center; gap: 5px; white-space: nowrap; }
+
+/* ── Narrow screens: the tablet died and somebody grabbed a phone ────── */
+
+@media (max-width: 900px) {
+    .grid { grid-template-columns: 1fr; }
+    /* Both panels stay reachable by scrolling the page rather than nesting
+       two independent scroll areas, which is miserable on a phone. */
+    .grid { overflow-y: auto; }
+    .panel { min-height: 62vh; }
+    .counters { order: 3; width: 100%; }
+    .topbar { gap: 10px; }
+    .shortcuts { display: none; }   /* no keyboard on a phone */
+}
+
+@media (max-width: 560px) {
+    :root { --gap: 10px; }
+    .card-actions .btn { min-width: 0; }
+    .topbar-right .btn-ghost { display: none; }
+}
+
+/* Daylight in a park with a glass roof. Respect the OS, but never go light —
+   a white screen outdoors is worse, not better. */
+@media (prefers-contrast: more) {
+    :root { --text-dim: #b3bdc9; --border: #3a4552; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .card-new, .card-expiring { animation: none; }
+}

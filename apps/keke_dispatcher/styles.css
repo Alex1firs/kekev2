@@ -642,3 +642,19 @@ kbd {
     border-left: 2px solid var(--border);
     padding-left: 9px;
 }
+
+/*
+ * The one operating instruction a dispatcher must not miss. Given the weight of
+ * a warning rather than fine print, because a closed app is silent and there is
+ * no second chance to say so.
+ */
+.shift-keep-open {
+    margin: 4px 0 16px;
+    padding: 12px 14px;
+    border-radius: 12px;
+    background: rgba(255,193,7,0.12);
+    border: 1px solid rgba(255,193,7,0.45);
+    color: #fde68a;
+    font-size: 0.88rem;
+    line-height: 1.5;
+}

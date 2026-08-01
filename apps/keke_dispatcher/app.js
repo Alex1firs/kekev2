@@ -260,6 +260,36 @@ function toast(message, kind = 'info', ms = 4200) {
 }
 
 
+// ── Leaving the app ──────────────────────────────────────────────────────
+
+/**
+ * Warn a dispatcher who is about to close or navigate away mid-shift.
+ *
+ * Web Push is not enabled, so a CLOSED app cannot be woken — no sound, no
+ * notification, nothing. A dispatcher who closes the tab at 09:00 will not know
+ * a passenger is waiting at 09:05, and neither will anyone else.
+ *
+ * The browser will not let us choose the wording; every modern browser shows
+ * its own generic "Leave site?" text. What we control is WHETHER it appears,
+ * and it appears exactly when it matters: on shift.
+ */
+window.addEventListener('beforeunload', (e) => {
+    if (!S.shift) return;                 // not on shift — nothing to lose
+    if (leavingDeliberately) return;      // signing out or ending a shift
+
+    // Setting returnValue is what triggers the prompt. The string is ignored
+    // by browsers but still required by some of them.
+    e.preventDefault();
+    e.returnValue = 'You are on shift. Park Dispatch cannot alert you once this is closed.';
+    return e.returnValue;
+});
+
+/**
+ * Set when the dispatcher is leaving on purpose — ending a shift, signing out,
+ * or applying an update. Without it, every intentional exit would also nag.
+ */
+let leavingDeliberately = false;
+
 // ── PWA lifecycle ────────────────────────────────────────────────────────
 
 /**
@@ -316,6 +346,7 @@ function offerUpdate(worker) {
 }
 
 $('update-apply').addEventListener('click', () => {
+    leavingDeliberately = true;
     if (!waitingWorker) { location.reload(); return; }
     // Reload once the new worker takes control, not before, or the old shell
     // is what gets re-rendered.
@@ -475,6 +506,7 @@ $('login-form').addEventListener('submit', async (e) => {
 });
 
 async function signOut() {
+    leavingDeliberately = true;
     // Tell the server first so the session is revoked even if the reload is
     // interrupted, then remove every local trace.
     await fetch(`${API_ROOT}/staff/auth/logout`, {
@@ -726,6 +758,7 @@ $('shift-end-confirm').addEventListener('click', async () => {
         await api('/dispatcher/shifts/close', 'POST', {
             handoverNotes: $('shift-end-handover').value.trim() || null,
         });
+        leavingDeliberately = true;
         stopRealert();
         location.replace('./index.html');
     } catch (err) {

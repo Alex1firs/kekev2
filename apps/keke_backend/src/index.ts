@@ -13,6 +13,7 @@ import financeRoutes from './routes/finance_routes';
 import adminRoutes from './routes/admin_routes';
 import driverRoutes from "./routes/driver_routes";
 import authRoutes, { driverAuthRouter } from "./routes/auth_routes";
+import staffAuthRoutes from "./routes/staff_auth_routes";
 import rideRoutes from "./routes/ride_routes";
 import notificationRoutes from "./routes/notification_routes";
 import passengerRoutes from "./routes/passenger_routes";
@@ -97,6 +98,9 @@ app.get('/health', async (req, res) => {
 
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/driver/auth', driverAuthRouter);
+// Staff identity. Deliberately its own path and its own token audience — a
+// staff session must never be reachable through the customer auth surface.
+app.use('/api/v1/staff/auth', staffAuthRoutes);
 app.use('/api/v1/finance', financeRoutes);
 app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/drivers', driverRoutes);

@@ -2,6 +2,10 @@ import { Router, Request, Response } from "express";
 import { AdminService } from "../services/admin_service";
 import { adminAuth } from "../middleware/admin_auth";
 import { attachAdminIdentity, requirePermission, AdminRequest } from "../middleware/admin_permissions";
+import { resolveActor, requireStaffAuth } from "../middleware/staff_auth";
+import { SYSTEM_LEGACY_ADMIN } from "../services/audit_service";
+import staffAdminRoutes from "./staff_admin_routes";
+import parkAdminRoutes from "./park_admin_routes";
 import { DispatchMonitorQueryService } from "../services/dispatch_monitor_query_service";
 import { adminLimiter } from "../middleware/rate_limit";
 import { adminRejectionSchema } from "../services/validation_service";
@@ -20,10 +24,39 @@ import sharp from "sharp";
 
 const router = Router();
 
-// Apply Admin Auth & Rate Limiting
+// Apply Admin Auth & Rate Limiting.
+//
+// adminAuth      — refuses anything presenting neither a bearer token nor a
+//                  valid legacy key, so nothing unauthenticated gets further.
+// resolveActor   — resolves the credential to a named staff member, or to the
+//                  explicitly-labelled legacy actor.
+// requireStaffAuth — 401 when the credential was presented but did not resolve
+//                  (expired session, revoked account, bumped credentialVersion).
+// attachAdminIdentity — projects the actor onto the legacy req.admin shape the
+//                  handlers below already read.
 router.use(adminAuth);
+router.use(resolveActor);
+router.use(requireStaffAuth);
 router.use(attachAdminIdentity);
 router.use(adminLimiter);
+
+/**
+ * The identity recorded in the LEGACY `audit_log` table for this request.
+ *
+ * A named staff member is recorded by their staff id — so these rows finally
+ * name a human. A legacy shared-key request keeps the previous
+ * `admin_<last 8 chars>` shape so historical rows stay comparable.
+ *
+ * This helper exists because the previous inline expression dereferenced
+ * `req.headers['x-admin-key']` unconditionally. With staff sessions there is no
+ * such header, and `.slice()` on undefined would throw — turning every one of
+ * these handlers into a 500 the moment somebody signed in properly.
+ */
+function legacyAuditActor(req: AdminRequest): string {
+    if (req.actor && !req.actor.isLegacy) return req.actor.staffUserId;
+    const key = req.headers['x-admin-key'] as string | undefined;
+    return key ? `admin_${key.slice(-8)}` : SYSTEM_LEGACY_ADMIN;
+}
 
 /** Record a sensitive admin action against the acting role. */
 async function auditAdmin(
@@ -339,7 +372,7 @@ router.post("/drivers/:userId/documents/:docType", upload.single("document"), as
             try { fs.unlinkSync(path.join(__dirname, "../../uploads", path.basename(oldFilename))); } catch (_) {}
         }
 
-        const adminId = `admin_${(req.headers["x-admin-key"] as string).slice(-8)}`;
+        const adminId = legacyAuditActor(req as AdminRequest);
         try {
             await AppDataSource.getRepository(AuditLog).save(AppDataSource.getRepository(AuditLog).create({
                 adminId,
@@ -365,7 +398,7 @@ router.post("/drivers/:userId/documents/:docType", upload.single("document"), as
 router.post("/drivers/:userId/approve", async (req: Request, res: Response) => {
     try {
         const userId = req.params.userId as string;
-        const adminId = `admin_${(req.headers['x-admin-key'] as string).slice(-8)}`;
+        const adminId = legacyAuditActor(req as AdminRequest);
         const result = await AdminService.updateDriverStatus(userId, DriverStatus.APPROVED, undefined, adminId);
         res.json(result);
     } catch (err: any) {
@@ -386,7 +419,7 @@ router.post("/drivers/:userId/reject", async (req: Request, res: Response) => {
           return res.status(400).json({ error: "Validation Failed", details: validated.error.format() });
         }
 
-        const adminId = `admin_${(req.headers['x-admin-key'] as string).slice(-8)}`;
+        const adminId = legacyAuditActor(req as AdminRequest);
         const result = await AdminService.updateDriverStatus(userId, DriverStatus.REJECTED, validated.data.reason, adminId);
         res.json(result);
     } catch (err: any) {
@@ -400,7 +433,7 @@ router.post("/drivers/:userId/reject", async (req: Request, res: Response) => {
 router.post("/drivers/:userId/suspend", async (req: Request, res: Response) => {
     try {
         const userId = req.params.userId as string;
-        const adminId = `admin_${(req.headers['x-admin-key'] as string).slice(-8)}`;
+        const adminId = legacyAuditActor(req as AdminRequest);
         const result = await AdminService.updateDriverStatus(userId, DriverStatus.SUSPENDED, req.body.reason || "Policy violation", adminId);
         res.json(result);
     } catch (err: any) {
@@ -414,7 +447,7 @@ router.post("/drivers/:userId/suspend", async (req: Request, res: Response) => {
 router.post("/drivers/:userId/activate", async (req: Request, res: Response) => {
     try {
         const userId = req.params.userId as string;
-        const adminId = `admin_${(req.headers['x-admin-key'] as string).slice(-8)}`;
+        const adminId = legacyAuditActor(req as AdminRequest);
         const result = await AdminService.updateDriverStatus(userId, DriverStatus.APPROVED, undefined, adminId);
         res.json(result);
     } catch (err: any) {
@@ -489,7 +522,7 @@ router.get("/finance/payouts", async (req: Request, res: Response) => {
  */
 router.post("/finance/payouts/:id/process", async (req: Request, res: Response) => {
     try {
-        const adminId = `admin_${(req.headers['x-admin-key'] as string).slice(-8)}`;
+        const adminId = legacyAuditActor(req as AdminRequest);
         const payout = await AdminService.updatePayoutStatus(req.params.id as string, 'processing' as any, adminId);
         res.json(payout);
     } catch (err: any) {
@@ -499,7 +532,7 @@ router.post("/finance/payouts/:id/process", async (req: Request, res: Response) 
 
 router.post("/finance/payouts/:id/complete", async (req: Request, res: Response) => {
     try {
-        const adminId = `admin_${(req.headers['x-admin-key'] as string).slice(-8)}`;
+        const adminId = legacyAuditActor(req as AdminRequest);
         const payout = await AdminService.updatePayoutStatus(req.params.id as string, 'success' as any, adminId);
         res.json(payout);
     } catch (err: any) {
@@ -509,7 +542,7 @@ router.post("/finance/payouts/:id/complete", async (req: Request, res: Response)
 
 router.post("/finance/payouts/:id/fail", async (req: Request, res: Response) => {
     try {
-        const adminId = `admin_${(req.headers['x-admin-key'] as string).slice(-8)}`;
+        const adminId = legacyAuditActor(req as AdminRequest);
         const payout = await AdminService.updatePayoutStatus(req.params.id as string, 'failed' as any, adminId);
         res.json(payout);
     } catch (err: any) {
@@ -558,7 +591,7 @@ router.post("/settings", async (req: Request, res: Response) => {
         await SettingService.setSetting("perKmRate", String(perKmRate));
         await SettingService.setSetting("platformFeePercent", String(platformFeePercent));
 
-        const adminId = `admin_${(req.headers['x-admin-key'] as string).slice(-8)}`;
+        const adminId = legacyAuditActor(req as AdminRequest);
         
         // Log this action to the AuditLog
         const auditRepo = AppDataSource.getRepository(AuditLog);
@@ -635,7 +668,7 @@ router.get("/sos/active", async (req: Request, res: Response) => {
  */
 router.post("/sos/:id/resolve", async (req: Request, res: Response) => {
     try {
-        const adminId = `admin_${(req.headers['x-admin-key'] as string).slice(-8)}`;
+        const adminId = legacyAuditActor(req as AdminRequest);
         const repo = AppDataSource.getRepository(SosAlert);
         const alert = await repo.findOne({ where: { id: req.params.id as string } });
         if (!alert) return res.status(404).json({ error: "Alert not found" });
@@ -701,7 +734,7 @@ router.post("/rides/:rideId/release", async (req: Request, res: Response) => {
         });
         await rideRepo.update(rideId, { paymentHeld: false } as any);
 
-        const adminId = `admin_${(req.headers['x-admin-key'] as string).slice(-8)}`;
+        const adminId = legacyAuditActor(req as AdminRequest);
         await AppDataSource.getRepository(AuditLog).save(AppDataSource.getRepository(AuditLog).create({
             adminId, action: "RELEASED_HELD_RIDE_PAYMENT", entityType: "RIDE", entityId: rideId,
             details: { amount, paymentMode: ride.paymentMode },
@@ -725,7 +758,7 @@ router.post("/rides/:rideId/void", async (req: Request, res: Response) => {
 
         await rideRepo.update(rideId, { paymentHeld: false, paymentFailed: true } as any);
 
-        const adminId = `admin_${(req.headers['x-admin-key'] as string).slice(-8)}`;
+        const adminId = legacyAuditActor(req as AdminRequest);
         await AppDataSource.getRepository(AuditLog).save(AppDataSource.getRepository(AuditLog).create({
             adminId, action: "VOIDED_HELD_RIDE_PAYMENT", entityType: "RIDE", entityId: rideId,
             details: { reason: (req.body?.reason ?? null), suspiciousReason: ride.suspiciousReason },
@@ -735,6 +768,16 @@ router.post("/rides/:rideId/void", async (req: Request, res: Response) => {
         res.status(500).json({ error: err.message });
     }
 });
+
+// Staff management, the audit log and the new contact-reveal endpoints.
+//
+// Mounted LAST so every route above keeps precedence — this addition cannot
+// shadow an existing admin path. It inherits the auth chain applied at the top
+// of this file, so there is one way in, not two.
+router.use(staffAdminRoutes);
+// Park infrastructure, rosters, shifts, presence and badges. Same auth chain,
+// same precedence rule: mounted last so nothing above can be shadowed.
+router.use(parkAdminRoutes);
 
 export default router;
 

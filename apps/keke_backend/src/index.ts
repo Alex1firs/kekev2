@@ -13,11 +13,14 @@ import financeRoutes from './routes/finance_routes';
 import adminRoutes from './routes/admin_routes';
 import driverRoutes from "./routes/driver_routes";
 import authRoutes, { driverAuthRouter } from "./routes/auth_routes";
+import staffAuthRoutes from "./routes/staff_auth_routes";
+import dispatcherRoutes from "./routes/dispatcher_routes";
 import rideRoutes from "./routes/ride_routes";
 import notificationRoutes from "./routes/notification_routes";
 import passengerRoutes from "./routes/passenger_routes";
 import { NotificationService } from './services/notification_service';
 import { StaleRideSweeper } from './services/stale_ride_sweeper';
+import { ParkJobSweeper } from './services/park_job_sweeper';
 import { redis } from './config/redis';
 
 dotenv.config();
@@ -68,6 +71,68 @@ app.post('/api/v1/finance/webhook', express.raw({ type: 'application/json' }), a
 app.use(express.json({ limit: '1mb' }));
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
+/**
+ * The dispatcher workspace, served from the backend itself.
+ *
+ * Same-origin on purpose: the app talks to /api/v1 and opens a Socket.IO
+ * connection, and serving it from anywhere else would mean CORS on both plus a
+ * second thing to deploy. A park device opens one URL and works.
+ *
+ * The directory sits outside the compiled output, so the path is resolved
+ * relative to the source tree in development and to dist/ in production —
+ * hence the two candidates.
+ */
+const dispatcherAppDir = [
+  path.join(__dirname, '../../keke_dispatcher'),
+  path.join(__dirname, '../../../keke_dispatcher'),
+].find((candidate) => {
+  try { return require('fs').existsSync(path.join(candidate, 'index.html')); } catch { return false; }
+});
+if (dispatcherAppDir) {
+  const dispatcherStatic = express.static(dispatcherAppDir, {
+    setHeaders: (res, filePath) => {
+      /*
+       * The shell must never be cached by the browser: a dispatcher on a stale
+       * build during a shift is a support call nobody can diagnose over the
+       * phone. The SERVICE WORKER still caches it for offline start-up — that
+       * copy is versioned and dropped on activate, so it cannot outlive a
+       * deploy the way an HTTP cache entry can.
+       */
+      if (filePath.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+
+      /*
+       * A service worker's scope cannot be broader than its own path, so this
+       * one only ever controls /dispatch/. Served no-cache for the same reason
+       * as the shell: an update must be able to land.
+       */
+      if (filePath.endsWith('sw.js')) {
+        res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+        res.setHeader('Service-Worker-Allowed', '/dispatch/');
+      }
+
+      if (filePath.endsWith('.webmanifest')) {
+        res.setHeader('Content-Type', 'application/manifest+json; charset=utf-8');
+      }
+    },
+  });
+
+  /*
+   * `/dispatch` is the canonical route and the PWA's scope. `/dispatcher`
+   * stays mounted because it is what the first devices were set up with, and a
+   * park tablet with a bookmark that stops working on launch morning is not a
+   * trade worth making. Both serve the identical directory.
+   */
+  app.use('/dispatch', dispatcherStatic);
+  app.use('/dispatcher', dispatcherStatic);
+
+  // Bare /dispatch → /dispatch/ so relative asset paths and the SW scope resolve.
+  app.get('/dispatch', (_req, res) => res.redirect(301, '/dispatch/'));
+
+  console.log(JSON.stringify({ level: 'info', message: `Park Dispatch app served from ${dispatcherAppDir} at /dispatch (alias /dispatcher)` }));
+} else {
+  console.warn(JSON.stringify({ level: 'warn', message: 'Park Dispatch app directory not found — /dispatch will 404' }));
+}
+
 app.use((req, res, next) => {
   const start = Date.now();
   const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -97,6 +162,12 @@ app.get('/health', async (req, res) => {
 
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/driver/auth', driverAuthRouter);
+// Staff identity. Deliberately its own path and its own token audience — a
+// staff session must never be reachable through the customer auth surface.
+app.use('/api/v1/staff/auth', staffAuthRoutes);
+// The park dispatcher device surface. Staff sessions only — the legacy shared
+// key is refused outright, because every action here must name a person.
+app.use('/api/v1/dispatcher', dispatcherRoutes);
 app.use('/api/v1/finance', financeRoutes);
 app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/drivers', driverRoutes);
@@ -163,6 +234,15 @@ AppDataSource.initialize()
       StaleRideSweeper.start();
     } catch (e: any) {
       console.error(JSON.stringify({ level: 'error', message: 'Failed to start stale-ride sweeper', error: e.message }));
+    }
+
+    // Expires park dispatch jobs whose claim or assignment window elapsed. A
+    // no-op unless PARK_DISPATCH_ENABLED is true, and guarded by its own
+    // advisory lock so several instances can run it safely.
+    try {
+      ParkJobSweeper.start();
+    } catch (e: any) {
+      console.error(JSON.stringify({ level: 'error', message: 'Failed to start park job sweeper', error: e.message }));
     }
 
     const server = httpServer.listen(PORT, () => {

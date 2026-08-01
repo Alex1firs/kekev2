@@ -13,6 +13,36 @@ const API_BASE = (() => {
 })();
 let ADMIN_KEY = sessionStorage.getItem('KEKE_ADMIN_KEY') || '';
 
+// --- Staff identity ---
+// A staff session takes precedence over the legacy shared key everywhere. The
+// key path survives only so an operator is never locked out mid-migration; see
+// docs/admin_auth_migration.md.
+let STAFF_TOKEN   = sessionStorage.getItem('KEKE_STAFF_TOKEN') || '';
+let STAFF_REFRESH = sessionStorage.getItem('KEKE_STAFF_REFRESH') || '';
+let STAFF_ME = null;              // { id, firstName, lastName, roles, ... }
+let STAFF_PERMISSIONS = new Set();
+
+/** The base URL for non-admin API calls (staff auth lives outside /admin). */
+const API_ROOT = API_BASE.replace(/\/admin$/, '');
+
+function isStaffSession() { return !!STAFF_TOKEN; }
+
+/** Whether the signed-in actor holds a permission. Legacy keys hold very few. */
+function can(permission) { return STAFF_PERMISSIONS.has(permission); }
+
+/**
+ * Hide every control the current actor cannot use.
+ *
+ * Presentational only — the server denies the same actions independently. A
+ * hidden button is a courtesy, never a security boundary.
+ */
+function applyPermissionGating() {
+    document.querySelectorAll('[data-requires-permission]').forEach(el => {
+        const needed = el.getAttribute('data-requires-permission');
+        el.classList.toggle('hidden', !can(needed));
+    });
+}
+
 // --- XSS Protection ---
 function escapeHtml(str) {
   if (str == null) return '';
@@ -42,7 +72,18 @@ function captureElements() {
 
 // --- Init ---
 async function init() {
-    if (!ADMIN_KEY) { showLoginScreen(); return; }
+    if (!ADMIN_KEY && !STAFF_TOKEN) { showLoginScreen(); return; }
+
+    // Resolve who we are before rendering anything, so the navigation and the
+    // action buttons reflect real authority rather than being drawn and then
+    // retracted.
+    if (STAFF_TOKEN) {
+        const ok = await loadStaffIdentity();
+        if (!ok) { showLoginScreen(); return; }
+    } else {
+        // Legacy key: the four monitoring permissions and nothing else.
+        STAFF_PERMISSIONS = new Set(['monitor:read', 'metrics:read', 'admin:write', 'monitor:reveal_contact']);
+    }
 
     document.body.classList.remove('auth-loading');
     document.body.classList.add('authenticated');
@@ -57,6 +98,10 @@ async function init() {
     setupNavigation();
     setupAuthListeners();
     setupSettingsForm();
+    setupStaffListeners();
+    setupParkListeners();
+    applyPermissionGating();
+    renderActorBadge();
 
     document.getElementById('btn-view-sos')?.addEventListener('click', () => {
         switchSection('sos-alerts');
@@ -74,6 +119,7 @@ async function init() {
     fetchSosAlerts().catch(() => {});
 
     setInterval(refreshOverview, 30000);
+
 }
 
 window.onerror = (msg) => { console.error('[Global Error]:', msg); };
@@ -113,6 +159,12 @@ function switchSection(id) {
     if (id === 'driver-dispatch-metrics') fetchDispatchMetrics();
     if (id === 'sos-alerts')    fetchSosAlerts();
     if (id === 'audit-log')     fetchAuditLog();
+    if (id === 'parks')         fetchParks();
+    if (id === 'park-dispatch') fetchParkDispatch();
+    if (id === 'badges')        fetchBadges();
+    if (id === 'staff')         fetchStaffList();
+    if (id === 'role-matrix')   fetchRoleMatrix();
+    if (id === 'staff-audit')   fetchStaffAudit();
     if (id === 'settings')      fetchSettings();
 }
 
@@ -123,6 +175,80 @@ function showLoginScreen() {
 
     const envSelect = document.getElementById('admin-env-select');
     if (envSelect) envSelect.value = ADMIN_ENV;
+
+    // --- Mode tabs: staff account (primary) vs legacy key (fallback) ---
+    const staffTab   = document.getElementById('tab-staff-login');
+    const legacyTab  = document.getElementById('tab-legacy-login');
+    const staffForm  = document.getElementById('staff-login-form');
+    const legacyForm = document.getElementById('login-form');
+    const subtitle   = document.getElementById('login-subtitle');
+
+    function selectMode(mode) {
+        const staff = mode === 'staff';
+        staffTab?.classList.toggle('active', staff);
+        legacyTab?.classList.toggle('active', !staff);
+        staffForm?.classList.toggle('hidden', !staff);
+        legacyForm?.classList.toggle('hidden', staff);
+        if (subtitle) {
+            subtitle.innerText = staff
+                ? 'Sign in with your KekeRide staff account.'
+                : 'Legacy shared key — limited access, not attributed to you.';
+        }
+    }
+    staffTab?.addEventListener('click', () => selectMode('staff'));
+    legacyTab?.addEventListener('click', () => selectMode('legacy'));
+    selectMode('staff');
+
+    function apiRootForEnv(env) {
+        const host = window.location.hostname;
+        if (host === 'localhost' || host === '127.0.0.1') {
+            return env === 'staging' ? 'http://localhost:3000/api/v1' : 'http://localhost:4000/api/v1';
+        }
+        return env === 'staging' ? 'https://staging.kekeride.ng/api/v1' : 'https://api.kekeride.ng/api/v1';
+    }
+
+    // --- Staff sign-in ---
+    if (staffForm) {
+        staffForm.onsubmit = async (e) => {
+            e.preventDefault();
+            const email = document.getElementById('staff-email-input').value.trim();
+            const password = document.getElementById('staff-password-input').value;
+            const env = envSelect ? envSelect.value : 'production';
+            const btn = document.getElementById('btn-staff-login');
+            if (!email || !password) return;
+
+            btn.disabled = true;
+            btn.querySelector('.btn-spinner').classList.remove('hidden');
+            try {
+                const res = await fetch(`${apiRootForEnv(env)}/staff/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password }),
+                });
+                const data = await res.json().catch(() => ({}));
+                if (res.ok && data.accessToken) {
+                    sessionStorage.setItem('KEKE_STAFF_TOKEN', data.accessToken);
+                    sessionStorage.setItem('KEKE_STAFF_REFRESH', data.refreshToken || '');
+                    sessionStorage.setItem('KEKE_ADMIN_ENV', env);
+                    // A staff session supersedes any stored shared key on this
+                    // workstation — two credentials in one browser is how an
+                    // action ends up attributed to the wrong one.
+                    sessionStorage.removeItem('KEKE_ADMIN_KEY');
+                    showToast('Signed in', 'success');
+                    location.reload();
+                } else {
+                    // The server returns one message for every credential
+                    // failure; do not embellish it here.
+                    showToast(data.message || 'Incorrect email or password.', 'error');
+                }
+            } catch {
+                showToast('Connection failed', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.querySelector('.btn-spinner').classList.add('hidden');
+            }
+        };
+    }
 
     const form = document.getElementById('login-form');
     form.onsubmit = async (e) => {
@@ -173,8 +299,80 @@ function setupAuthListeners() {
 }
 
 function handleLogout() {
+    // End the session server-side first so the refresh token dies with it —
+    // clearing sessionStorage alone would leave a usable credential behind.
+    if (isStaffSession()) {
+        fetch(`${API_ROOT}/staff/auth/logout`, {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        }).catch(() => {}).finally(() => {
+            sessionStorage.removeItem('KEKE_STAFF_TOKEN');
+            sessionStorage.removeItem('KEKE_STAFF_REFRESH');
+            sessionStorage.removeItem('KEKE_ADMIN_KEY');
+            location.reload();
+        });
+        return;
+    }
     sessionStorage.removeItem('KEKE_ADMIN_KEY');
     location.reload();
+}
+
+/** Exchange the refresh token for a new access token. Returns true on success. */
+async function tryRefreshStaffSession() {
+    if (!STAFF_REFRESH) return false;
+    try {
+        const res = await fetch(`${API_ROOT}/staff/auth/refresh`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ refreshToken: STAFF_REFRESH }),
+        });
+        if (!res.ok) return false;
+        const data = await res.json();
+        STAFF_TOKEN = data.accessToken;
+        STAFF_REFRESH = data.refreshToken;
+        sessionStorage.setItem('KEKE_STAFF_TOKEN', STAFF_TOKEN);
+        sessionStorage.setItem('KEKE_STAFF_REFRESH', STAFF_REFRESH);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+function handleStaffSessionExpired() {
+    sessionStorage.removeItem('KEKE_STAFF_TOKEN');
+    sessionStorage.removeItem('KEKE_STAFF_REFRESH');
+    showToast('Your session has expired. Please sign in again.', 'error');
+    setTimeout(() => location.reload(), 1200);
+}
+
+/** Load the signed-in staff member and their effective permissions. */
+async function loadStaffIdentity() {
+    try {
+        let res = await fetch(`${API_ROOT}/staff/auth/me`, { headers: authHeaders() });
+        if (res.status === 401 && await tryRefreshStaffSession()) {
+            res = await fetch(`${API_ROOT}/staff/auth/me`, { headers: authHeaders() });
+        }
+        if (!res.ok) return false;
+        const data = await res.json();
+        STAFF_ME = data.staff;
+        STAFF_PERMISSIONS = new Set(data.permissions || []);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+/** Show who is signed in, and make a legacy session impossible to miss. */
+function renderActorBadge() {
+    const holder = document.querySelector('.admin-profile span:last-child');
+    if (!holder) return;
+    if (STAFF_ME) {
+        holder.innerHTML = `${escapeHtml(STAFF_ME.firstName)} ${escapeHtml(STAFF_ME.lastName)}
+            <small class="actor-roles">${escapeHtml((STAFF_ME.roles || []).join(', '))}</small>`;
+    } else {
+        holder.innerHTML = `<span class="legacy-actor-chip" title="Actions are recorded as SYSTEM_LEGACY_ADMIN">
+            <i class="fas fa-triangle-exclamation"></i> Legacy shared key</span>`;
+    }
 }
 
 // --- UI Helpers ---
@@ -188,14 +386,37 @@ function showToast(message, type = 'info') {
 }
 
 // --- API ---
+/** Auth header for the current actor: staff bearer token, else the legacy key. */
+function authHeaders() {
+    return isStaffSession()
+        ? { 'Authorization': `Bearer ${STAFF_TOKEN}` }
+        : { 'x-admin-key': ADMIN_KEY };
+}
+
 async function adminFetch(endpoint, method = 'GET', body = null) {
     try {
         const options = {
             method,
-            headers: { 'x-admin-key': ADMIN_KEY, 'Content-Type': 'application/json' },
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
             body: body ? JSON.stringify(body) : null
         };
         const res = await fetch(`${API_BASE}${endpoint}`, options);
+
+        // A staff access token is short-lived. One transparent refresh-and-retry
+        // keeps a working session from dumping somebody back to the login screen
+        // mid-task; a second failure is a genuinely dead session.
+        if (res.status === 401 && isStaffSession() && !endpoint.startsWith('/__retry')) {
+            const refreshed = await tryRefreshStaffSession();
+            if (refreshed) {
+                const retry = await fetch(`${API_BASE}${endpoint}`, {
+                    ...options,
+                    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+                });
+                if (retry.ok) return await retry.json();
+            }
+            handleStaffSessionExpired();
+            throw new Error('Session expired');
+        }
 
         if (res.status === 429) {
             showToast('Rate limit exceeded. Please wait.', 'error');
@@ -1117,6 +1338,1051 @@ function setupSettingsForm() {
             }
         };
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Staff Management
+// ═══════════════════════════════════════════════════════════════════════════
+
+const STAFF_ROLES = [
+    'SUPER_ADMIN', 'OPERATIONS_ADMIN', 'PARK_SUPERVISOR',
+    'PARK_DISPATCHER', 'CASHIER', 'SUPPORT_OFFICER', 'READ_ONLY_ANALYST',
+];
+
+let staffPage = 1;
+let staffAuditPage = 1;
+
+function setupStaffListeners() {
+    const roleFilter = document.getElementById('staff-role-filter');
+    if (roleFilter && roleFilter.options.length <= 1) {
+        STAFF_ROLES.forEach(r => {
+            const opt = document.createElement('option');
+            opt.value = r; opt.textContent = r.replace(/_/g, ' ');
+            roleFilter.appendChild(opt);
+        });
+    }
+
+    let searchTimer = null;
+    document.getElementById('staff-search')?.addEventListener('input', () => {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => { staffPage = 1; fetchStaffList(); }, 350);
+    });
+    document.getElementById('staff-status-filter')?.addEventListener('change', () => { staffPage = 1; fetchStaffList(); });
+    document.getElementById('staff-role-filter')?.addEventListener('change', () => { staffPage = 1; fetchStaffList(); });
+    document.getElementById('btn-new-staff')?.addEventListener('click', openCreateStaffModal);
+
+    document.getElementById('btn-audit-filter')?.addEventListener('click', () => { staffAuditPage = 1; fetchStaffAudit(); });
+    document.getElementById('btn-audit-export')?.addEventListener('click', exportStaffAudit);
+}
+
+function statusChip(status) {
+    const tone = {
+        active: 'success', invited: 'info', locked: 'warn',
+        suspended: 'error', deactivated: 'muted',
+    }[status] || 'muted';
+    return `<span class="chip chip-${tone}">${escapeHtml(status)}</span>`;
+}
+
+async function fetchStaffList() {
+    if (!can('staff:read')) return;
+    const params = new URLSearchParams({ page: String(staffPage), pageSize: '25' });
+    const search = document.getElementById('staff-search')?.value.trim();
+    const status = document.getElementById('staff-status-filter')?.value;
+    const role   = document.getElementById('staff-role-filter')?.value;
+    if (search) params.set('search', search);
+    if (status) params.set('status', status);
+    if (role)   params.set('role', role);
+
+    try {
+        const data = await adminFetch(`/staff?${params.toString()}`);
+        renderStaffList(data);
+    } catch { /* adminFetch has already surfaced the error */ }
+}
+
+function renderStaffList(data) {
+    const list = document.getElementById('staff-list');
+    if (!list) return;
+
+    if (!data.items.length) {
+        list.innerHTML = '<tr><td colspan="7">No staff accounts match these filters.</td></tr>';
+        document.getElementById('staff-pager').innerHTML = '';
+        return;
+    }
+
+    list.innerHTML = data.items.map(s => `
+        <tr>
+            <td>${escapeHtml(s.firstName)} ${escapeHtml(s.lastName)}</td>
+            <td>${escapeHtml(s.email)}</td>
+            <td style="font-family:monospace;">${escapeHtml(s.phone || '—')}</td>
+            <td>${s.roles.map(r => `<span class="chip chip-role">${escapeHtml(r.replace(/_/g, ' '))}</span>`).join(' ') || '—'}</td>
+            <td>${statusChip(s.status)}</td>
+            <td>${s.lastLoginAt ? new Date(s.lastLoginAt).toLocaleString() : 'never'}</td>
+            <td>
+                <button class="btn-small" onclick="openStaffDetail('${escapeHtml(s.id)}')">Open</button>
+            </td>
+        </tr>
+    `).join('');
+
+    const pages = Math.max(1, Math.ceil(data.total / data.pageSize));
+    document.getElementById('staff-pager').innerHTML = `
+        <button class="btn-small" ${data.page <= 1 ? 'disabled' : ''} onclick="changeStaffPage(-1)">Previous</button>
+        <span>Page ${data.page} of ${pages} · ${data.total} accounts</span>
+        <button class="btn-small" ${data.page >= pages ? 'disabled' : ''} onclick="changeStaffPage(1)">Next</button>`;
+}
+
+function changeStaffPage(delta) {
+    staffPage = Math.max(1, staffPage + delta);
+    fetchStaffList();
+}
+
+function closeStaffModal() {
+    document.getElementById('staff-modal')?.remove();
+}
+
+function staffModalShell(title, innerHtml) {
+    closeStaffModal();
+    const el = document.createElement('div');
+    el.id = 'staff-modal';
+    el.className = 'modal-overlay';
+    el.innerHTML = `
+        <div class="modal-card">
+            <div class="modal-head">
+                <h3>${escapeHtml(title)}</h3>
+                <button class="btn-small" onclick="closeStaffModal()">✕</button>
+            </div>
+            <div class="modal-body">${innerHtml}</div>
+        </div>`;
+    document.body.appendChild(el);
+    return el;
+}
+
+function openCreateStaffModal() {
+    if (!can('staff:create')) return;
+    staffModalShell('New staff member', `
+        <form id="create-staff-form" class="stack">
+            <label>First name <input id="cs-first" required></label>
+            <label>Last name <input id="cs-last" required></label>
+            <label>Email <input id="cs-email" type="email" required></label>
+            <label>Phone <input id="cs-phone" required placeholder="08012345678"></label>
+            <fieldset class="roles-field">
+                <legend>Roles</legend>
+                ${STAFF_ROLES.map(r => `
+                    <label class="check"><input type="checkbox" value="${r}" name="cs-role"> ${escapeHtml(r.replace(/_/g, ' '))}</label>
+                `).join('')}
+            </fieldset>
+            <p class="section-note">
+                No password is set here. The account is created in <strong>INVITED</strong>
+                state and a single-use setup link is shown once, on the next screen.
+            </p>
+            <button type="submit" class="btn-primary full-width">Create account</button>
+        </form>`);
+
+    document.getElementById('create-staff-form').onsubmit = async (e) => {
+        e.preventDefault();
+        const roles = [...document.querySelectorAll('input[name="cs-role"]:checked')].map(i => i.value);
+        if (!roles.length) return showToast('Select at least one role', 'error');
+        try {
+            const result = await adminFetch('/staff', 'POST', {
+                firstName: document.getElementById('cs-first').value.trim(),
+                lastName:  document.getElementById('cs-last').value.trim(),
+                email:     document.getElementById('cs-email').value.trim(),
+                phone:     document.getElementById('cs-phone').value.trim(),
+                roles,
+            });
+            showSetupTokenModal(result.staff, result.setupToken, result.setupTokenExpiresAt);
+            fetchStaffList();
+        } catch { /* surfaced by adminFetch */ }
+    };
+}
+
+/**
+ * The setup token is displayed exactly once — the server keeps only its hash.
+ * Making that explicit here stops somebody closing the dialog expecting to find
+ * it again later.
+ */
+function showSetupTokenModal(staff, token, expiresAt) {
+    staffModalShell('Account created', `
+        <p>Account for <strong>${escapeHtml(staff.firstName)} ${escapeHtml(staff.lastName)}</strong> is ready.</p>
+        <p class="section-note">
+            Deliver this setup token over a trusted channel. It is shown
+            <strong>once</strong> — it cannot be retrieved again, only reissued.
+        </p>
+        <pre class="token-box" id="setup-token-box">${escapeHtml(token)}</pre>
+        <p class="section-note">Expires ${new Date(expiresAt).toLocaleString()}</p>
+        <button class="btn-secondary" onclick="navigator.clipboard.writeText(document.getElementById('setup-token-box').innerText).then(()=>showToast('Copied','success'))">
+            Copy token
+        </button>
+        <button class="btn-primary" onclick="closeStaffModal()">Done</button>`);
+}
+
+async function openStaffDetail(id) {
+    try {
+        const data = await adminFetch(`/staff/${id}`);
+        const s = data.staff;
+        const canManage = can('staff:suspend');
+        const canRoles  = can('staff:assign_roles');
+        const canReset  = can('staff:reset_credentials');
+
+        staffModalShell(`${s.firstName} ${s.lastName}`, `
+            <div class="detail-grid">
+                <div><span>Status</span>${statusChip(s.status)}</div>
+                <div><span>Email</span>${escapeHtml(s.email)}</div>
+                <div><span>Phone</span>${escapeHtml(s.phone || '—')}</div>
+                <div><span>Last login</span>${s.lastLoginAt ? new Date(s.lastLoginAt).toLocaleString() : 'never'}</div>
+                <div><span>Password changed</span>${s.lastPasswordChangeAt ? new Date(s.lastPasswordChangeAt).toLocaleString() : '—'}</div>
+                <div><span>MFA</span>${s.mfaEnabled ? 'Enabled' : 'Not enrolled'}</div>
+                ${s.suspensionReason ? `<div><span>Suspension reason</span>${escapeHtml(s.suspensionReason)}</div>` : ''}
+            </div>
+
+            <h4>Roles</h4>
+            <fieldset class="roles-field" ${canRoles ? '' : 'disabled'}>
+                ${STAFF_ROLES.map(r => `
+                    <label class="check">
+                        <input type="checkbox" name="sd-role" value="${r}" ${s.roles.includes(r) ? 'checked' : ''}>
+                        ${escapeHtml(r.replace(/_/g, ' '))}
+                    </label>`).join('')}
+            </fieldset>
+            ${canRoles ? `
+                <label>Reason (required when removing a role)
+                    <input id="sd-role-reason" placeholder="Why is this changing?">
+                </label>
+                <button class="btn-primary" onclick="saveStaffRoles('${escapeHtml(s.id)}')">Save roles</button>` : ''}
+
+            <h4>Effective permissions</h4>
+            <div class="perm-list">
+                ${s.permissions.length
+                    ? s.permissions.map(p => `<code>${escapeHtml(p)}</code>`).join(' ')
+                    : '<em>None — a staff member who is not ACTIVE holds no permissions.</em>'}
+            </div>
+
+            <h4>Account actions</h4>
+            <div class="action-row">
+                ${canManage && s.status !== 'suspended' && s.status !== 'deactivated'
+                    ? `<button class="btn-danger" onclick="staffAction('${escapeHtml(s.id)}','suspend','Suspend this account')">Suspend</button>` : ''}
+                ${canManage && (s.status === 'suspended' || s.status === 'locked')
+                    ? `<button class="btn-secondary" onclick="staffReactivate('${escapeHtml(s.id)}')">Reactivate</button>` : ''}
+                ${canReset && s.status !== 'deactivated'
+                    ? `<button class="btn-secondary" onclick="staffAction('${escapeHtml(s.id)}','reset-credentials','Reset credentials and end all sessions')">Reset credentials</button>` : ''}
+                ${canManage && s.status !== 'deactivated'
+                    ? `<button class="btn-danger" onclick="staffAction('${escapeHtml(s.id)}','deactivate','Permanently deactivate this account')">Deactivate</button>` : ''}
+            </div>
+
+            <h4>Recent actions</h4>
+            <div class="table-container compact">
+                <table>
+                    <thead><tr><th>Time</th><th>Action</th><th>Resource</th><th>Outcome</th></tr></thead>
+                    <tbody>
+                        ${data.recentActions.length ? data.recentActions.map(a => `
+                            <tr>
+                                <td>${new Date(a.createdAt).toLocaleString()}</td>
+                                <td>${escapeHtml(a.action)}</td>
+                                <td>${escapeHtml(a.resourceType)}</td>
+                                <td>${escapeHtml(a.outcome)}</td>
+                            </tr>`).join('')
+                            : '<tr><td colspan="4">No recorded actions.</td></tr>'}
+                    </tbody>
+                </table>
+            </div>`);
+    } catch { /* surfaced by adminFetch */ }
+}
+
+async function saveStaffRoles(id) {
+    const roles = [...document.querySelectorAll('input[name="sd-role"]:checked')].map(i => i.value);
+    if (!roles.length) return showToast('At least one role is required', 'error');
+    const reason = document.getElementById('sd-role-reason')?.value.trim() || null;
+    try {
+        await adminFetch(`/staff/${id}/roles`, 'PUT', { roles, reason });
+        showToast('Roles updated — existing sessions ended', 'success');
+        closeStaffModal();
+        fetchStaffList();
+    } catch { /* surfaced */ }
+}
+
+/** Suspend / deactivate / reset — each requires a written reason. */
+async function staffAction(id, action, title) {
+    const reason = prompt(`${title}.\n\nReason (required, recorded in the audit log):`);
+    if (reason == null) return;
+    if (!reason.trim()) return showToast('A reason is required', 'error');
+    try {
+        const result = await adminFetch(`/staff/${id}/${action}`, 'POST', { reason: reason.trim() });
+        if (result.setupToken) {
+            showSetupTokenModal(result.staff, result.setupToken, result.setupTokenExpiresAt);
+        } else {
+            showToast('Done', 'success');
+            closeStaffModal();
+        }
+        fetchStaffList();
+    } catch { /* surfaced */ }
+}
+
+async function staffReactivate(id) {
+    try {
+        await adminFetch(`/staff/${id}/reactivate`, 'POST', {});
+        showToast('Account reactivated', 'success');
+        closeStaffModal();
+        fetchStaffList();
+    } catch { /* surfaced */ }
+}
+
+// ── Role matrix ────────────────────────────────────────────────────────────
+
+async function fetchRoleMatrix() {
+    try {
+        const data = await adminFetch('/staff/role-matrix');
+        const body = document.getElementById('role-matrix-body');
+        if (!body) return;
+        body.innerHTML = data.roles.map(r => `
+            <div class="role-card">
+                <h4>${escapeHtml(r.role.replace(/_/g, ' '))}</h4>
+                <div class="perm-list">
+                    ${r.permissions.map(p => `<code>${escapeHtml(p)}</code>`).join(' ')}
+                </div>
+                <small>${r.permissions.length} permissions</small>
+            </div>`).join('');
+    } catch { /* surfaced */ }
+}
+
+// ── Staff audit ────────────────────────────────────────────────────────────
+
+function auditFilterParams() {
+    const params = new URLSearchParams({ page: String(staffAuditPage), pageSize: '50' });
+    const map = {
+        actor:        'audit-actor-filter',
+        action:       'audit-action-filter',
+        resourceType: 'audit-resource-filter',
+        from:         'audit-from-filter',
+        to:           'audit-to-filter',
+        outcome:      'audit-outcome-filter',
+    };
+    for (const [key, elementId] of Object.entries(map)) {
+        const value = document.getElementById(elementId)?.value.trim();
+        if (value) params.set(key, value);
+    }
+    return params;
+}
+
+async function fetchStaffAudit() {
+    if (!can('audit:read')) return;
+    try {
+        const data = await adminFetch(`/audit/events?${auditFilterParams().toString()}`);
+        const list = document.getElementById('staff-audit-list');
+        if (!list) return;
+
+        list.innerHTML = data.items.length ? data.items.map(e => `
+            <tr class="${e.outcome === 'denied' ? 'row-denied' : ''}">
+                <td>${new Date(e.createdAt).toLocaleString()}</td>
+                <td>${e.actorIsLegacy
+                        ? '<span class="chip chip-warn">Legacy key</span>'
+                        : escapeHtml(e.actorName || e.actorStaffUserId)}</td>
+                <td><small>${escapeHtml((e.actorRoleSnapshot || '').replace(/,/g, ', ') || '—')}</small></td>
+                <td>${escapeHtml(e.action)}</td>
+                <td><small>${escapeHtml(e.resourceType)}${e.resourceId ? ' · ' + escapeHtml(e.resourceId) : ''}</small></td>
+                <td>${escapeHtml(e.outcome)}</td>
+                <td>${escapeHtml(e.reason || '—')}</td>
+            </tr>`).join('')
+            : '<tr><td colspan="7">No audit events match these filters.</td></tr>';
+
+        const pages = Math.max(1, Math.ceil(data.total / data.pageSize));
+        document.getElementById('staff-audit-pager').innerHTML = `
+            <button class="btn-small" ${data.page <= 1 ? 'disabled' : ''} onclick="changeAuditPage(-1)">Previous</button>
+            <span>Page ${data.page} of ${pages} · ${data.total} events</span>
+            <button class="btn-small" ${data.page >= pages ? 'disabled' : ''} onclick="changeAuditPage(1)">Next</button>`;
+    } catch { /* surfaced */ }
+}
+
+function changeAuditPage(delta) {
+    staffAuditPage = Math.max(1, staffAuditPage + delta);
+    fetchStaffAudit();
+}
+
+/** CSV export. Gated on audit:export, and the export itself is audited. */
+async function exportStaffAudit() {
+    if (!can('audit:export')) return showToast('You do not have export permission', 'error');
+    const reason = prompt('Reason for this export (recorded in the audit log):');
+    if (reason == null) return;
+    try {
+        const res = await fetch(`${API_BASE}/audit/events/export?limit=5000&reason=${encodeURIComponent(reason)}`, {
+            headers: authHeaders(),
+        });
+        if (!res.ok) return showToast('Export failed', 'error');
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'staff-audit.csv';
+        a.click();
+        URL.revokeObjectURL(url);
+        showToast('Export downloaded', 'success');
+    } catch {
+        showToast('Export failed', 'error');
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Park Operations  (Phase 2)
+// ═══════════════════════════════════════════════════════════════════════════
+
+const PRESENCE_LABEL = {
+    offline: 'Offline', online: 'Online', at_park: 'At park', waiting: 'Waiting',
+    assigned: 'Assigned', en_route: 'En route', passenger_boarding: 'Boarding',
+    trip_started: 'On trip', unavailable: 'Unavailable',
+};
+const PRESENCE_TONE = {
+    offline: 'muted', online: 'info', at_park: 'info', waiting: 'success',
+    assigned: 'warn', en_route: 'warn', passenger_boarding: 'warn',
+    trip_started: 'warn', unavailable: 'error',
+};
+
+let currentParkId = null;
+
+function setupParkListeners() {
+    let t = null;
+    document.getElementById('park-search')?.addEventListener('input', () => {
+        clearTimeout(t); t = setTimeout(fetchParks, 350);
+    });
+    document.getElementById('park-status-filter')?.addEventListener('change', fetchParks);
+    document.getElementById('btn-new-park')?.addEventListener('click', openCreateParkModal);
+
+    let bt = null;
+    document.getElementById('badge-search')?.addEventListener('input', () => {
+        clearTimeout(bt); bt = setTimeout(fetchBadges, 350);
+    });
+    document.getElementById('badge-status-filter')?.addEventListener('change', fetchBadges);
+    document.getElementById('btn-issue-badge')?.addEventListener('click', openIssueBadgeModal);
+
+    document.getElementById('btn-pd-refresh')?.addEventListener('click', fetchParkDispatch);
+    document.getElementById('pd-window')?.addEventListener('change', fetchParkDispatch);
+}
+
+function parkStatusChip(status) {
+    const tone = { active: 'success', draft: 'info', inactive: 'muted', suspended: 'error' }[status] || 'muted';
+    return `<span class="chip chip-${tone}">${escapeHtml(status)}</span>`;
+}
+
+function fmtDuration(seconds) {
+    if (seconds == null) return '—';
+    const m = Math.floor(seconds / 60);
+    if (m < 60) return `${m}m`;
+    return `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+
+// ── Park list ──────────────────────────────────────────────────────────────
+
+async function fetchParks() {
+    if (!can('park:read')) return;
+    const params = new URLSearchParams({ pageSize: '50' });
+    const search = document.getElementById('park-search')?.value.trim();
+    const status = document.getElementById('park-status-filter')?.value;
+    if (search) params.set('search', search);
+    if (status) params.set('status', status);
+
+    try {
+        const data = await adminFetch(`/parks?${params.toString()}`);
+        const grid = document.getElementById('parks-grid');
+        if (!grid) return;
+
+        if (!data.items.length) {
+            grid.innerHTML = `<p class="section-note">No parks yet. Create one to begin — it starts as a
+                <strong>draft</strong> and cannot receive work until it has a supervisor and a staging zone.</p>`;
+            return;
+        }
+
+        grid.innerHTML = data.items.map(p => {
+            const c = p.counts || {};
+            return `
+            <div class="park-card" onclick="openParkDetail('${escapeHtml(p.parkId)}')">
+                <div class="park-card-head">
+                    <div>
+                        <h3>${escapeHtml(p.name)}</h3>
+                        <code class="park-code">${escapeHtml(p.code)}</code>
+                    </div>
+                    ${parkStatusChip(p.status)}
+                </div>
+                <p class="park-address">${escapeHtml(p.addressLine || p.city || '—')}</p>
+                <div class="park-metrics">
+                    <div><span>${c.waitingDriverCount ?? 0}</span><label>Waiting</label></div>
+                    <div><span>${c.activeDriverCount ?? 0}</span><label>At park</label></div>
+                    <div><span>${c.onRideCount ?? 0}</span><label>On trip</label></div>
+                    <div><span>${c.rosterSize ?? 0}</span><label>Roster</label></div>
+                </div>
+                <div class="park-foot">
+                    <span>${p.serviceRadiusKm} km radius · capacity ${p.capacityDrivers}</span>
+                    <span class="${p.withinOperatingHours ? 'open-now' : 'closed-now'}">
+                        ${p.withinOperatingHours ? 'Open now' : 'Closed'}
+                    </span>
+                </div>
+            </div>`;
+        }).join('');
+    } catch { /* surfaced by adminFetch */ }
+}
+
+// ── Park detail ────────────────────────────────────────────────────────────
+
+async function openParkDetail(parkId) {
+    currentParkId = parkId;
+    switchSection('park-detail');
+    const body = document.getElementById('park-detail-body');
+    body.innerHTML = '<p class="section-note">Loading…</p>';
+
+    try {
+        const [detail, rosterRes, queueRes] = await Promise.all([
+            adminFetch(`/parks/${parkId}`),
+            adminFetch(`/parks/${parkId}/roster`).catch(() => ({ roster: [] })),
+            adminFetch(`/parks/${parkId}/queue`).catch(() => ({ queue: [] })),
+        ]);
+        renderParkDetail(detail, rosterRes.roster, queueRes.queue);
+    } catch {
+        body.innerHTML = '<p class="section-note">Could not load this park.</p>';
+    }
+}
+
+function renderParkDetail(detail, roster, queue) {
+    const p = detail.park;
+    const c = p.counts || {};
+    const blockers = detail.activationBlockers || [];
+    const body = document.getElementById('park-detail-body');
+    if (!body) return;
+
+    body.innerHTML = `
+        <div class="park-detail-head">
+            <div>
+                <h2>${escapeHtml(p.name)} <code class="park-code">${escapeHtml(p.code)}</code></h2>
+                <p class="section-note">${escapeHtml(p.addressLine || '')} ${p.city ? '· ' + escapeHtml(p.city) : ''}</p>
+            </div>
+            <div class="action-row">
+                ${parkStatusChip(p.status)}
+                ${p.status !== 'active' && can('park:activate')
+                    ? `<button class="btn-primary" onclick="activatePark('${escapeHtml(p.parkId)}')">Activate</button>` : ''}
+                ${p.status === 'active' && can('park:suspend')
+                    ? `<button class="btn-danger" onclick="suspendPark('${escapeHtml(p.parkId)}')">Suspend</button>` : ''}
+            </div>
+        </div>
+
+        ${blockers.length ? `
+            <div class="blocker-box">
+                <strong>Not ready to activate.</strong>
+                <ul>${blockers.map(b => `<li>${escapeHtml(b)}</li>`).join('')}</ul>
+                <small>A park cannot receive real passengers until each of these is resolved.</small>
+            </div>` : ''}
+
+        <div class="park-metrics wide">
+            <div><span>${c.waitingDriverCount ?? 0}</span><label>Waiting</label></div>
+            <div><span>${c.activeDriverCount ?? 0}</span><label>At park</label></div>
+            <div><span>${c.onRideCount ?? 0}</span><label>On trip</label></div>
+            <div><span>${c.unavailableCount ?? 0}</span><label>Unavailable</label></div>
+            <div><span>${c.rosterActive ?? 0}</span><label>Roster (active)</label></div>
+            <div><span>${c.capacityUtilisationPct ?? 0}%</span><label>Capacity used</label></div>
+        </div>
+
+        <div class="detail-grid">
+            <div><span>Coordinates</span>${p.lat}, ${p.lng}</div>
+            <div><span>Service radius</span>${p.serviceRadiusKm} km</div>
+            <div><span>On-site radius</span>${p.operatingRadiusM} m</div>
+            <div><span>Capacity</span>${p.capacityDrivers} drivers</div>
+            <div><span>Hours</span>${p.opensAt ? `${escapeHtml(p.opensAt)}–${escapeHtml(p.closesAt || '')}` : 'always open'}</div>
+            <div><span>Supervisor</span>${escapeHtml(p.supervisorName || 'not assigned')}</div>
+        </div>
+
+        <h4>On duty now</h4>
+        ${detail.onDuty.length ? `
+            <div class="table-container compact">
+                <table>
+                    <thead><tr><th>Dispatcher</th><th>Since</th><th>Duration</th><th>Start location</th><th></th></tr></thead>
+                    <tbody>${detail.onDuty.map(s => `
+                        <tr>
+                            <td>${escapeHtml(s.staffName || s.staffUserId)}</td>
+                            <td>${new Date(s.startedAt).toLocaleTimeString()}</td>
+                            <td>${s.durationMinutes}m</td>
+                            <td>${s.startLocationVerified
+                                ? '<span class="chip chip-success">verified on-site</span>'
+                                : `<span class="chip chip-warn">unverified${s.startDistanceM != null ? ' · ' + Math.round(s.startDistanceM) + 'm' : ''}</span>`}</td>
+                            <td>${can('shift:close_any')
+                                ? `<button class="btn-small" onclick="forceCloseShift('${escapeHtml(s.shiftId)}')">Force close</button>` : ''}</td>
+                        </tr>`).join('')}</tbody>
+                </table>
+            </div>` : '<p class="section-note">Nobody is on duty at this park right now.</p>'}
+
+        <h4>Assigned staff</h4>
+        ${detail.assignedStaff.length ? `
+            <div class="perm-list">${detail.assignedStaff.map(a =>
+                `<code>${escapeHtml(a.name)} · ${escapeHtml(a.role.replace(/_/g, ' '))}</code>`).join(' ')}</div>`
+            : '<p class="section-note">No staff assigned. Grant a park-scoped role under Staff.</p>'}
+
+        <h4>Zones</h4>
+        <div class="action-row">
+            ${can('park:manage_zones') ? `<button class="btn-secondary" onclick="openCreateZoneModal('${escapeHtml(p.parkId)}')">Add zone</button>` : ''}
+        </div>
+        ${detail.zones.length ? `
+            <div class="table-container compact">
+                <table>
+                    <thead><tr><th>Name</th><th>Code</th><th>Kind</th><th>Radius</th><th>Active</th></tr></thead>
+                    <tbody>${detail.zones.map(z => `
+                        <tr>
+                            <td>${escapeHtml(z.name)}</td>
+                            <td><code>${escapeHtml(z.code)}</code></td>
+                            <td>${escapeHtml(z.kind)}</td>
+                            <td>${z.radiusM} m</td>
+                            <td>${z.active ? 'yes' : 'no'}</td>
+                        </tr>`).join('')}</tbody>
+                </table>
+            </div>` : '<p class="section-note">No zones defined. A staging zone is required before activation.</p>'}
+
+        <h4>Queue (${queue.length})</h4>
+        ${queue.length ? `
+            <div class="table-container compact">
+                <table>
+                    <thead><tr><th>#</th><th>Driver</th><th>Unit</th><th>Device</th><th>Presence</th><th>Ready?</th></tr></thead>
+                    <tbody>${queue.map(q => `
+                        <tr class="${q.assignable ? '' : 'row-denied'}">
+                            <td><strong>${q.queuePosition ?? '—'}</strong></td>
+                            <td>${escapeHtml(q.firstName)} ${escapeHtml(q.lastName)}</td>
+                            <td>${escapeHtml(q.unitNumber || '—')}</td>
+                            <td>${deviceChip(q)}</td>
+                            <td>${presenceChip(q.presenceState)}</td>
+                            <td>${q.assignable
+                                ? '<span class="chip chip-success">ready</span>'
+                                : q.problems.map(pr => `<span class="chip chip-warn" title="${escapeHtml(pr.message)}">${escapeHtml(pr.code.replace(/_/g, ' '))}</span>`).join(' ')}</td>
+                        </tr>`).join('')}</tbody>
+                </table>
+            </div>` : '<p class="section-note">Nobody is in the queue.</p>'}
+
+        <h4>Roster (${roster.length})</h4>
+        <div class="action-row">
+            ${can('park:manage_roster') ? `<button class="btn-secondary" onclick="openAddDriverModal('${escapeHtml(p.parkId)}')">Add driver</button>` : ''}
+        </div>
+        <div class="table-container compact">
+            <table>
+                <thead><tr>
+                    <th>Driver</th><th>Unit</th><th>Vehicle</th><th>Device</th><th>Phone</th>
+                    <th>Badge</th><th>Wallet</th><th>Presence</th><th>Last ride</th><th>Queue</th>
+                </tr></thead>
+                <tbody>${roster.length ? roster.map(r => `
+                    <tr class="${r.status === 'suspended' ? 'row-denied' : ''}">
+                        <td>${escapeHtml(r.firstName)} ${escapeHtml(r.lastName)}</td>
+                        <td>${escapeHtml(r.unitNumber || '—')}</td>
+                        <td>${escapeHtml(r.vehiclePlate)}</td>
+                        <td>${deviceChip(r)}</td>
+                        <td style="font-family:monospace">${escapeHtml(r.phone || '—')}</td>
+                        <td>${r.badgeSerial
+                            ? `<code>${escapeHtml(r.badgeSerial)}</code>`
+                            : '<span class="chip chip-warn">none</span>'}</td>
+                        <td class="${r.walletBlocked ? 'wallet-blocked' : ''}">
+                            ₦${Number(r.walletBalance).toLocaleString()}
+                            ${r.commissionDebt > 0 ? `<small>owes ₦${Number(r.commissionDebt).toLocaleString()}</small>` : ''}
+                        </td>
+                        <td>${presenceChip(r.presenceState)}</td>
+                        <td>${r.lastRideAt ? new Date(r.lastRideAt).toLocaleDateString() : 'never'}</td>
+                        <td>${r.queuePosition ?? '—'}</td>
+                    </tr>`).join('')
+                    : '<tr><td colspan="10">No drivers on this roster yet.</td></tr>'}
+                </tbody>
+            </table>
+        </div>`;
+}
+
+/** Device capability must be visible at a glance — it changes how a ride runs. */
+function deviceChip(entry) {
+    if (entry.smartphoneCapable) return '<span class="chip chip-info">smartphone</span>';
+    if (entry.deviceCapability === 'feature_phone') return '<span class="chip chip-warn">feature phone</span>';
+    // "no device", not "no phone": the phone column beside this often holds a
+    // number that reaches the driver through a family member or the park, and
+    // labelling the capability "no phone" made those two read as contradictory.
+    return '<span class="chip chip-error">no device</span>';
+}
+
+function presenceChip(state) {
+    if (!state) return '<span class="chip chip-muted">unknown</span>';
+    return `<span class="chip chip-${PRESENCE_TONE[state] || 'muted'}">${escapeHtml(PRESENCE_LABEL[state] || state)}</span>`;
+}
+
+// ── Park actions ───────────────────────────────────────────────────────────
+
+function openCreateParkModal() {
+    staffModalShell('New park', `
+        <form id="create-park-form" class="stack">
+            <label>Name <input id="np-name" required placeholder="Awka Main Park"></label>
+            <label>Code <input id="np-code" required placeholder="AWK-MAIN" style="text-transform:uppercase"></label>
+            <label>Address <input id="np-address" placeholder="Zik Avenue"></label>
+            <label>City <input id="np-city" placeholder="Awka"></label>
+            <label>Latitude <input id="np-lat" required placeholder="6.2109"></label>
+            <label>Longitude <input id="np-lng" required placeholder="7.0740"></label>
+            <label>Service radius (km) <input id="np-radius" type="number" step="0.1" value="4"></label>
+            <label>Capacity (drivers) <input id="np-capacity" type="number" value="50"></label>
+            <label>Opens at <input id="np-opens" placeholder="06:00"></label>
+            <label>Closes at <input id="np-closes" placeholder="19:00"></label>
+            <p class="section-note">
+                The park is created as a <strong>draft</strong>. It cannot be activated until it has a
+                supervisor and at least one staging zone.
+            </p>
+            <button type="submit" class="btn-primary full-width">Create park</button>
+        </form>`);
+
+    document.getElementById('create-park-form').onsubmit = async (e) => {
+        e.preventDefault();
+        try {
+            const result = await adminFetch('/parks', 'POST', {
+                name: document.getElementById('np-name').value.trim(),
+                code: document.getElementById('np-code').value.trim().toUpperCase(),
+                addressLine: document.getElementById('np-address').value.trim(),
+                city: document.getElementById('np-city').value.trim(),
+                lat: Number(document.getElementById('np-lat').value),
+                lng: Number(document.getElementById('np-lng').value),
+                serviceRadiusKm: Number(document.getElementById('np-radius').value),
+                capacityDrivers: Number(document.getElementById('np-capacity').value),
+                opensAt: document.getElementById('np-opens').value.trim() || null,
+                closesAt: document.getElementById('np-closes').value.trim() || null,
+            });
+            showToast('Park created as draft', 'success');
+            closeStaffModal();
+            openParkDetail(result.park.parkId);
+        } catch { /* surfaced */ }
+    };
+}
+
+function openCreateZoneModal(parkId) {
+    staffModalShell('Add zone', `
+        <form id="create-zone-form" class="stack">
+            <label>Name <input id="nz-name" required placeholder="Main shed"></label>
+            <label>Code <input id="nz-code" required placeholder="BAY-A" style="text-transform:uppercase"></label>
+            <label>Kind
+                <select id="nz-kind">
+                    <option value="staging">Staging — where drivers wait</option>
+                    <option value="boarding">Boarding — where passengers meet their Keke</option>
+                    <option value="service">Service — a sub-area this park covers</option>
+                </select>
+            </label>
+            <label>Latitude <input id="nz-lat" required></label>
+            <label>Longitude <input id="nz-lng" required></label>
+            <label>Radius (m) <input id="nz-radius" type="number" value="150"></label>
+            <button type="submit" class="btn-primary full-width">Add zone</button>
+        </form>`);
+
+    document.getElementById('create-zone-form').onsubmit = async (e) => {
+        e.preventDefault();
+        try {
+            await adminFetch(`/parks/${parkId}/zones`, 'POST', {
+                name: document.getElementById('nz-name').value.trim(),
+                code: document.getElementById('nz-code').value.trim().toUpperCase(),
+                kind: document.getElementById('nz-kind').value,
+                lat: Number(document.getElementById('nz-lat').value),
+                lng: Number(document.getElementById('nz-lng').value),
+                radiusM: Number(document.getElementById('nz-radius').value),
+            });
+            showToast('Zone added', 'success');
+            closeStaffModal();
+            openParkDetail(parkId);
+        } catch { /* surfaced */ }
+    };
+}
+
+async function activatePark(parkId) {
+    try {
+        await adminFetch(`/parks/${parkId}/activate`, 'POST', {});
+        showToast('Park activated', 'success');
+        openParkDetail(parkId);
+    } catch { /* the blockers come back in the error message */ }
+}
+
+async function suspendPark(parkId) {
+    const reason = prompt('Suspend this park.\n\nReason (required, recorded in the audit log):');
+    if (reason == null) return;
+    if (!reason.trim()) return showToast('A reason is required', 'error');
+    try {
+        await adminFetch(`/parks/${parkId}/suspend`, 'POST', { reason: reason.trim() });
+        showToast('Park suspended', 'success');
+        openParkDetail(parkId);
+    } catch { /* surfaced */ }
+}
+
+async function forceCloseShift(shiftId) {
+    const reason = prompt('Force-close this shift.\n\nReason (required):');
+    if (reason == null) return;
+    if (!reason.trim()) return showToast('A reason is required', 'error');
+    try {
+        await adminFetch(`/shifts/${shiftId}/force-close`, 'POST', { reason: reason.trim() });
+        showToast('Shift closed', 'success');
+        if (currentParkId) openParkDetail(currentParkId);
+    } catch { /* surfaced */ }
+}
+
+function openAddDriverModal(parkId) {
+    staffModalShell('Add driver to roster', `
+        <form id="add-driver-form" class="stack">
+            <label>Driver ID <input id="ad-driver" required placeholder="uuid from Approved Drivers"></label>
+            <p class="section-note">
+                Roster membership is not presence and not queue position. Adding a driver means
+                "this driver works out of this park" — they join the queue separately, when they arrive.
+            </p>
+            <button type="submit" class="btn-primary full-width">Add to roster</button>
+        </form>`);
+
+    document.getElementById('add-driver-form').onsubmit = async (e) => {
+        e.preventDefault();
+        try {
+            await adminFetch(`/parks/${parkId}/roster`, 'POST', {
+                driverId: document.getElementById('ad-driver').value.trim(),
+            });
+            showToast('Driver added to roster', 'success');
+            closeStaffModal();
+            openParkDetail(parkId);
+        } catch { /* surfaced */ }
+    };
+}
+
+// ── Badges ─────────────────────────────────────────────────────────────────
+
+async function fetchBadges() {
+    if (!can('badge:read')) return;
+    const params = new URLSearchParams({ pageSize: '100' });
+    const search = document.getElementById('badge-search')?.value.trim();
+    const status = document.getElementById('badge-status-filter')?.value;
+    if (search) params.set('search', search);
+    if (status) params.set('status', status);
+
+    try {
+        const data = await adminFetch(`/badges?${params.toString()}`);
+        const counts = data.counts || {};
+        document.getElementById('badge-counts').innerHTML = Object.entries(counts)
+            .map(([k, v]) => `<div class="count-tile"><span>${v}</span><label>${escapeHtml(k.replace(/_/g, ' '))}</label></div>`)
+            .join('') || '<p class="section-note">No badges issued yet.</p>';
+
+        const list = document.getElementById('badge-list');
+        list.innerHTML = data.items.length ? data.items.map(b => `
+            <tr>
+                <td><code>${escapeHtml(b.badgeSerial)}</code></td>
+                <td>${escapeHtml(b.driverName)}</td>
+                <td>${escapeHtml(b.unitNumber || '—')}</td>
+                <td style="font-family:monospace">${escapeHtml(b.shortCode)}</td>
+                <td>${badgeStatusChip(b.status)}</td>
+                <td>${new Date(b.issuedAt).toLocaleDateString()}</td>
+                <td>
+                    ${b.status === 'pending_activation' && can('badge:issue')
+                        ? `<button class="btn-small" onclick="activateBadge('${escapeHtml(b.badgeSerial)}')">Activate</button>` : ''}
+                    ${(b.status === 'active' || b.status === 'pending_activation') && can('badge:revoke')
+                        ? `<button class="btn-small" onclick="revokeBadge('${escapeHtml(b.badgeSerial)}')">Revoke</button>` : ''}
+                </td>
+            </tr>`).join('')
+            : '<tr><td colspan="7">No badges match these filters.</td></tr>';
+    } catch { /* surfaced */ }
+}
+
+function badgeStatusChip(status) {
+    const tone = { active: 'success', pending_activation: 'info', revoked: 'error', lost: 'error', replaced: 'muted' }[status] || 'muted';
+    return `<span class="chip chip-${tone}">${escapeHtml(status.replace(/_/g, ' '))}</span>`;
+}
+
+function openIssueBadgeModal() {
+    staffModalShell('Issue badge', `
+        <form id="issue-badge-form" class="stack">
+            <label>Driver ID <input id="ib-driver" required placeholder="uuid from Approved Drivers"></label>
+            <p class="section-note">
+                A badge is an <strong>identity claim, not a credential</strong>. It can be photographed,
+                so it never unlocks a wallet, a profile or an account — and it is issued only to an
+                approved driver with a verified photo, because the photo is the control that defeats
+                badge sharing.
+            </p>
+            <button type="submit" class="btn-primary full-width">Issue badge</button>
+        </form>`);
+
+    document.getElementById('issue-badge-form').onsubmit = async (e) => {
+        e.preventDefault();
+        try {
+            const result = await adminFetch('/badges', 'POST', {
+                driverId: document.getElementById('ib-driver').value.trim(),
+            });
+            showBadgeIssuedModal(result.badge);
+            fetchBadges();
+        } catch { /* surfaced */ }
+    };
+}
+
+function showBadgeIssuedModal(badge) {
+    staffModalShell('Badge issued', `
+        <div class="detail-grid">
+            <div><span>Serial</span><code>${escapeHtml(badge.badgeSerial)}</code></div>
+            <div><span>Driver</span>${escapeHtml(badge.driverName)}</div>
+            <div><span>Unit</span>${escapeHtml(badge.unitNumber || '—')}</div>
+            <div><span>Six-digit code</span><code>${escapeHtml(badge.shortCode)}</code></div>
+        </div>
+        <h4>QR payload</h4>
+        <p class="section-note">
+            Opaque and signed. It carries no name, phone, plate or internal id, so a photographed
+            badge reveals nothing about the driver.
+        </p>
+        <pre class="token-box">${escapeHtml(badge.qrPayload)}</pre>
+        <p class="section-note">
+            Status is <strong>pending activation</strong>: the badge identifies nobody until somebody
+            confirms the physical card reached the right person.
+        </p>
+        <button class="btn-primary" onclick="closeStaffModal()">Done</button>`);
+}
+
+async function activateBadge(serial) {
+    try {
+        await adminFetch(`/badges/${serial}/activate`, 'POST', {});
+        showToast('Badge activated', 'success');
+        fetchBadges();
+    } catch { /* surfaced */ }
+}
+
+async function revokeBadge(serial) {
+    const reason = prompt('Revoke this badge.\n\nReason (required):');
+    if (reason == null) return;
+    if (!reason.trim()) return showToast('A reason is required', 'error');
+    try {
+        await adminFetch(`/badges/${serial}/revoke`, 'POST', { reason: reason.trim() });
+        showToast('Badge revoked', 'success');
+        fetchBadges();
+    } catch { /* surfaced */ }
+}
+
+// ── Park Dispatch monitoring (Phase 3) ─────────────────────────────────────
+
+function fmtMs(ms) {
+    if (ms == null) return '—';
+    const s = Math.round(ms / 1000);
+    if (s < 60) return `${s}s`;
+    return `${Math.floor(s / 60)}m ${s % 60}s`;
+}
+
+/**
+ * The runtime suspension control.
+ *
+ * Only rendered for staff who hold `park:suspend`, which the shared admin key
+ * is denied outright — a shared secret has no human behind it and this action's
+ * whole point is being attributable.
+ */
+async function fetchParkDispatchSwitch() {
+    const panel = document.getElementById('pd-switch-panel');
+    if (!panel) return;
+
+    if (!can('park:suspend')) { panel.classList.add('hidden'); return; }
+    panel.classList.remove('hidden');
+
+    try {
+        const st = await adminFetch('/park-dispatch/switch');
+        const suspended = st.override?.disabled === true;
+
+        document.getElementById('btn-pd-suspend').classList.toggle('hidden', suspended);
+        document.getElementById('btn-pd-resume').classList.toggle('hidden', !suspended);
+        document.getElementById('pd-switch-reason').classList.toggle('hidden', suspended);
+
+        const state = document.getElementById('pd-switch-state');
+        if (!st.envEnabled) {
+            // The environment has it off. Nothing here can turn that back on,
+            // and pretending otherwise would send someone hunting the wrong fix.
+            state.innerHTML = '<strong>Disabled in the environment.</strong> '
+                + 'PARK_DISPATCH_ENABLED is false; this control cannot switch it on. '
+                + 'That needs a configuration change and a restart.';
+        } else if (suspended) {
+            const who = st.override.setBy || 'unknown';
+            const when = st.override.setAt ? new Date(st.override.setAt).toLocaleString() : 'unknown time';
+            state.innerHTML = `<strong>Suspended.</strong> ${escapeHtml(st.override.reason || 'no reason recorded')}`
+                + `<br><small>By ${escapeHtml(who)} at ${escapeHtml(when)}</small>`;
+        } else {
+            state.innerHTML = '<strong>Running.</strong> New requests are reaching parks normally.';
+        }
+    } catch (err) {
+        document.getElementById('pd-switch-state').textContent =
+            `Could not read the switch: ${err.message}`;
+    }
+}
+
+document.getElementById('btn-pd-suspend')?.addEventListener('click', async () => {
+    const reason = document.getElementById('pd-switch-reason').value.trim();
+    if (reason.length < 3) {
+        showToast('Give a reason — it is recorded against your name.', 'error');
+        return;
+    }
+    if (!confirm('Suspend new park requests?\n\nRequests already taken by a dispatcher can still be assigned. This does not affect rides already assigned.')) return;
+    try {
+        await adminFetch('/park-dispatch/switch', 'POST', { disabled: true, reason });
+        showToast('Park Dispatch suspended.', 'success');
+        document.getElementById('pd-switch-reason').value = '';
+        await fetchParkDispatchSwitch();
+    } catch (err) { showToast(err.message, 'error'); }
+});
+
+document.getElementById('btn-pd-resume')?.addEventListener('click', async () => {
+    if (!confirm('Resume Park Dispatch? New requests will start reaching parks again.')) return;
+    try {
+        await adminFetch('/park-dispatch/switch', 'POST', { disabled: false });
+        showToast('Park Dispatch resumed.', 'success');
+        await fetchParkDispatchSwitch();
+    } catch (err) { showToast(err.message, 'error'); }
+});
+
+async function fetchParkDispatch() {
+    if (!can('park:read')) return;
+    fetchParkDispatchSwitch();
+    const hours = document.getElementById('pd-window')?.value || '24';
+    try {
+        const data = await adminFetch(`/park-dispatch/overview?hours=${hours}`);
+        const m = data.metrics || {};
+
+        // The feature flag is the first thing an operator needs to see. A
+        // dashboard of zeroes means something very different when the fallback
+        // is switched off than when it is on and nothing is happening.
+        const flag = document.getElementById('pd-flag');
+        if (flag) {
+            flag.className = `chip chip-${data.enabled ? 'success' : 'muted'}`;
+            flag.textContent = data.enabled ? 'fallback ENABLED' : 'fallback disabled';
+        }
+
+        document.getElementById('pd-metrics').innerHTML = `
+            <div class="count-tile"><span>${m.offered ?? 0}</span><label>Offered</label></div>
+            <div class="count-tile"><span>${m.assigned ?? 0}</span><label>Assigned</label></div>
+            <div class="count-tile"><span>${m.assignmentSuccessRatePct ?? 0}%</span><label>Success rate</label></div>
+            <div class="count-tile"><span>${fmtMs(m.medianResponseTimeMs)}</span><label>Median response</label></div>
+            <div class="count-tile"><span>${fmtMs(m.medianAssignmentTimeMs)}</span><label>Median assign</label></div>
+            <div class="count-tile"><span>${fmtMs(m.avgPassengerWaitMs)}</span><label>Avg passenger wait</label></div>
+            <div class="count-tile"><span>${m.expired ?? 0}</span><label>Expired</label></div>
+            <div class="count-tile"><span>${(m.skipped ?? 0) + (m.rejected ?? 0)}</span><label>Skipped / rejected</label></div>`;
+
+        const live = document.getElementById('pd-live-list');
+        live.innerHTML = data.liveJobs.length ? data.liveJobs.map(j => `
+            <tr>
+                <td style="font-family:monospace;font-size:11px">${escapeHtml(j.rideId)}</td>
+                <td style="font-family:monospace;font-size:11px">${escapeHtml(j.parkId.slice(0, 8))}…</td>
+                <td><span class="chip chip-${j.status === 'claimed' ? 'warn' : 'info'}">${escapeHtml(j.status)}</span></td>
+                <td>${escapeHtml(String(j.priority))}</td>
+                <td>${new Date(j.offeredAt).toLocaleTimeString()}</td>
+                <td>${escapeHtml(j.claimedByStaffId ? j.claimedByStaffId.slice(0, 8) + '…' : '—')}</td>
+                <td>${j.attemptNumber}</td>
+            </tr>`).join('')
+            : '<tr><td colspan="7">Nothing in a park queue right now.</td></tr>';
+
+        const disp = document.getElementById('pd-dispatchers');
+        disp.innerHTML = data.dispatchers.length ? data.dispatchers.map(d => `
+            <tr>
+                <td>${escapeHtml(d.name)}</td>
+                <td>${d.claimed}</td>
+                <td>${d.assigned}</td>
+                <td>${d.skipped}</td>
+                <td>${fmtMs(d.avgResponseMs)}</td>
+            </tr>`).join('')
+            : '<tr><td colspan="5">No dispatcher activity in this window.</td></tr>';
+
+        document.getElementById('pd-utilisation').innerHTML = data.parkUtilisation.length
+            ? data.parkUtilisation.map(p => {
+                const c = p.counts || {};
+                const w = p.windowMetrics || {};
+                return `
+                <div class="park-card" onclick="openParkDetail('${escapeHtml(p.parkId)}')">
+                    <div class="park-card-head">
+                        <div><h3>${escapeHtml(p.name)}</h3><code class="park-code">${escapeHtml(p.code)}</code></div>
+                        <span class="chip chip-${p.liveJobs > 0 ? 'warn' : 'muted'}">${p.liveJobs} live</span>
+                    </div>
+                    <div class="park-metrics">
+                        <div><span>${c.waitingDriverCount ?? 0}</span><label>Waiting</label></div>
+                        <div><span>${c.capacityUtilisationPct ?? 0}%</span><label>Capacity</label></div>
+                        <div><span>${w.offered ?? 0}</span><label>Offered</label></div>
+                        <div><span>${w.assignmentSuccessRatePct ?? 0}%</span><label>Success</label></div>
+                    </div>
+                </div>`;
+            }).join('')
+            : '<p class="section-note">No active parks.</p>';
+    } catch { /* surfaced by adminFetch */ }
 }
 
 document.addEventListener('DOMContentLoaded', () => {

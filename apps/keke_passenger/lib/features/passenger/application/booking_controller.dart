@@ -417,7 +417,14 @@ class BookingController extends StateNotifier<BookingState> {
   }
 
   Future<void> _initializeMap() async {
-    final defaultLocation = const LatLng(6.1264, 6.7876); // Awka fallback
+    // Awka Main Park. Used only when the device gives us no fix at all — the
+    // map has to centre somewhere, and it should be the middle of the city we
+    // actually serve.
+    //
+    // This was 6.1264, 6.7876, which the comment called "Awka fallback" but is
+    // 33 km west of it. With location unavailable, the pin — and therefore the
+    // default pickup — landed somewhere no park covers and no driver is near.
+    final defaultLocation = const LatLng(6.2109, 7.0740);
     final userLocation = await _mapRepo.getCurrentLocation();
     // The provider can be disposed while location or recovery is still in
     // flight (fast app exit, auth change). Writing state afterwards throws.

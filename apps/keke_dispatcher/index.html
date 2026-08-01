@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <!-- viewport-fit=cover + user-scalable=no: this runs full-screen on a park
+         tablet where an accidental pinch-zoom mid-shift is a real problem. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+    <meta name="theme-color" content="#12161d">
+    <meta name="color-scheme" content="dark">
+    <meta name="description" content="Assign rides to Keke drivers at your park.">
+
+    <!-- Installable on an Android park tablet; still an ordinary mobile site
+         for anyone who does not install it. -->
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="icon" type="image/png" sizes="64x64" href="icons/favicon-64.png">
+    <link rel="apple-touch-icon" href="icons/apple-touch-icon-180.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Park Dispatch">
+    <meta name="mobile-web-app-capable" content="yes">
+
+    <title>KekeRide Park Dispatch</title>
+    <link rel="stylesheet" href="styles.css?v=5.0">
+</head>
+<body class="booting">
+
+<!-- ═══ Sign in ═══════════════════════════════════════════════════════ -->
+<div id="login" class="login-screen">
+    <div class="login-card">
+        <div class="brand"><span class="brand-mark">◆</span> KekeRide <strong>Park Dispatch</strong></div>
+        <p class="login-sub">Sign in with your staff account.</p>
+        <form id="login-form">
+            <label>Email or phone number
+                <!-- type=text, not email: a dispatcher may sign in with the
+                     phone number on their staff card, and type=email would
+                     have the browser reject it before it is ever sent. -->
+                <input type="text" id="login-identifier" autocomplete="username" required
+                       inputmode="email" autocapitalize="off" spellcheck="false"
+                       placeholder="you@kekeride.ng or 0803…">
+            </label>
+            <label>Password
+                <input type="password" id="login-password" autocomplete="current-password" required>
+            </label>
+            <button type="submit" id="login-btn" class="btn btn-primary btn-block">Sign in</button>
+        </form>
+        <p id="login-error" class="login-error hidden"></p>
+        <p class="login-foot">Your actions are recorded against your name.</p>
+    </div>
+</div>
+
+<!-- ═══ Shift not started ═════════════════════════════════════════════ -->
+<div id="shift-gate" class="login-screen hidden">
+    <div class="login-card">
+        <div class="brand"><span class="brand-mark">◆</span> Start your shift</div>
+        <p class="login-sub" id="shift-who"></p>
+        <label>Park
+            <select id="shift-park"></select>
+        </label>
+
+        <!-- No park assigned: a dead end unless we say who fixes it. -->
+        <p id="shift-no-park" class="login-error hidden">
+            No park has been assigned to your account. Contact Operations.
+        </p>
+
+        <!--
+          Shift setup is the one moment a dispatcher is not under time pressure,
+          so the two things that must work before the first request arrives get
+          checked here: the alert can be heard, and Park Dispatch is running.
+        -->
+        <div class="setup-checks">
+            <div class="setup-row">
+                <span class="setup-label">Alert sound</span>
+                <button type="button" id="sound-test" class="btn btn-small">Test sound</button>
+            </div>
+            <div class="setup-row">
+                <span class="setup-label">Notifications</span>
+                <button type="button" id="notif-enable" class="btn btn-small">Allow alerts</button>
+                <span id="notif-state" class="setup-state"></span>
+            </div>
+            <!--
+              Background alerts are the difference between a dispatcher who
+              answers with the phone in their pocket and one who only answers
+              while staring at the screen.
+            -->
+            <div class="setup-row">
+                <span class="setup-label">Background alerts</span>
+                <button type="button" id="push-enable" class="btn btn-small">Set up</button>
+                <button type="button" id="push-test" class="btn btn-small hidden">Send test</button>
+                <span id="push-state" class="setup-state"></span>
+            </div>
+            <div class="setup-row">
+                <span class="setup-label">Park Dispatch</span>
+                <span id="setup-dispatch-state" class="setup-state">checking…</span>
+            </div>
+            <div class="setup-row hidden" id="install-row">
+                <span class="setup-label">This device</span>
+                <button type="button" id="install-app" class="btn btn-small hidden">Add to home screen</button>
+                <span id="install-state" class="setup-state"></span>
+            </div>
+        </div>
+
+        <!--
+          Stated before the shift starts, not buried in training. Web Push is
+          not enabled, so a closed app cannot be woken by anything.
+        -->
+        <p class="shift-keep-open">
+            <strong>Keep this app open for your whole shift.</strong>
+            If you close it, you will not be told when a passenger is waiting —
+            no sound, no notification, nothing. Leave it on this screen and keep
+            the phone unlocked or charging.
+        </p>
+
+        <button id="shift-start" class="btn btn-primary btn-block">Start shift</button>
+        <!--
+          A dispatcher must not start a normal shift silently. If background
+          alerts are not working they are told why, and starting anyway is a
+          deliberate, recorded choice rather than an accident.
+        -->
+        <div id="push-block" class="sheet-mode sheet-mode-verbal hidden">
+            <b>Background alerts are not working on this device.</b>
+            <span id="push-block-reason"></span>
+            <label class="push-override">
+                <input type="checkbox" id="push-override">
+                Start anyway — I will keep this app open and visible for the whole shift
+            </label>
+        </div>
+
+        <p id="shift-error" class="login-error hidden"></p>
+        <p class="login-foot">
+            You can read the board without a shift. Taking requests and assigning
+            drivers needs one open.
+        </p>
+        <button id="shift-signout" class="btn btn-ghost btn-block">Sign out</button>
+    </div>
+</div>
+
+<!-- ═══ Workspace ════════════════════════════════════════════════════ -->
+<div id="workspace" class="workspace hidden">
+
+    <header class="topbar">
+        <div class="topbar-left">
+            <span class="brand-mark">◆</span>
+            <div>
+                <div class="park-name" id="hdr-park">—</div>
+                <div class="park-sub"><span id="hdr-code">—</span> · <span id="hdr-shift">—</span></div>
+            </div>
+        </div>
+
+        <div class="counters" id="counters"></div>
+
+        <div class="topbar-right">
+            <span id="conn" class="conn conn-down" title="Realtime connection">offline</span>
+            <button id="btn-sound" class="btn btn-icon" title="Alert sound (S)" aria-label="Toggle alert sound">🔔</button>
+            <button id="btn-end-shift" class="btn btn-ghost">End shift</button>
+        </div>
+    </header>
+
+    <!--
+      Network state. The connection pill in the topbar covers the realtime
+      socket; this covers the device having no network at all, which is the
+      more common failure on a park tablet.
+    -->
+    <div id="offline-bar" class="bar bar-offline hidden" role="status">
+        <strong>This device is offline.</strong>
+        <span>The board below is the last thing we heard from the server. Do not assign from it.</span>
+    </div>
+
+    <!--
+      Stays up while any request is unanswered. The chime can be missed in a
+      loud park; a banner that will not go away until somebody acts cannot be.
+    -->
+    <div id="waiting-bar" class="bar bar-waiting hidden" role="status">
+        <strong></strong>
+        <span></span>
+    </div>
+
+    <!-- A new build is waiting. Never applied mid-shift without asking. -->
+    <div id="update-bar" class="bar bar-update hidden" role="status">
+        <span><strong>An update is ready.</strong> It will apply when you reload.</span>
+        <button id="update-apply" class="btn btn-small">Reload now</button>
+        <button id="update-later" class="btn btn-small btn-ghost">Later</button>
+    </div>
+
+    <!--
+      Shown when operations has paused Park Dispatch centrally. Without it, a
+      paused system and a quiet morning look identical from the park floor.
+    -->
+    <div id="paused" class="paused hidden" role="status">
+        <strong>New requests are paused.</strong>
+        <span id="paused-reason"></span>
+        <span class="paused-note">Requests already in your queue can still be assigned.</span>
+    </div>
+
+    <main class="grid">
+        <!-- Queue -->
+        <section class="panel panel-queue">
+            <div class="panel-head">
+                <h2>Incoming requests <span id="queue-count" class="pill">0</span></h2>
+                <input type="search" id="queue-search" class="search" placeholder="Filter by pickup, destination or name">
+            </div>
+            <div id="queue" class="queue" role="list"></div>
+            <div id="queue-empty" class="empty">
+                <div class="empty-mark">◆</div>
+                <p>No requests waiting.</p>
+                <small>Rides arrive here only when no nearby driver accepted directly.</small>
+            </div>
+        </section>
+
+        <!-- Drivers -->
+        <section class="panel panel-drivers">
+            <div class="panel-head">
+                <h2>Park drivers <span id="driver-count" class="pill">0</span></h2>
+                <input type="search" id="driver-search" class="search" placeholder="Filter by name, unit or plate">
+            </div>
+            <div id="selected-banner" class="selected-banner hidden"></div>
+            <div id="drivers" class="drivers" role="list"></div>
+            <div id="drivers-empty" class="empty">
+                <div class="empty-mark">◆</div>
+                <p>No drivers on this roster.</p>
+            </div>
+        </section>
+    </main>
+
+    <footer class="shortcuts">
+        <span><kbd>↑</kbd><kbd>↓</kbd> request</span>
+        <span><kbd>Enter</kbd> take</span>
+        <span><kbd>1</kbd>–<kbd>9</kbd> choose driver</span>
+        <span><kbd>V</kbd> recommended</span>
+        <span><kbd>K</kbd> skip</span>
+        <span><kbd>E</kbd> escalate</span>
+        <span><kbd>/</kbd> search</span>
+        <span><kbd>S</kbd> sound</span>
+    </footer>
+</div>
+
+<!--
+  Assignment sheet.
+
+  Phase 4 assigned on a single tap with no confirmation, which was fast and
+  wrong: a dispatcher scrolling a list on a tablet could assign the driver
+  their thumb happened to land on, and the first they would know is a Keke
+  arriving for the wrong trip. This is the smallest thing that cannot happen
+  by accident — everything needed to check the decision, one button to make it.
+-->
+<div id="sheet" class="sheet-scrim hidden" role="dialog" aria-modal="true" aria-labelledby="sheet-driver">
+    <div class="sheet">
+        <div class="sheet-driver">
+            <div id="sheet-photo" class="driver-photo driver-photo-none"></div>
+            <div>
+                <div id="sheet-driver" class="sheet-driver-name"></div>
+                <div id="sheet-unit" class="sheet-driver-unit"></div>
+            </div>
+        </div>
+
+        <div class="sheet-trip">
+            <div class="sheet-row"><span>Pickup</span><b id="sheet-pickup"></b></div>
+            <div class="sheet-row"><span>Destination</span><b id="sheet-dest"></b></div>
+            <div class="sheet-row"><span>Passenger</span><b id="sheet-passenger"></b></div>
+            <div class="sheet-row"><span>Fare</span><b id="sheet-fare"></b></div>
+        </div>
+
+        <div id="sheet-mode" class="sheet-mode"></div>
+
+        <button id="sheet-confirm" class="btn btn-primary btn-block btn-tall">Assign ride</button>
+        <button id="sheet-cancel" class="btn btn-ghost btn-block">Cancel</button>
+    </div>
+</div>
+
+<!--
+  Shift sign-off.
+
+  Deliberately not a one-tap "End shift". A dispatcher walking away is the last
+  moment anyone can act on a request still sitting on the board, so the numbers
+  and the outstanding work are put in front of them first.
+-->
+<div id="shift-end" class="sheet-scrim hidden" role="dialog" aria-modal="true" aria-labelledby="shift-end-title">
+    <div class="sheet">
+        <div id="shift-end-title" class="sheet-driver-name">End your shift</div>
+        <div id="shift-end-duration" class="sheet-driver-unit"></div>
+
+        <div class="sheet-trip" id="shift-end-stats"></div>
+
+        <div id="shift-end-warning" class="sheet-mode sheet-mode-verbal hidden"></div>
+
+        <label id="shift-end-handover-wrap" class="hidden">Handover note
+            <input type="text" id="shift-end-handover" maxlength="200"
+                   placeholder="Who is taking these requests?">
+        </label>
+
+        <p id="shift-end-error" class="login-error hidden"></p>
+
+        <button id="shift-end-confirm" class="btn btn-primary btn-block btn-tall">End shift</button>
+        <button id="shift-end-cancel" class="btn btn-ghost btn-block">Stay on shift</button>
+    </div>
+</div>
+
+<div id="toasts" class="toasts" aria-live="polite"></div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="app.js?v=1.0"></script>
+</body>
+</html>

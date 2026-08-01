@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#12161d">
+    <title>Offline · KekeRide Park Dispatch</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<!--
+  Shown only when the app shell itself could not be fetched or served from
+  cache. It deliberately claims nothing about the queue: a dispatcher who
+  cannot reach the server has no idea what is waiting, and telling them
+  otherwise is worse than telling them nothing.
+-->
+<body>
+<div class="login-screen">
+    <div class="login-card">
+        <div class="brand"><span class="brand-mark">◆</span> KekeRide <strong>Park Dispatch</strong></div>
+        <h1 style="font-size:1.15rem;margin:18px 0 8px">No connection</h1>
+        <p class="login-sub">
+            This device cannot reach KekeRide right now. Requests are still being
+            handled by the server — you just cannot see them until you are back
+            online.
+        </p>
+        <p class="login-sub">
+            Check the tablet's mobile data or Wi-Fi, then try again. If other
+            dispatchers are online, call your supervisor so the park is covered.
+        </p>
+        <!-- A link, not a button with an inline handler: the API's CSP sets
+             script-src-attr 'none', so onclick= would silently do nothing. -->
+        <a class="btn btn-primary btn-block" href="./index.html">Try again</a>
+    </div>
+</div>
+</body>
+</html>

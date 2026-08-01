@@ -29,6 +29,14 @@ export const authMiddleware = (req: AuthRequest, res: Response, next: NextFuncti
 
     try {
         const decoded = jwt.verify(token, JWT_SECRET) as any;
+        // Role confusion guard. Staff tokens are signed with a different secret
+        // (see services/staff_auth_service.ts), so one normally fails the verify
+        // above — this is the second line of defence for a deployment that has
+        // been misconfigured to share one secret between the two key spaces.
+        // A staff member must never be able to act as a passenger or driver.
+        if (decoded?.typ === 'staff' || decoded?.aud === 'keke-staff') {
+            return res.status(401).json({ error: "Invalid or expired token." });
+        }
         req.user = decoded;
         next();
     } catch (err) {

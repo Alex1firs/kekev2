@@ -62,6 +62,35 @@ export class DriverProfile {
     @Column({ type: "int", default: 0 })
     ratingCount!: number;
 
+    // ── Park operations (Phase 2) ───────────────────────────────────────
+
+    /**
+     * What device this driver actually has.
+     *
+     * The reason Park Dispatch exists: a large share of Keke drivers own no
+     * Android phone, or own one and keep mobile data off. Assuming a smartphone
+     * is how a system ends up serving only the drivers who least need it.
+     *
+     * Defaults to SMARTPHONE because every existing driver signed up through
+     * the app — but nothing may INFER capability from that default; it is a
+     * declared property, corrected by whoever onboards the driver.
+     */
+    @Column({ type: "varchar", length: 20, default: "smartphone" })
+    deviceCapability!: "smartphone" | "feature_phone" | "none";
+
+    /**
+     * The number painted on the Keke. What a dispatcher reads across a park,
+     * and the largest element on a printed badge.
+     */
+    @Index()
+    @Column({ type: "varchar", length: 24, nullable: true })
+    unitNumber!: string | null;
+
+    /** The park this driver normally works out of. Roster membership is separate. */
+    @Index()
+    @Column({ type: "varchar", nullable: true })
+    homeParkId!: string | null;
+
     @CreateDateColumn()
     createdAt!: Date;
 

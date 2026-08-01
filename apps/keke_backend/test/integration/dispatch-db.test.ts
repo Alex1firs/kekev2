@@ -27,9 +27,24 @@ describeDb('dispatch DB-level exclusions (F + passenger guard)', () => {
   let ds: DataSource;
 
   beforeAll(async () => {
+    /**
+     * Own schema, like every other integration suite here.
+     *
+     * This used to run with `dropSchema: true` and no schema, which drops
+     * PUBLIC — so pointing TEST_DATABASE_URL at any database with data in it
+     * destroyed that data. It also raced the other suites, which Jest runs in
+     * parallel workers against the same URL. Both failure modes are silent
+     * until something you cared about is gone.
+     */
+    const bootstrap = new DataSource({ type: 'postgres', url: TEST_DB });
+    await bootstrap.initialize();
+    await bootstrap.query('CREATE SCHEMA IF NOT EXISTS dispatch_db_test');
+    await bootstrap.destroy();
+
     ds = new DataSource({
       type: 'postgres',
       url: TEST_DB,
+      schema: 'dispatch_db_test',
       entities: [Ride, DriverProfile, User],
       synchronize: true,
       dropSchema: true, // disposable: start clean

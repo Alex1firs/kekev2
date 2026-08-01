@@ -91,6 +91,34 @@ export enum DispatchEventType {
     STALE_ESCALATED_TO_SUPPORT = "stale_escalated_to_support",
     /** The engaged party was offered another driver instead of a dead end. */
     REMATCH_OFFERED = "rematch_offered",
+
+    // ── Park Dispatch fallback ───────────────────────────────────────────
+    // Downstream of direct dispatch, never inside it. These land on the SAME
+    // ride timeline as the direct-dispatch events above, so the admin monitor
+    // tells one continuous story: rounds tried, nobody accepted, park offered,
+    // dispatcher claimed, driver assigned.
+    /** Direct dispatch ended with no driver and a park was offered the ride. */
+    PARK_OFFERED = "park_offered",
+    /** A dispatcher took responsibility for sourcing a driver. */
+    PARK_CLAIMED = "park_claimed",
+    /** A dispatcher assigned a specific driver. The ride is now `accepted`. */
+    PARK_DRIVER_ASSIGNED = "park_driver_assigned",
+    /** The park had nobody. `detail.reason` says why. */
+    PARK_SKIPPED = "park_skipped",
+    /** The dispatcher declined the request outright. */
+    PARK_REJECTED = "park_rejected",
+    /** Handed to a human — beyond what a dispatcher can resolve. */
+    PARK_ESCALATED = "park_escalated",
+    /** A claim or assignment window elapsed with nothing happening. */
+    PARK_JOB_EXPIRED = "park_job_expired",
+    /** No park could take the ride. It fails, exactly as it would have before. */
+    PARK_DISPATCH_EXHAUSTED = "park_dispatch_exhausted",
+    /** A smartphone driver was offered a park assignment and must answer. */
+    PARK_DRIVER_OFFERED = "park_driver_offered",
+    /** The offered driver accepted. The ride is now theirs. */
+    PARK_DRIVER_ACCEPTED = "park_driver_accepted",
+    /** The offered driver declined, or let the window close. Back to the queue. */
+    PARK_DRIVER_DECLINED = "park_driver_declined",
 }
 
 /**

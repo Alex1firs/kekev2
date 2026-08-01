@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Keke Admin | Dashboard</title>
-    <link rel="stylesheet" href="styles.css?v=3.9">
+    <link rel="stylesheet" href="styles.css?v=4.2">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 </head>
@@ -17,26 +17,59 @@
                 <span>KEKE OPS</span>
             </div>
             <h2>Mission Control Access</h2>
-            <p>Enter your Admin API Key to authorize this workstation.</p>
-            <form id="login-form">
+            <p id="login-subtitle">Sign in with your KekeRide staff account.</p>
+
+            <!-- Staff sign-in is the primary path. The shared-key form remains
+                 as a labelled fallback until the migration completes; it is
+                 attributed to SYSTEM_LEGACY_ADMIN and cannot perform staff,
+                 park, badge, finance or contact-reveal actions. -->
+            <div class="login-mode-tabs">
+                <button type="button" id="tab-staff-login" class="login-tab active">Staff account</button>
+                <button type="button" id="tab-legacy-login" class="login-tab">Legacy key</button>
+            </div>
+
+            <div class="input-group">
+                <i class="fas fa-server"></i>
+                <select id="admin-env-select" required>
+                    <option value="production">Production Environment</option>
+                    <option value="staging">Staging Environment</option>
+                </select>
+            </div>
+
+            <form id="staff-login-form">
                 <div class="input-group">
-                    <i class="fas fa-server"></i>
-                    <select id="admin-env-select" required>
-                        <option value="production">Production Environment</option>
-                        <option value="staging">Staging Environment</option>
-                    </select>
+                    <i class="fas fa-envelope"></i>
+                    <input type="email" id="staff-email-input" placeholder="you@kekeride.ng" autocomplete="username" required>
                 </div>
                 <div class="input-group">
-                    <i class="fas fa-key"></i>
-                    <input type="password" id="admin-key-input" placeholder="Admin API Key" required>
+                    <i class="fas fa-lock"></i>
+                    <input type="password" id="staff-password-input" placeholder="Password" autocomplete="current-password" required>
                 </div>
-                <button type="submit" id="btn-login" class="btn-primary full-width">
-                    <span>Authorize</span>
+                <button type="submit" id="btn-staff-login" class="btn-primary full-width">
+                    <span>Sign in</span>
                     <div class="btn-spinner hidden"></div>
                 </button>
             </form>
+
+            <form id="login-form" class="hidden">
+                <div class="input-group">
+                    <i class="fas fa-key"></i>
+                    <input type="password" id="admin-key-input" placeholder="Admin API Key">
+                </div>
+                <button type="submit" id="btn-login" class="btn-primary full-width">
+                    <span>Authorize workstation</span>
+                    <div class="btn-spinner hidden"></div>
+                </button>
+                <p class="legacy-warning">
+                    <i class="fas fa-triangle-exclamation"></i>
+                    Legacy shared key. Actions are recorded as
+                    <strong>SYSTEM_LEGACY_ADMIN</strong>, not as you, and staff,
+                    park, badge, finance and contact-reveal actions are blocked.
+                </p>
+            </form>
+
             <div class="login-footer">
-                <i class="fas fa-shield-alt"></i> Protected by AES-256 Encryption
+                <i class="fas fa-shield-alt"></i> Sessions expire and are individually revocable
             </div>
         </div>
     </div>
@@ -85,8 +118,29 @@
                 <li data-section="sos-alerts" class="danger-nav">
                     <i class="fas fa-exclamation-triangle" style="color: #ff4d4d;"></i> <span style="color: #ff4d4d;">SOS Alerts</span>
                 </li>
+                <li data-section="parks" data-requires-permission="park:read">
+                    <i class="fas fa-warehouse"></i> <span>Parks</span>
+                </li>
+                <li data-section="park-detail" class="hidden-nav" data-requires-permission="park:read">
+                    <i class="fas fa-map-location-dot"></i> <span>Park Detail</span>
+                </li>
+                <li data-section="park-dispatch" data-requires-permission="park:read">
+                    <i class="fas fa-diagram-project"></i> <span>Park Dispatch</span>
+                </li>
+                <li data-section="badges" data-requires-permission="badge:read">
+                    <i class="fas fa-id-badge"></i> <span>Driver Badges</span>
+                </li>
+                <li data-section="staff" data-requires-permission="staff:read">
+                    <i class="fas fa-user-shield"></i> <span>Staff</span>
+                </li>
+                <li data-section="role-matrix" data-requires-permission="staff:read">
+                    <i class="fas fa-table-list"></i> <span>Role Matrix</span>
+                </li>
+                <li data-section="staff-audit" data-requires-permission="audit:read">
+                    <i class="fas fa-fingerprint"></i> <span>Staff Audit</span>
+                </li>
                 <li data-section="audit-log">
-                    <i class="fas fa-clipboard-list"></i> <span>Audit Log</span>
+                    <i class="fas fa-clipboard-list"></i> <span>Audit Log (legacy)</span>
                 </li>
                 <li data-section="settings">
                     <i class="fas fa-cog"></i> <span>System Settings</span>
@@ -469,8 +523,224 @@
                 </section>
 
                 <!-- Audit Log Section -->
+                <!-- Parks -->
+                <section id="parks" class="content-section hidden">
+                    <div class="staff-toolbar">
+                        <input type="search" id="park-search" placeholder="Search name, code or city">
+                        <select id="park-status-filter">
+                            <option value="">All statuses</option>
+                            <option value="draft">Draft</option>
+                            <option value="active">Active</option>
+                            <option value="inactive">Inactive</option>
+                            <option value="suspended">Suspended</option>
+                        </select>
+                        <button id="btn-new-park" class="btn-primary" data-requires-permission="park:create">
+                            <i class="fas fa-plus"></i> New park
+                        </button>
+                    </div>
+                    <div id="parks-grid" class="park-grid"></div>
+                </section>
+
+                <!-- Park detail -->
+                <section id="park-detail" class="content-section hidden">
+                    <button class="btn-small" onclick="switchSection('parks')">&larr; All parks</button>
+                    <div id="park-detail-body"></div>
+                </section>
+
+                <!-- Park Dispatch monitoring -->
+                <section id="park-dispatch" class="content-section hidden">
+                    <div class="staff-toolbar">
+                        <select id="pd-window">
+                            <option value="1">Last hour</option>
+                            <option value="24" selected>Last 24 hours</option>
+                            <option value="168">Last 7 days</option>
+                        </select>
+                        <button id="btn-pd-refresh" class="btn-primary"><i class="fas fa-rotate"></i> Refresh</button>
+                        <span id="pd-flag" class="chip chip-muted">—</span>
+                    </div>
+
+                    <!--
+                      The runtime suspension control.
+
+                      Separate from the environment variable, which needs a
+                      container restart. This takes effect on the next request,
+                      which is what an incident actually needs. It can only
+                      SUSPEND — it cannot switch Park Dispatch on when the
+                      deployment has it off.
+                    -->
+                    <div id="pd-switch-panel" class="panel-card hidden">
+                        <h4>Park Dispatch suspension</h4>
+                        <p class="section-note">
+                            Suspending stops <strong>new</strong> requests reaching parks.
+                            Requests a dispatcher has already taken can still be assigned, and
+                            rides already assigned are untouched — cutting those off would strand
+                            passengers who are being served perfectly well.
+                        </p>
+                        <div id="pd-switch-state" class="section-note"></div>
+                        <div class="staff-toolbar">
+                            <input type="text" id="pd-switch-reason" maxlength="200"
+                                   placeholder="Why are you suspending it? (required, recorded)">
+                            <button id="btn-pd-suspend" class="btn-danger">
+                                <i class="fas fa-pause"></i> Suspend new requests
+                            </button>
+                            <button id="btn-pd-resume" class="btn-primary hidden">
+                                <i class="fas fa-play"></i> Resume
+                            </button>
+                        </div>
+                    </div>
+
+                    <div id="pd-metrics" class="badge-counts"></div>
+
+                    <h4>Live queue</h4>
+                    <p class="section-note">
+                        Requests direct dispatch could not fill, currently in a park's hands.
+                        A ride here is still <strong>searching</strong> — it becomes
+                        <strong>accepted</strong> only when a dispatcher assigns a driver.
+                    </p>
+                    <div class="table-container">
+                        <table>
+                            <thead><tr>
+                                <th>Ride</th><th>Park</th><th>Status</th><th>Priority</th>
+                                <th>Offered</th><th>Claimed by</th><th>Attempt</th>
+                            </tr></thead>
+                            <tbody id="pd-live-list"></tbody>
+                        </table>
+                    </div>
+
+                    <h4>Dispatcher response</h4>
+                    <div class="table-container compact">
+                        <table>
+                            <thead><tr><th>Dispatcher</th><th>Claimed</th><th>Assigned</th><th>Skipped</th><th>Avg response</th></tr></thead>
+                            <tbody id="pd-dispatchers"></tbody>
+                        </table>
+                    </div>
+
+                    <h4>Park utilisation</h4>
+                    <div id="pd-utilisation" class="park-grid"></div>
+                </section>
+
+                <!-- Badges -->
+                <section id="badges" class="content-section hidden">
+                    <div class="staff-toolbar">
+                        <input type="search" id="badge-search" placeholder="Search serial or code">
+                        <select id="badge-status-filter">
+                            <option value="">All statuses</option>
+                            <option value="pending_activation">Pending activation</option>
+                            <option value="active">Active</option>
+                            <option value="revoked">Revoked</option>
+                            <option value="lost">Lost</option>
+                            <option value="replaced">Replaced</option>
+                        </select>
+                        <button id="btn-issue-badge" class="btn-primary" data-requires-permission="badge:issue">
+                            <i class="fas fa-plus"></i> Issue badge
+                        </button>
+                    </div>
+                    <div id="badge-counts" class="badge-counts"></div>
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Serial</th><th>Driver</th><th>Unit</th><th>Code</th>
+                                    <th>Status</th><th>Issued</th><th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="badge-list"></tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <!-- Staff Management -->
+                <section id="staff" class="content-section hidden">
+                    <div class="staff-toolbar">
+                        <input type="search" id="staff-search" placeholder="Search name, email or phone">
+                        <select id="staff-status-filter">
+                            <option value="">All statuses</option>
+                            <option value="invited">Invited</option>
+                            <option value="active">Active</option>
+                            <option value="locked">Locked</option>
+                            <option value="suspended">Suspended</option>
+                            <option value="deactivated">Deactivated</option>
+                        </select>
+                        <select id="staff-role-filter"><option value="">All roles</option></select>
+                        <button id="btn-new-staff" class="btn-primary" data-requires-permission="staff:create">
+                            <i class="fas fa-plus"></i> New staff member
+                        </button>
+                    </div>
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Email</th>
+                                    <th>Phone</th>
+                                    <th>Roles</th>
+                                    <th>Status</th>
+                                    <th>Last login</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="staff-list"></tbody>
+                        </table>
+                    </div>
+                    <div class="pager" id="staff-pager"></div>
+                </section>
+
+                <!-- Role Matrix (read-only) -->
+                <section id="role-matrix" class="content-section hidden">
+                    <h2>Role &amp; Permission Matrix</h2>
+                    <p class="section-note">
+                        Permissions are defined in code and granted to people through durable role
+                        assignments. This view is read-only — changing what a role can do is a code
+                        change, reviewed in a diff.
+                    </p>
+                    <div id="role-matrix-body" class="role-matrix-grid"></div>
+                </section>
+
+                <!-- Staff Audit -->
+                <section id="staff-audit" class="content-section hidden">
+                    <div class="staff-toolbar">
+                        <input type="text" id="audit-actor-filter" placeholder="Actor staff id">
+                        <input type="text" id="audit-action-filter" placeholder="Action (e.g. STAFF_SUSPENDED)">
+                        <input type="text" id="audit-resource-filter" placeholder="Resource type">
+                        <input type="date" id="audit-from-filter">
+                        <input type="date" id="audit-to-filter">
+                        <select id="audit-outcome-filter">
+                            <option value="">All outcomes</option>
+                            <option value="success">Success</option>
+                            <option value="denied">Denied</option>
+                            <option value="failure">Failure</option>
+                        </select>
+                        <button id="btn-audit-filter" class="btn-primary"><i class="fas fa-filter"></i> Apply</button>
+                        <button id="btn-audit-export" class="btn-secondary" data-requires-permission="audit:export">
+                            <i class="fas fa-file-csv"></i> Export
+                        </button>
+                    </div>
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Time</th>
+                                    <th>Actor</th>
+                                    <th>Roles</th>
+                                    <th>Action</th>
+                                    <th>Resource</th>
+                                    <th>Outcome</th>
+                                    <th>Reason</th>
+                                </tr>
+                            </thead>
+                            <tbody id="staff-audit-list"></tbody>
+                        </table>
+                    </div>
+                    <div class="pager" id="staff-audit-pager"></div>
+                </section>
+
                 <section id="audit-log" class="content-section hidden">
                     <h2>Admin Action Log</h2>
+                    <p class="section-note">
+                        Historical role-level trail from the shared-key era. Kept as written —
+                        rows recorded before staff identity existed name a role, not a person.
+                        Named-actor events live under <strong>Staff Audit</strong>.
+                    </p>
                     <div class="table-container">
                         <table>
                             <thead>
@@ -551,6 +821,6 @@
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="live_requests.js?v=1.2"></script>
-    <script src="app.js?v=3.9"></script>
+    <script src="app.js?v=4.2"></script>
 </body>
 </html>

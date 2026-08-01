@@ -44,6 +44,7 @@ import { AuditService, AuditActor } from './audit_service';
 import { loadParkDispatchConfig, computeJobPriority, PRIORITY_LABEL } from '../config/park_dispatch_config';
 import { AppError, ErrorCode } from '../utils/errors';
 import { maskPhoneNumber } from './contact_access_service';
+import { DriverRecommendationService } from './driver_recommendation_service';
 import { DriverPresenceService } from './driver_presence_service';
 import { DriverPresenceState, PresenceSource } from '../models/DriverPresence';
 
@@ -945,18 +946,41 @@ export class ParkDispatchService {
         };
     }
 
-    /** Driver ids at a park a dispatcher may currently assign, longest-waiting first. */
+    /**
+     * Every roster driver, ranked for one specific job.
+     *
+     * Excludes nobody: drivers who cannot take the ride appear with a reason
+     * and a zero score, because a dispatcher who cannot see somebody assumes
+     * the screen is stale.
+     */
+    static async rankedDriversForJob(jobId: string, parkId: string) {
+        const [job, park] = await Promise.all([
+            ParkDispatchJobRepository.findById(jobId),
+            ParkRepository.findById(parkId),
+        ]);
+
+        let pickup: { lat: number; lng: number } | null = null;
+        if (job) {
+            const ride = await AppDataSource.getRepository(Ride).findOne({ where: { rideId: job.rideId } });
+            if (ride?.pickupLat != null && ride?.pickupLng != null) {
+                pickup = { lat: Number(ride.pickupLat), lng: Number(ride.pickupLng) };
+            }
+        }
+
+        return DriverRecommendationService.rankForJob({
+            parkId,
+            pickup,
+            parkLocation: park ? { lat: Number(park.lat), lng: Number(park.lng) } : null,
+            declinedDriverIds: job?.declinedDriverIds ?? [],
+        });
+    }
+
+    /** Ranked drivers with no specific job in mind, for the standing roster panel. */
     static async assignableDrivers(parkId: string) {
-        const roster = await ParkRosterService.view(parkId, {});
-        const assignableIds = new Set(await ParkSelectionService.assignableDriverIds(parkId));
-        return roster
-            .filter((r) => assignableIds.has(r.driverId))
-            .map((r) => ({
-                ...r,
-                problems: ParkRosterService.assignabilityProblems(r),
-                assignable: ParkRosterService.assignabilityProblems(r).length === 0,
-                /** A feature-phone driver must be told verbally — the UI needs to know. */
-                requiresVerbalAssignment: !r.smartphoneCapable,
-            }));
+        const park = await ParkRepository.findById(parkId);
+        return DriverRecommendationService.rankForJob({
+            parkId,
+            parkLocation: park ? { lat: Number(park.lat), lng: Number(park.lng) } : null,
+        });
     }
 }

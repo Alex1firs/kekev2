@@ -21,6 +21,7 @@ import { DriverBadgeRepository } from '../repositories/driver_badge_repository';
 import { ParkDispatchJobRepository, LIVE_JOB_STATUSES } from '../repositories/park_dispatch_job_repository';
 import { ParkJobStatus } from '../models/ParkDispatchJob';
 import { loadParkDispatchConfig } from '../config/park_dispatch_config';
+import { DispatcherDashboardService } from '../services/dispatcher_dashboard_service';
 import { requireStaffPermission, requireRealStaff, StaffRequest, auditActorOf } from '../middleware/staff_auth';
 import { requireParkScope, staffParkScope } from '../middleware/park_scope';
 import { StaffPermission } from '../config/staff_permissions';
@@ -523,6 +524,19 @@ router.get('/park-dispatch/jobs', requireStaffPermission(StaffPermission.PARK_VI
         return res.json(result);
     } catch (err: any) {
         return fail(res, err, "We couldn't load park dispatch jobs.");
+    }
+});
+
+/**
+ * GET /admin/park-dispatch/health
+ * Per-park operational health: waiting, assigned, queue depth, who is on duty,
+ * assignment and passenger-wait times, acceptance rate and jobs per dispatcher.
+ */
+router.get('/park-dispatch/health', requireStaffPermission(StaffPermission.PARK_VIEW_METRICS, StaffPermission.MONITOR_READ), async (_req: StaffRequest, res: Response) => {
+    try {
+        return res.json({ parks: await DispatcherDashboardService.allParkHealth() });
+    } catch (err: any) {
+        return fail(res, err, "We couldn't load park health.");
     }
 });
 

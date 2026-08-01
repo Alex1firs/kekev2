@@ -31,6 +31,7 @@ import { ParkRepository } from '../repositories/park_repository';
 import { DriverPresenceState, PresenceSource } from '../models/DriverPresence';
 import { ParkDispatchService } from '../services/park_dispatch_service';
 import { ParkAssignmentMode } from '../models/ParkDispatchJob';
+import { DispatcherDashboardService } from '../services/dispatcher_dashboard_service';
 import { errBody, ErrorCode, AppError } from '../utils/errors';
 
 const router = Router();
@@ -181,37 +182,7 @@ router.get('/dashboard', async (req: StaffRequest, res: Response) => {
             return res.status(403).json(errBody(ErrorCode.FORBIDDEN, 'You are not assigned to this park.'));
         }
 
-        const park = await ParkService.requirePark(parkId);
-        const [counts, queue, presence, onDuty, stale, requests] = await Promise.all([
-            ParkRepository.counts(park),
-            ParkRosterService.queue(parkId),
-            DriverPresenceService.atPark(parkId),
-            DispatcherShiftService.onDuty(parkId),
-            DriverPresenceService.stale(parkId, 180),
-            ParkDispatchService.queueForPark(parkId),
-        ]);
-
-        return res.json({
-            park: ParkService.toDto(park, { counts }),
-            onDuty,
-            myShift: shift,
-            queue,
-            presence,
-            staleWarnings: stale,
-            /** Ride requests direct dispatch could not fill. */
-            requests,
-            /**
-             * Stated in the payload, not only in documentation. A dispatcher
-             * client must have no code path that expects to advance a ride:
-             * assignment is the last thing they do, and everything after it
-             * belongs to the driver.
-             */
-            capabilities: {
-                canAssignRides: true,
-                canAdvanceRideLifecycle: false,
-                reason: 'A dispatcher assigns a driver and is then finished. Arrival, start and completion belong to the driver.',
-            },
-        });
+        return res.json(await DispatcherDashboardService.build(parkId, actor.staffUserId));
     } catch (err: any) {
         return fail(res, err, "We couldn't load the dashboard.");
     }
@@ -363,16 +334,28 @@ router.get('/requests', async (req: StaffRequest, res: Response) => {
 
 /**
  * GET /dispatcher/requests/:jobId/drivers
- * Who at this park could take this ride right now, longest-waiting first, each
- * annotated with why they cannot if they cannot.
+ *
+ * Every roster driver, RANKED for this specific ride, best first, each with
+ * badges and one honest line of reasoning.
+ *
+ * Unassignable drivers are included rather than hidden: a dispatcher who cannot
+ * see somebody wonders where they went and re-asks the queue. Showing them with
+ * "Owes ₦2,400" answers the question before it is asked.
  */
 router.get('/requests/:jobId/drivers', async (req: StaffRequest, res: Response) => {
     try {
         const shift = await requireOpenShift(req);
-        const drivers = await ParkDispatchService.assignableDrivers(shift.parkId);
-        return res.json({ parkId: shift.parkId, drivers, total: drivers.length });
+        const jobId = String(req.params.jobId);
+        const drivers = await ParkDispatchService.rankedDriversForJob(jobId, shift.parkId);
+        return res.json({
+            parkId: shift.parkId,
+            jobId,
+            drivers,
+            total: drivers.length,
+            assignableCount: drivers.filter((d) => d.assignable).length,
+        });
     } catch (err: any) {
-        return fail(res, err, "We couldn't load assignable drivers.");
+        return fail(res, err, "We couldn't load drivers for this request.");
     }
 });
 

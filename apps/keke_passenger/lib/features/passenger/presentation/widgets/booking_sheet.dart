@@ -1981,7 +1981,17 @@ class _ArrivalCardState extends State<_ArrivalCard>
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('Tell your driver this code',
+                        // Optional, and described as such.
+                        //
+                        // The code is NOT enforced anywhere: the backend never
+                        // compares it, the driver app only displays it, and a
+                        // ride starts on a geofence check rather than on any
+                        // code. Presenting it as a required step was telling
+                        // passengers to do something that has no effect if they
+                        // do not — and on a Park Dispatch ride with a
+                        // feature-phone driver there is no screen to compare it
+                        // against at all. The plate above is the real check.
+                        Text('Ride code — you can check it matches your driver\'s screen',
                             style: AppTextStyles.caption(
                                 color: AppColors.midGray)),
                         const SizedBox(height: 2),

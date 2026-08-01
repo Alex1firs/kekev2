@@ -420,7 +420,10 @@ class TripOperationHUD extends ConsumerWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Ride code — ask your passenger',
+                // Not a gate. Nothing verifies this code, and the trip starts
+                // on the pickup geofence. It is here so both people can compare
+                // the same four characters if they want to.
+                Text('Ride code — your passenger sees the same code',
                     style: AppTextStyles.caption(color: AppColors.midGray)),
                 const SizedBox(height: 2),
                 Text(

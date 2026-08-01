@@ -549,8 +549,17 @@ function renderDrivers() {
     const list = S.drivers.filter((d) => matches(
         `${d.firstName} ${d.lastName} ${d.unitNumber} ${d.vehiclePlate}`, S.driverFilter));
 
-    $('driver-count').textContent = String(S.drivers.filter((d) => d.assignable).length);
-    $('driver-count').className = `pill ${S.drivers.some((d) => d.assignable) ? '' : 'pill-zero'}`;
+    /**
+     * This counts drivers who can actually take a ride right now, which is
+     * almost always fewer than the rows on screen — the rest are listed so the
+     * dispatcher can see *why* they are unavailable (no badge, owes a balance,
+     * on a trip). A bare number above a longer list reads as a bug, so the
+     * pill says what it counts.
+     */
+    const ready = S.drivers.filter((d) => d.assignable).length;
+    $('driver-count').textContent = `${ready} can take a ride`;
+    $('driver-count').className = `pill ${ready ? '' : 'pill-zero'}`;
+    $('driver-count').title = `${ready} of ${S.drivers.length} drivers at this park can be assigned now`;
     $('drivers-empty').style.display = list.length ? 'none' : 'flex';
 
     $('drivers').innerHTML = list.map((d, i) => `

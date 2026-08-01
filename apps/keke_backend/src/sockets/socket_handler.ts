@@ -31,6 +31,7 @@ import { WalletService, DEBT_CASH_BLOCK, DEBT_HARD_BLOCK } from '../services/wal
 import { In } from 'typeorm';
 import { SosAlert, SosAlertStatus } from '../models/SosAlert';
 import { toLocalDialable } from '../utils/phone';
+import { ContactAccessService } from '../services/contact_access_service';
 import {
     RideIntegrityConfig,
     getDriverLiveLocation,
@@ -372,7 +373,11 @@ export class SocketHandler {
                         try {
                             const ride = await AppDataSource.getRepository(Ride).findOne({ where: { rideId } });
                             if (ride && (ride.status as any) === 'searching') {
-                                this.io.to(`driver:${data.userId}`).emit('ride:request', payload);
+                                // Contact fields are per-driver, so they are
+                                // re-derived for THIS driver rather than replayed
+                                // from the cached (contact-free) payload.
+                                const contact = await this.offerContactFor(data.userId, payload.passengerId);
+                                this.io.to(`driver:${data.userId}`).emit('ride:request', { ...payload, ...contact });
                                 log.info(`[DISPATCH_RECOVERY] Re-sent ride:request ${rideId} to reconnected driver ${data.userId}`);
                             }
                         } catch (err) {
@@ -1815,9 +1820,11 @@ export class SocketHandler {
 
             sendOffer: async (driverId: string, round: number): Promise<OfferDelivery> => {
                 // Enrich once per offer so a re-offered driver still gets the
-                // current pickup code and passenger phone.
-                const enriched = await this.buildOfferPayload(rideId, payload, round);
-                this.dispatchPayloads.set(rideId, enriched);
+                // current pickup code. The cached copy is contact-free; contact
+                // fields are merged per driver just before the emit below.
+                const base = await this.buildOfferPayload(rideId, payload, round);
+                this.dispatchPayloads.set(rideId, base);
+                const enriched = { ...base, ...(await this.offerContactFor(driverId, payload.passengerId)) };
 
                 // Track the offer so a reconnecting driver can have it re-delivered.
                 const notified = this.activeDispatches.get(rideId) ?? new Set<string>();
@@ -1908,18 +1915,47 @@ export class SocketHandler {
         }
     }
 
-    /** Offer payload for a driver: the request plus per-ride enrichment. */
+    /**
+     * Offer payload for a driver: the request plus per-ride enrichment.
+     *
+     * Deliberately contains NO passenger contact data. Contact is per-DRIVER
+     * (it depends on that driver's app version and the configured privacy mode)
+     * whereas this payload is per-RIDE and gets cached in dispatchPayloads for
+     * reconnect recovery. Mixing the two would let a cached payload deliver one
+     * driver's contact variant to a different driver.
+     * See offerContactFor and services/contact_access_service.ts.
+     */
     private async buildOfferPayload(rideId: string, payload: any, round: number): Promise<any> {
-        const passengerUser = payload.passengerId
-            ? await AppDataSource.getRepository(User).findOne({ where: { id: payload.passengerId } })
-            : null;
         const rideRecord = await AppDataSource.getRepository(Ride).findOne({ where: { rideId } });
         return {
             ...payload,
-            passengerPhone: toLocalDialable(passengerUser?.phone) ?? null,
             pickupCode: rideRecord?.pickupCode ?? null,
             dispatchRound: round,
         };
+    }
+
+    /**
+     * Passenger contact fields for ONE candidate driver's offer.
+     *
+     * @deprecated Sending contact details with an offer — to drivers who have
+     *   not accepted and may never — is the privacy defect recorded in
+     *   docs/contact_privacy_migration.md. The default mode (`legacy`) still
+     *   sends the full number so installed apps keep working; once the fleet has
+     *   moved to GET /rides/:rideId/contact, CONTACT_PRIVACY_MODE goes to
+     *   `strict` and this method returns nothing.
+     */
+    private async offerContactFor(driverId: string, passengerId?: string | null): Promise<Record<string, unknown>> {
+        try {
+            const passengerUser = passengerId
+                ? await AppDataSource.getRepository(User).findOne({ where: { id: passengerId } })
+                : null;
+            return await ContactAccessService.offerContactFields(driverId, passengerUser);
+        } catch (err: any) {
+            log.warn(`[CONTACT_PRIVACY] offer contact shaping failed: ${err?.message}`);
+            // Fail CLOSED: an error here withholds a phone number, it never
+            // leaks one.
+            return { passengerPhone: null };
+        }
     }
 
     /**

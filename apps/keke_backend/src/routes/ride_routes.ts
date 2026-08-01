@@ -12,6 +12,8 @@ import { SettingService } from "../services/setting_service";
 import { NearbyKekeFeedService } from "../services/nearby_keke_feed_service";
 import { coordinationSnapshot, coordinationCopy, CoordinationStage } from "../services/ride_coordination_contract";
 import { loadStaleRideConfig } from "../config/stale_ride_config";
+import { ContactAccessService } from "../services/contact_access_service";
+import { AppError } from "../utils/errors";
 
 
 const router = Router();
@@ -104,10 +106,62 @@ router.get("/active/driver", authMiddleware, async (req: AuthRequest, res: Respo
             order: { createdAt: "DESC" }
         });
         if (!ride) return res.status(200).json({});
-        return res.status(200).json({ ...ride, coordination: buildCoordination(ride, 'driver', true) });
+
+        // Contact for the ride the driver is ACTUALLY on.
+        //
+        // This also closes an existing gap: the driver app builds its call
+        // button from the dispatch offer payload, so a driver whose app
+        // restarted mid-ride previously lost the ability to phone their
+        // passenger entirely. Recovery now carries the number, which is both a
+        // fix and the precondition for removing it from the offer payload.
+        let passengerContact: unknown = null;
+        try {
+            passengerContact = await ContactAccessService.passengerContactForAssignedDriver(
+                ride.rideId,
+                req.user!.userId,
+                { ipAddress: req.ip ?? null, correlationId: (req as any).requestId ?? null },
+            );
+        } catch (err: any) {
+            // A contact lookup must never break active-ride recovery.
+            console.warn('[RIDES] active driver contact unavailable:', err?.message);
+        }
+
+        return res.status(200).json({
+            ...ride,
+            coordination: buildCoordination(ride, 'driver', true),
+            passengerContact,
+        });
     } catch (err: any) {
         console.error('[RIDES] Active driver ride error:', err?.message);
         return res.status(500).json(errBody(ErrorCode.INTERNAL_ERROR, "We couldn't load your active ride. Please try again."));
+    }
+});
+
+/**
+ * GET /rides/:rideId/contact
+ *
+ * The assignment-time contact channel: the real passenger number, for the
+ * driver who actually holds the ride, recorded as a ContactRevealEvent.
+ *
+ * This is the replacement for shipping `passengerPhone` inside every dispatch
+ * offer. Once the driver fleet calls this endpoint, CONTACT_PRIVACY_MODE can be
+ * moved to `strict` and candidate drivers stop receiving contact data entirely.
+ * See docs/contact_privacy_migration.md.
+ */
+router.get("/:rideId/contact", authMiddleware, async (req: AuthRequest, res: Response) => {
+    try {
+        const contact = await ContactAccessService.passengerContactForAssignedDriver(
+            String(req.params.rideId),
+            req.user!.userId,
+            { ipAddress: req.ip ?? null, correlationId: (req as any).requestId ?? null },
+        );
+        return res.status(200).json(contact);
+    } catch (err: any) {
+        if (err instanceof AppError) {
+            return res.status(err.statusCode).json(errBody(err.code, err.message));
+        }
+        console.error('[RIDES] Contact lookup error:', err?.message);
+        return res.status(500).json(errBody(ErrorCode.INTERNAL_ERROR, "We couldn't load contact details. Please try again."));
     }
 });
 

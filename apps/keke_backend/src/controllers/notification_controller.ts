@@ -5,7 +5,11 @@ import { UserRole } from '../models/User';
 
 export class NotificationController {
     static async registerToken(req: Request, res: Response) {
-        const { token, platform, deviceLabel, role } = req.body;
+        // appVersion is optional and absent from every app build released so
+        // far. That is deliberate: contact-privacy enforcement treats a device
+        // that has never reported a version as an OLD client and keeps the
+        // legacy behaviour for it. See config/contact_privacy_config.ts.
+        const { token, platform, deviceLabel, role, appVersion } = req.body;
         const userId = (req as any).user?.userId;
 
         if (!token || !platform || !userId || !role) {
@@ -26,6 +30,9 @@ export class NotificationController {
                 deviceToken.deviceLabel = deviceLabel;
                 deviceToken.isActive = true;
                 deviceToken.lastSeenAt = new Date();
+                if (typeof appVersion === 'string' && appVersion.trim()) {
+                    deviceToken.appVersion = appVersion.trim().slice(0, 32);
+                }
             } else {
                 // Create new record
                 deviceToken = tokenRepo.create({
@@ -35,7 +42,10 @@ export class NotificationController {
                     deviceLabel,
                     role: role as UserRole,
                     isActive: true,
-                    lastSeenAt: new Date()
+                    lastSeenAt: new Date(),
+                    appVersion: (typeof appVersion === 'string' && appVersion.trim())
+                        ? appVersion.trim().slice(0, 32)
+                        : null,
                 });
             }
 

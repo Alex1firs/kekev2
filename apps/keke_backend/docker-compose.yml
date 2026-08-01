@@ -48,6 +48,16 @@ services:
       SMILE_ID_USE_SANDBOX: ${SMILE_ID_USE_SANDBOX}
       # Base64-encoded Firebase service-account JSON. Without this, push is disabled.
       FIREBASE_SERVICE_ACCOUNT_JSON: ${FIREBASE_SERVICE_ACCOUNT_JSON}
+
+      # ── Park Dispatch ────────────────────────────────────────────────
+      # Signs staff tokens. Falls back to a key derived from JWT_SECRET if
+      # unset, which works but keeps staff and customer tokens related.
+      STAFF_JWT_SECRET: ${STAFF_JWT_SECRET}
+      # Defaults to true in code; stated here so it is visible in the
+      # deployment rather than only in a source file. Set false to restore
+      # exactly the pre-Park behaviour (needs a container restart — for an
+      # incident use the Redis switch instead, which is immediate).
+      PARK_DISPATCH_ENABLED: ${PARK_DISPATCH_ENABLED:-true}
     depends_on:
       postgres_shared:
         condition: service_healthy

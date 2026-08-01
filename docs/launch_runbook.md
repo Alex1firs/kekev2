@@ -150,7 +150,7 @@ No passenger or driver app release is required. Park offers reuse
 them with no change, and installed passenger apps are handled by the round
 event.
 
-### 3c. Before dispatchers arrive
+### 3d. Before dispatchers arrive
 
 - [ ] At least one park is `active`, with `lat`/`lng` set and a service radius
       that actually covers the pickups you expect.
@@ -173,7 +173,12 @@ event.
       It checks the switch, park readiness, the privilege boundaries and that
       passenger numbers are masked, and it drills the kill switch off and back
       on — leaving it on, and failing loudly if it cannot.
-- [ ] Open `/dispatcher` on the actual tablet, sign in, open a shift.
+- [ ] Run the acceptance scenarios; they must exit 0:
+
+      npx ts-node scripts/acceptance_park_dispatch.ts
+
+- [ ] Open the app **on the actual tablet**, sign in, install it to the home
+      screen, and open a shift. §6 below is the part no script can do.
 
 ---
 
@@ -271,3 +276,94 @@ A full code rollback is safe too — the migrations are additive and the old cod
 ignores the new columns. Live park jobs at the moment of rollback are orphaned
 rows; their rides are released by ordinary stale-ride recovery. Prefer §2a
 first: it is faster, reversible, and does not need a deploy window.
+
+
+---
+
+## 6. The device test, which no script replaces
+
+Everything above is software checking software. It cannot tell you whether a
+dispatcher can actually work a shift with it. Before Monday, someone has to
+stand in the park and do this.
+
+**What you need:** one passenger phone, the dispatcher's Android tablet, one
+smartphone driver, one feature-phone driver from the roster, and an operations
+laptop.
+
+| | Check | What "good" looks like |
+|---|---|---|
+| 1 | Install the PWA from `dispatch.kekeride.ng` | Offers "Add to Home Screen"; the icon is the KekeRide diamond; opening it has no browser address bar |
+| 2 | Sign in with the phone number on the staff card | Works, not just the email address |
+| 3 | Sound test during shift setup | Audible across the park **at the tablet's normal volume**, with the park at its normal noise |
+| 4 | Book a ride that direct dispatch cannot fill | Appears on the board within a few seconds, chimes, vibrates |
+| 5 | Walk away from the tablet for a minute | The reminder chimes again; the banner is still up when you get back |
+| 6 | Assign the smartphone driver | Their phone shows the offer; accepting clears the board |
+| 7 | Assign the feature-phone driver verbally | Ask them out loud first, then assign; the ride is theirs immediately |
+| 8 | Have the smartphone driver decline | The request comes back within seconds, and they drop down the list |
+| 9 | Turn the tablet's data off mid-shift | Within ~20s the board says it is stale and not to assign from it |
+| 10 | Turn data back on | It catches up without a manual refresh |
+| 11 | Double-tap Assign hard | One assignment, one Keke |
+| 12 | Try to end the shift with a request in hand | Refused until it is released or handed over |
+| 13 | Suspend Park Dispatch from the operations laptop | The dispatcher sees the red banner; the request they already hold is still assignable |
+| 14 | Let the assigned ride run to completion | Ordinary lifecycle: arrive, start, complete, payment. Nothing park-specific |
+| 15 | One-handed use | The dispatcher can take a request and assign a driver while holding a phone in the other hand |
+
+Record what actually happened, including anything that only half-worked. A
+dispatcher who cannot hear the chime over the park is a launch blocker even
+though every test in this repository passes.
+
+---
+
+## 7. Merging
+
+```bash
+# Confirm the engine is untouched — expect no output.
+git diff f0e36fa..HEAD --stat -- \
+  apps/keke_backend/src/services/dispatch_orchestrator.ts \
+  apps/keke_backend/src/services/dispatch_service.ts \
+  apps/keke_backend/src/services/driver_eligibility_service.ts \
+  apps/keke_backend/src/config/dispatch_config.ts \
+  apps/keke_backend/src/services/wallet_service.ts
+
+# Confirm no secrets — expect no output.
+git diff f0e36fa..HEAD | grep -nE '(SECRET|PASSWORD|API_KEY|PRIVATE_KEY)\s*[:=]\s*["'"'"'][^"'"'"'$]' \
+  | grep -v 'process.env' | grep -v 'KekeDemo-Pass99'
+
+# Tag the current production commit so there is something to go back to.
+git tag pre-park-dispatch f0e36fa && git push origin pre-park-dispatch
+
+git checkout main && git merge --no-ff <branch> && git push origin main
+```
+
+`--no-ff` deliberately: this is a feature with a shape, and a merge commit keeps
+it revertable as one thing.
+
+---
+
+## 8. Rolling back
+
+In order of cost. Try them in this order.
+
+```bash
+# 1. Suspend (seconds, no deploy). Rides already assigned are untouched.
+#    See §2a — needs a staff login, not the admin key.
+
+# 2. Environment off (one restart, ~10s of 502s).
+PARK_DISPATCH_ENABLED=false
+docker compose up -d api_prod
+
+# 3. Roll the code back (a deploy).
+git revert -m 1 <merge-commit> && git push origin main
+# then on the droplet: build, up -d. Do NOT revert the migrations.
+```
+
+**Leave the migrations in place.** They are additive, the old code ignores the
+new columns, and reverting them would drop the park tables while jobs may still
+reference them. Live park jobs at the moment of rollback become orphaned rows;
+their rides are released by ordinary stale-ride recovery.
+
+The one thing that is not cleanly reversible is
+`1714500000001-NormaliseLegacyEnumNames`, which renames the ledger enum types to
+the names the code already used. Its `down` is intentionally empty: reversing it
+would rename production's types to a form nothing reads. It is a no-op on
+production in the first place — see §3a.

@@ -24,7 +24,14 @@ export type AdminPermission =
     /** Everything else (existing admin actions). */
     | 'admin:write';
 
-const ROLE_PERMISSIONS: Record<AdminRole, AdminPermission[]> = {
+/**
+ * The LEGACY role map. Frozen deliberately.
+ *
+ * These four permissions are the entire authority a shared `x-admin-key` can
+ * ever carry. New capabilities are defined in config/staff_permissions.ts and
+ * granted to named humans only — see docs/admin_auth_migration.md.
+ */
+export const ROLE_PERMISSIONS: Record<AdminRole, AdminPermission[]> = {
     superadmin: ['monitor:read', 'monitor:reveal_contact', 'metrics:read', 'admin:write'],
     // Dispatch/supply operators: full monitoring, no contact reveal.
     operations: ['monitor:read', 'metrics:read'],
@@ -35,12 +42,25 @@ const ROLE_PERMISSIONS: Record<AdminRole, AdminPermission[]> = {
 
 export interface AdminIdentity {
     role: AdminRole;
-    /** Stable label recorded in the audit log. Never the key itself. */
+    /**
+     * Stable label recorded in the legacy audit log. Never the key itself.
+     *
+     * For a real staff session this is the staff member's id, so the existing
+     * `audit_log` rows written by admin_routes stop saying "superadmin" and
+     * start naming a human. Staff actions are ALSO written to
+     * staff_audit_event, which is the richer, authoritative trail.
+     */
     label: string;
+    /** True when this identity came from the shared key rather than a person. */
+    isLegacy?: boolean;
+    /** Set for real staff sessions. Absent for legacy keys. */
+    staffUserId?: string;
 }
 
 export interface AdminRequest extends Request {
     admin?: AdminIdentity;
+    /** Populated by middleware/staff_auth.ts resolveActor. */
+    actor?: import('./staff_auth').Actor;
 }
 
 /**
@@ -69,27 +89,60 @@ export function hasPermission(role: AdminRole, permission: AdminPermission): boo
 }
 
 /**
- * Attach the caller's identity. Runs after adminAuth, which has already rejected
- * anything that matches no configured key at all.
+ * Project the resolved actor (middleware/staff_auth.ts) onto the legacy
+ * `req.admin` shape the existing admin routes read.
+ *
+ * This is the whole of the compatibility bridge: every route in
+ * admin_routes.ts keeps working untouched, while the identity behind it is now
+ * either a named staff member or an explicitly-labelled legacy key.
+ *
+ * Runs after resolveActor, which has already rejected nothing — authentication
+ * is enforced by adminOrStaffAuth before this point.
  */
 export const attachAdminIdentity = (req: AdminRequest, _res: Response, next: NextFunction) => {
-    req.admin = identifyAdmin(req.headers['x-admin-key'] as string | undefined) ?? {
-        role: 'superadmin',
-        label: 'superadmin',
-    };
-    next();
+    const actor = req.actor;
+    if (!actor) {
+        // No identity resolved. Deliberately leave req.admin unset so
+        // requirePermission denies — the previous default-to-superadmin
+        // behaviour was a privilege-escalation waiting to happen.
+        return next();
+    }
+    if (actor.isLegacy) {
+        req.admin = { role: actor.legacyRole, label: actor.legacyRole, isLegacy: true };
+    } else {
+        req.admin = {
+            // Legacy shape needs a role string; staff authority comes from
+            // actor.permissions, which requirePermission consults first.
+            role: 'superadmin',
+            label: actor.staffUserId,
+            isLegacy: false,
+            staffUserId: actor.staffUserId,
+        };
+    }
+    return next();
 };
 
-/** Gate a route on a permission. */
+/**
+ * Gate a route on a legacy monitoring permission.
+ *
+ * DENY BY DEFAULT: a request with no resolved actor is refused. Authority comes
+ * from the resolved actor's permission set; the legacy role map is consulted
+ * only for legacy keys, which is the only identity it still describes.
+ */
 export const requirePermission =
     (permission: AdminPermission) =>
     (req: AdminRequest, res: Response, next: NextFunction) => {
-        const role = req.admin?.role ?? 'superadmin';
-        if (!hasPermission(role, permission)) {
-            return res.status(403).json({
-                error: 'Forbidden',
-                message: `Role "${role}" lacks permission "${permission}".`,
+        const actor = req.actor;
+        if (!actor) {
+            return res.status(401).json({
+                error: 'Unauthorized',
+                message: 'Sign in to continue.',
             });
         }
-        next();
+        if (actor.permissions.has(permission as any)) return next();
+
+        return res.status(403).json({
+            error: 'Forbidden',
+            message: `You lack permission "${permission}".`,
+        });
     };

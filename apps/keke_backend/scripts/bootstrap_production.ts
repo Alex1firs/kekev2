@@ -11,9 +11,9 @@
  * A password typed into a terminal ends up in shell history and in whatever
  * ships those logs off the box.
  *
- * If BOOTSTRAP_ADMIN_PASSWORD is set in the environment it is used for the
- * first operations account only — the chicken-and-egg case where nobody exists
- * yet to send an invitation. It is never echoed.
+ * No account gets a password here, including the first one. Every account is
+ * created INVITED with a single-use activation link, and the holder chooses
+ * their own password on a page that is the only thing which ever sees it.
  *
  *   npx ts-node scripts/bootstrap_production.ts --check
  *   npx ts-node scripts/bootstrap_production.ts --apply
@@ -49,6 +49,18 @@ const APPLY = process.argv.includes('--apply');
  * credential; the park's identity and the staff addresses are configuration.
  */
 const CFG = {
+    /*
+     * The super admin. Not optional, and created first.
+     *
+     * Only SUPER_ADMIN holds staff:create, staff:reset_credentials and
+     * staff:assign_roles. Without one, a freshly bootstrapped production can
+     * never onboard another person or reissue a lost activation link, and the
+     * accounts created here would be all there would ever be.
+     */
+    superAdminEmail: process.env.BOOTSTRAP_SUPERADMIN_EMAIL,
+    superAdminPhone: process.env.BOOTSTRAP_SUPERADMIN_PHONE,
+    superAdminName: process.env.BOOTSTRAP_SUPERADMIN_NAME || 'Super Admin',
+
     opsEmail: process.env.BOOTSTRAP_OPS_EMAIL,
     opsPhone: process.env.BOOTSTRAP_OPS_PHONE,
     opsName: process.env.BOOTSTRAP_OPS_NAME || 'Operations Admin',
@@ -89,6 +101,8 @@ function requireConfig(): void {
      * email, which is not what a park tablet has to hand.
      */
     const missing = [
+        ['BOOTSTRAP_SUPERADMIN_EMAIL', CFG.superAdminEmail],
+        ['BOOTSTRAP_SUPERADMIN_PHONE', CFG.superAdminPhone],
         ['BOOTSTRAP_OPS_EMAIL', CFG.opsEmail],
         ['BOOTSTRAP_OPS_PHONE', CFG.opsPhone],
         ['BOOTSTRAP_SUPERVISOR_EMAIL', CFG.supervisorEmail],
@@ -170,24 +184,20 @@ async function ensureStaff(
     return staff;
 }
 
-/**
- * The first operations account may be given a password directly, because there
- * is nobody yet who could send it an invitation. Every later account uses the
- * invite flow.
+/*
+ * There is deliberately NO way to set a password from this script.
+ *
+ * An earlier version let the first account take one from
+ * BOOTSTRAP_ADMIN_PASSWORD, to solve the chicken-and-egg of having nobody to
+ * send an invitation. It is gone: a password passed through an environment
+ * variable is a password in a shell history, a process listing and whatever
+ * ships logs off the box, and it is a password somebody other than its owner
+ * has seen.
+ *
+ * Every account created here — including the super admin — is INVITED with a
+ * single-use activation link. The holder chooses their own password on a page
+ * that is the only thing which ever sees it.
  */
-async function setFirstAdminPassword(staff: StaffUser): Promise<void> {
-    const pw = process.env.BOOTSTRAP_ADMIN_PASSWORD;
-    if (!pw || staff.passwordHash) return;
-    if (pw.length < 12) throw new Error('BOOTSTRAP_ADMIN_PASSWORD must be at least 12 characters.');
-    if (!APPLY) { todo('set the first operations password from BOOTSTRAP_ADMIN_PASSWORD'); return; }
-
-    staff.passwordHash = await StaffAuthService.hashPassword(pw);
-    staff.status = StaffStatus.ACTIVE;
-    staff.setupTokenHash = null;
-    staff.setupTokenExpiresAt = null;
-    await AppDataSource.getRepository(StaffUser).save(staff);
-    ok('first operations password set from the environment (not printed)');
-}
 
 async function ensurePark(): Promise<Park | null> {
     const repo = AppDataSource.getRepository(Park);
@@ -269,8 +279,9 @@ async function main() {
 
     const park = await ensurePark();
 
-    const ops = await ensureStaff(CFG.opsEmail!, CFG.opsPhone!, CFG.opsName, StaffRole.OPERATIONS_ADMIN, null);
-    if (ops) await setFirstAdminPassword(ops);
+    await ensureStaff(CFG.superAdminEmail!, CFG.superAdminPhone!, CFG.superAdminName,
+        StaffRole.SUPER_ADMIN, null);
+    await ensureStaff(CFG.opsEmail!, CFG.opsPhone!, CFG.opsName, StaffRole.OPERATIONS_ADMIN, null);
     await ensureStaff(CFG.supervisorEmail!, CFG.supervisorPhone!, CFG.supervisorName,
         StaffRole.PARK_SUPERVISOR, park?.parkId ?? null);
     await ensureStaff(CFG.dispatcherEmail!, CFG.dispatcherPhone!, CFG.dispatcherName,

@@ -38,6 +38,16 @@ const PARK = { code: 'AWK-DEMO', name: 'Awka Demo Park', lat: 6.2109, lng: 7.074
 const DRIVERS = [
     { first: 'Uche',   last: 'Aniete', unit: 'U156', smartphone: true,  badge: true,  presence: DriverPresenceState.WAITING },
     { first: 'Emeka',  last: 'Okafor', unit: 'U214', smartphone: true,  badge: true,  presence: DriverPresenceState.AT_PARK },
+    /*
+     * A feature-phone driver who can actually be assigned.
+     *
+     * Missing at first, and its absence hid the fact that the demo could not
+     * exercise the verbal handoff at all — which is the PRIMARY path for this
+     * fleet, not an edge case. Every other feature-phone driver here is
+     * deliberately blocked for one reason or another; this one is not.
+     */
+    { first: 'Ngozi',  last: 'Iweala', unit: 'U331', smartphone: false, badge: true,  presence: DriverPresenceState.WAITING },
+    { first: 'Obiora', last: 'Nnaji',  unit: 'U402', smartphone: false, badge: true,  presence: DriverPresenceState.WAITING },
     { first: 'Tobenna',last: 'Eze',    unit: 'U422', smartphone: false, badge: false, presence: DriverPresenceState.AT_PARK },
     { first: 'Kelechi',last: 'Umeh',   unit: 'U199', smartphone: false, badge: false, presence: DriverPresenceState.WAITING, owes: 2400 },
     { first: 'Ifeanyi',last: 'Nwosu',  unit: 'U087', smartphone: false, badge: true,  presence: DriverPresenceState.TRIP_STARTED },
@@ -84,6 +94,33 @@ function guard(): void {
 async function main() {
     guard();
     await AppDataSource.initialize();
+
+    /*
+     * Release demo drivers from anything they are still holding, and clear the
+     * previous demo queue.
+     *
+     * Every run assigns rides that nobody ever completes, so without this the
+     * next run finds each driver "on a trip" and correctly refuses to assign
+     * them — the system behaving properly and the demo being unusable. Scoped
+     * to demo accounts only.
+     */
+    await AppDataSource.query(`
+        UPDATE ride SET status = 'canceled', "updatedAt" = now()
+        WHERE status IN ('searching','accepted','arrived','in_progress','started')
+          AND ("driverId" IN (SELECT id::text FROM "user" WHERE email LIKE 'demo.%@kekeride.test')
+               OR "passengerId" IN (SELECT id::text FROM "user" WHERE email LIKE 'demo.%@kekeride.test'))`);
+
+    await AppDataSource.query(`
+        UPDATE park_dispatch_job SET status = 'cancelled', "resolvedAt" = now(),
+               "resolutionReason" = 'demo reseed'
+        WHERE status IN ('offered','claimed','pending_acceptance')`);
+
+    // Drivers go back to waiting, so the board looks like the start of a shift.
+    await AppDataSource.query(`
+        UPDATE driver_presence SET state = 'waiting', since = now()
+        WHERE state IN ('assigned','en_route','passenger_boarding','trip_started')
+          AND "driverId" IN (SELECT id::text FROM "user" WHERE email LIKE 'demo.%@kekeride.test')`);
+
 
     const parks = AppDataSource.getRepository(Park);
     let park: Park | null = await parks.findOne({ where: { code: PARK.code } });
@@ -146,6 +183,9 @@ async function main() {
             u = await users.save(mk(users, {
                 email, firstName: d.first, lastName: d.last,
                 phone: `0815${d.unit.replace(/\D/g, '').padStart(7, '0')}`,
+                // bcrypt hash of PASSWORD: the driver auth route compares
+                // against this, so a demo driver can actually sign in and hold
+                // a socket — which is what makes the offer path testable.
                 role: 'driver' as any, password: hash, emailVerified: true,
             }));
         }
@@ -263,6 +303,7 @@ async function seedQueue(park: Park): Promise<void> {
         emitToAdmin: () => {},
         notifyPassenger: () => {},
     });
+
 
     const rides = AppDataSource.getRepository(Ride);
     const passengers: Array<{ id: string }> = await AppDataSource.query(

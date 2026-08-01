@@ -383,6 +383,35 @@ describeDb('park assignment timeout (database)', () => {
             await ParkDispatchService.assignDriver(dispatcherActor, jobId, driverIds[0], ParkAssignmentMode.VERBAL);
             expect((await ParkDispatchJobRepository.findById(jobId))!.pendingDriverId).toBeNull();
         });
+
+        /**
+         * Regression.
+         *
+         * Assignment did not move the driver out of WAITING, so the board kept
+         * showing them as "waiting now" after they had been given a trip and
+         * the ranking kept recommending them. The dispatcher would confirm the
+         * sheet and only then be told "finish your current ride first" — on the
+         * verbal path, AFTER they had already told the driver it was theirs.
+         *
+         * Found by the acceptance run assigning the same driver twice in a row.
+         */
+        it('takes the assigned driver off the board', async () => {
+            const { dispatcherActor, jobId, driverIds, parkId } =
+                await claimedJob(1, { deviceCapability: 'feature_phone' } as any);
+
+            const before = await DriverPresenceService.get(driverIds[0]);
+            expect(before.state).toBe(DriverPresenceState.WAITING);
+
+            await ParkDispatchService.assignDriver(dispatcherActor, jobId, driverIds[0], ParkAssignmentMode.VERBAL);
+
+            const after = await DriverPresenceService.get(driverIds[0]);
+            expect(after.state).toBe(DriverPresenceState.ASSIGNED);
+
+            // And the board agrees: they are no longer offered for new work.
+            const assignable = await ParkDispatchService.assignableDrivers(parkId);
+            expect(assignable.filter((d) => d.assignable).map((d) => d.driverId))
+                .not.toContain(driverIds[0]);
+        });
     });
 
     // ── recommendation ranking ──────────────────────────────────────────

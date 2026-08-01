@@ -708,6 +708,38 @@ export class ParkDispatchService {
             /* the assignment stands regardless of queue bookkeeping */
         }
 
+        /*
+         * Move the driver out of WAITING.
+         *
+         * Without this they stay "waiting now" on the board after being given a
+         * trip, so the ranking keeps recommending them — and the dispatcher
+         * only discovers otherwise when the ride guard refuses at the last
+         * moment with "finish your current ride first". On the verbal path that
+         * happens AFTER they have already told the driver the trip is theirs.
+         *
+         * Found by the acceptance run, which assigned the same driver twice in
+         * a row because nothing had told the board they were gone.
+         *
+         * Best effort: the assignment is already committed and the ride guard
+         * remains the real protection. This is what keeps the board honest.
+         */
+        try {
+            await DriverPresenceService.setState({
+                driverId,
+                parkId: job.parkId,
+                state: DriverPresenceState.ASSIGNED,
+                source: PresenceSource.SYSTEM,
+                rideId: job.rideId,
+                note: `assigned by park dispatch (${mode})`,
+                setByStaffId: actor.staffUserId,
+            });
+        } catch (err: any) {
+            console.error(JSON.stringify({
+                level: 'warn', event: 'park_presence_update_failed',
+                jobId, driverId, error: err?.message,
+            }));
+        }
+
         const host = this.requireHost();
         host.emitToPark(job.parkId, 'park:job_assigned', { jobId, rideId: job.rideId, driverId, assignmentMode: mode });
         host.emitToAdmin('park:job_assigned', { jobId, rideId: job.rideId, parkId: job.parkId, driverId });

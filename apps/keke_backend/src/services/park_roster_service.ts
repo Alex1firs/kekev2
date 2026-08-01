@@ -250,6 +250,25 @@ export class ParkRosterService {
         membership.queuedAt = new Date();
         await ParkRosterRepository.save(membership);
 
+        // A driver we believe is OFFLINE or ONLINE cannot go straight to
+        // WAITING — the transition rules refuse it, correctly: waiting at a park
+        // presupposes being at the park.
+        //
+        // Which is exactly what a dispatcher queueing somebody is asserting, so
+        // record the arrival they are implicitly reporting rather than skipping
+        // it. Two events, both true: they arrived, then they joined the queue.
+        const currentPresence = await DriverPresenceService.get(driverId);
+        if (!DriverPresenceService.canTransition(currentPresence.state, DriverPresenceState.WAITING)) {
+            await DriverPresenceService.setState({
+                driverId,
+                state: DriverPresenceState.AT_PARK,
+                parkId,
+                source: PresenceSource.DISPATCHER,
+                setByStaffId: actor.staffUserId,
+                note: 'arrived at park (recorded when joining the queue)',
+            }, { actor, ipAddress: ctx.ipAddress, correlationId: ctx.correlationId });
+        }
+
         await DriverPresenceService.setState({
             driverId,
             state: DriverPresenceState.WAITING,

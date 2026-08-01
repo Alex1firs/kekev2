@@ -214,16 +214,55 @@ export class StaffAuthService {
      * routes/staff_auth_routes.ts. Telling an anonymous caller that an address
      * exists but the password is wrong is an account-enumeration oracle.
      */
+    /**
+     * Normalise a Nigerian phone number to the one form we compare on.
+     *
+     * A dispatcher signing in on a park tablet will type whatever is on the
+     * back of their ID card — 0803…, +234803…, 234803…, with or without
+     * spaces. Failing them for punctuation, at the start of a shift, on a
+     * touchscreen, is the kind of small cruelty that turns into a support call.
+     */
+    private static normalisePhone(raw: string): string | null {
+        const digits = raw.replace(/[^\d+]/g, '');
+        if (!/^\+?\d{7,15}$/.test(digits)) return null;
+        let n = digits.replace(/^\+/, '');
+        if (n.startsWith('234')) n = `0${n.slice(3)}`;
+        if (!n.startsWith('0')) n = `0${n}`;
+        return n;
+    }
+
     static async login(args: {
-        email: string;
+        /** Email address or phone number. `email` is accepted as an alias. */
+        identifier: string;
         password: string;
         ipAddress?: string | null;
         userAgent?: string | null;
         deviceId?: string | null;
     }): Promise<{ staff: StaffUser; roles: StaffRole[]; accessToken: string; refreshToken: string; session: StaffSession }> {
         const repo = AppDataSource.getRepository(StaffUser);
-        const email = args.email.trim().toLowerCase();
-        const staff = await repo.findOneBy({ email });
+        const raw = args.identifier.trim();
+
+        /*
+         * Email or phone. Which one is decided by shape, not by a toggle the
+         * dispatcher has to notice: an address contains '@' and a phone number
+         * does not.
+         *
+         * Both paths converge on the same failure below, so this cannot be used
+         * to discover which staff phone numbers exist.
+         */
+        let staff: StaffUser | null = null;
+        if (raw.includes('@')) {
+            staff = await repo.findOneBy({ email: raw.toLowerCase() });
+        } else {
+            const phone = this.normalisePhone(raw);
+            if (phone) {
+                staff = await repo.createQueryBuilder('s')
+                    // Compare on digits so a stored "+234 803…" still matches a
+                    // typed "0803…" — historical rows are not uniformly formatted.
+                    .where(`regexp_replace(s.phone, '[^0-9]', '', 'g') LIKE :tail`, { tail: `%${phone.slice(1)}` })
+                    .getOne();
+            }
+        }
 
         if (!staff) {
             // Constant-ish work even for an unknown address, so response time
@@ -232,19 +271,38 @@ export class StaffAuthService {
             throw new StaffAuthError('invalid_credentials');
         }
 
-        if (staff.status === StaffStatus.DEACTIVATED) throw new StaffAuthError('account_deactivated');
-        if (staff.status === StaffStatus.SUSPENDED) throw new StaffAuthError('account_suspended');
-        if (staff.lockedUntil && staff.lockedUntil.getTime() > Date.now()) {
-            throw new StaffAuthError('account_locked');
-        }
         if (!staff.passwordHash || staff.status === StaffStatus.INVITED) {
+            // No password to compare against, so nothing can be proven. Treated
+            // as an ordinary failure: an invited account that has not been set
+            // up is exactly as unusable as a wrong password.
+            await bcrypt.compare(args.password, '$2a$12$invalidinvalidinvalidinvalidinvalidinvalidinvalidinvalidiu');
             throw new StaffAuthError('account_not_set_up');
         }
 
+        /*
+         * PASSWORD FIRST, then account state.
+         *
+         * The order matters. Reporting "suspended" or "locked" before checking
+         * the password tells anyone who can type an address whether that
+         * account exists and what has happened to it — the enumeration leak
+         * this file exists to prevent.
+         *
+         * After a correct password the caller has proven the account is theirs,
+         * so telling them it is locked or suspended reveals nothing they do not
+         * already know, and is the difference between a dispatcher who calls
+         * their supervisor and one who retypes their password twenty times at
+         * the start of a shift.
+         */
         const ok = await this.comparePassword(args.password, staff.passwordHash);
         if (!ok) {
             await this.registerFailedLogin(staff);
             throw new StaffAuthError('invalid_credentials');
+        }
+
+        if (staff.status === StaffStatus.DEACTIVATED) throw new StaffAuthError('account_deactivated');
+        if (staff.status === StaffStatus.SUSPENDED) throw new StaffAuthError('account_suspended');
+        if (staff.lockedUntil && staff.lockedUntil.getTime() > Date.now()) {
+            throw new StaffAuthError('account_locked');
         }
 
         // A successful login clears the failure counter and any expired lock.

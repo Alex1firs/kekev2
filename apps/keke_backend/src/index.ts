@@ -89,16 +89,48 @@ const dispatcherAppDir = [
   try { return require('fs').existsSync(path.join(candidate, 'index.html')); } catch { return false; }
 });
 if (dispatcherAppDir) {
-  app.use('/dispatcher', express.static(dispatcherAppDir, {
-    // The shell must never be cached: a dispatcher on a stale build during a
-    // shift is a support call nobody can diagnose over the phone.
+  const dispatcherStatic = express.static(dispatcherAppDir, {
     setHeaders: (res, filePath) => {
+      /*
+       * The shell must never be cached by the browser: a dispatcher on a stale
+       * build during a shift is a support call nobody can diagnose over the
+       * phone. The SERVICE WORKER still caches it for offline start-up — that
+       * copy is versioned and dropped on activate, so it cannot outlive a
+       * deploy the way an HTTP cache entry can.
+       */
       if (filePath.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+
+      /*
+       * A service worker's scope cannot be broader than its own path, so this
+       * one only ever controls /dispatch/. Served no-cache for the same reason
+       * as the shell: an update must be able to land.
+       */
+      if (filePath.endsWith('sw.js')) {
+        res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+        res.setHeader('Service-Worker-Allowed', '/dispatch/');
+      }
+
+      if (filePath.endsWith('.webmanifest')) {
+        res.setHeader('Content-Type', 'application/manifest+json; charset=utf-8');
+      }
     },
-  }));
-  console.log(JSON.stringify({ level: 'info', message: `Dispatcher workspace served from ${dispatcherAppDir} at /dispatcher` }));
+  });
+
+  /*
+   * `/dispatch` is the canonical route and the PWA's scope. `/dispatcher`
+   * stays mounted because it is what the first devices were set up with, and a
+   * park tablet with a bookmark that stops working on launch morning is not a
+   * trade worth making. Both serve the identical directory.
+   */
+  app.use('/dispatch', dispatcherStatic);
+  app.use('/dispatcher', dispatcherStatic);
+
+  // Bare /dispatch → /dispatch/ so relative asset paths and the SW scope resolve.
+  app.get('/dispatch', (_req, res) => res.redirect(301, '/dispatch/'));
+
+  console.log(JSON.stringify({ level: 'info', message: `Park Dispatch app served from ${dispatcherAppDir} at /dispatch (alias /dispatcher)` }));
 } else {
-  console.warn(JSON.stringify({ level: 'warn', message: 'Dispatcher workspace directory not found — /dispatcher will 404' }));
+  console.warn(JSON.stringify({ level: 'warn', message: 'Park Dispatch app directory not found — /dispatch will 404' }));
 }
 
 app.use((req, res, next) => {

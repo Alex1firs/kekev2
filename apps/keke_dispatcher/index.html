@@ -6,20 +6,37 @@
          tablet where an accidental pinch-zoom mid-shift is a real problem. -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
     <meta name="theme-color" content="#12161d">
-    <title>KekeRide Dispatcher</title>
-    <link rel="stylesheet" href="styles.css?v=1.0">
+    <meta name="color-scheme" content="dark">
+    <meta name="description" content="Assign rides to Keke drivers at your park.">
+
+    <!-- Installable on an Android park tablet; still an ordinary mobile site
+         for anyone who does not install it. -->
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="icon" type="image/png" sizes="64x64" href="icons/favicon-64.png">
+    <link rel="apple-touch-icon" href="icons/apple-touch-icon-180.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Park Dispatch">
+    <meta name="mobile-web-app-capable" content="yes">
+
+    <title>KekeRide Park Dispatch</title>
+    <link rel="stylesheet" href="styles.css?v=5.0">
 </head>
 <body class="booting">
 
 <!-- ═══ Sign in ═══════════════════════════════════════════════════════ -->
 <div id="login" class="login-screen">
     <div class="login-card">
-        <div class="brand"><span class="brand-mark">◆</span> KekeRide <strong>Dispatcher</strong></div>
+        <div class="brand"><span class="brand-mark">◆</span> KekeRide <strong>Park Dispatch</strong></div>
         <p class="login-sub">Sign in with your staff account.</p>
         <form id="login-form">
-            <label>Email
-                <input type="email" id="login-email" autocomplete="username" required
-                       inputmode="email" autocapitalize="off" spellcheck="false">
+            <label>Email or phone number
+                <!-- type=text, not email: a dispatcher may sign in with the
+                     phone number on their staff card, and type=email would
+                     have the browser reject it before it is ever sent. -->
+                <input type="text" id="login-identifier" autocomplete="username" required
+                       inputmode="email" autocapitalize="off" spellcheck="false"
+                       placeholder="you@kekeride.ng or 0803…">
             </label>
             <label>Password
                 <input type="password" id="login-password" autocomplete="current-password" required>
@@ -39,6 +56,38 @@
         <label>Park
             <select id="shift-park"></select>
         </label>
+
+        <!-- No park assigned: a dead end unless we say who fixes it. -->
+        <p id="shift-no-park" class="login-error hidden">
+            No park has been assigned to your account. Contact Operations.
+        </p>
+
+        <!--
+          Shift setup is the one moment a dispatcher is not under time pressure,
+          so the two things that must work before the first request arrives get
+          checked here: the alert can be heard, and Park Dispatch is running.
+        -->
+        <div class="setup-checks">
+            <div class="setup-row">
+                <span class="setup-label">Alert sound</span>
+                <button type="button" id="sound-test" class="btn btn-small">Test sound</button>
+            </div>
+            <div class="setup-row">
+                <span class="setup-label">Notifications</span>
+                <button type="button" id="notif-enable" class="btn btn-small">Allow alerts</button>
+                <span id="notif-state" class="setup-state"></span>
+            </div>
+            <div class="setup-row">
+                <span class="setup-label">Park Dispatch</span>
+                <span id="setup-dispatch-state" class="setup-state">checking…</span>
+            </div>
+            <div class="setup-row hidden" id="install-row">
+                <span class="setup-label">This device</span>
+                <button type="button" id="install-app" class="btn btn-small hidden">Add to home screen</button>
+                <span id="install-state" class="setup-state"></span>
+            </div>
+        </div>
+
         <button id="shift-start" class="btn btn-primary btn-block">Start shift</button>
         <p id="shift-error" class="login-error hidden"></p>
         <p class="login-foot">
@@ -69,6 +118,23 @@
             <button id="btn-end-shift" class="btn btn-ghost">End shift</button>
         </div>
     </header>
+
+    <!--
+      Network state. The connection pill in the topbar covers the realtime
+      socket; this covers the device having no network at all, which is the
+      more common failure on a park tablet.
+    -->
+    <div id="offline-bar" class="bar bar-offline hidden" role="status">
+        <strong>This device is offline.</strong>
+        <span>The board below is the last thing we heard from the server. Do not assign from it.</span>
+    </div>
+
+    <!-- A new build is waiting. Never applied mid-shift without asking. -->
+    <div id="update-bar" class="bar bar-update hidden" role="status">
+        <span><strong>An update is ready.</strong> It will apply when you reload.</span>
+        <button id="update-apply" class="btn btn-small">Reload now</button>
+        <button id="update-later" class="btn btn-small btn-ghost">Later</button>
+    </div>
 
     <!--
       Shown when operations has paused Park Dispatch centrally. Without it, a

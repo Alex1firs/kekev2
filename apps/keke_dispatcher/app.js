@@ -49,6 +49,8 @@ const S = {
     driverFilter: '',
     busy: false,
     lastPayloadAt: 0,
+    /** Consecutive dashboard refresh failures. Drives the stale-board warning. */
+    failedRefreshes: 0,
     /** Server-declared capabilities, including whether new work is arriving. */
     caps: null,
 };
@@ -160,25 +162,202 @@ function toast(message, kind = 'info', ms = 4200) {
     setTimeout(() => el.remove(), ms);
 }
 
+
+// ── PWA lifecycle ────────────────────────────────────────────────────────
+
+/**
+ * The service worker exists for one reason: a park tablet on bad mobile data
+ * must be able to OPEN the app. It caches the shell and nothing operational —
+ * every /api/ call goes to the network, always, because a dispatcher acting on
+ * a cached queue would be assigning drivers to rides that may already be gone.
+ */
+let swRegistration = null;
+let waitingWorker = null;
+
+async function registerServiceWorker() {
+    if (!('serviceWorker' in navigator)) return;
+    // Requires a secure context. localhost counts; plain http on a LAN IP does
+    // not, which is worth knowing before someone tests on 192.168.x.x.
+    if (!window.isSecureContext) {
+        console.warn('[pwa] insecure context — service worker not registered, app still works online');
+        return;
+    }
+    try {
+        swRegistration = await navigator.serviceWorker.register('./sw.js', { scope: './' });
+
+        // Already waiting from a previous visit.
+        if (swRegistration.waiting) offerUpdate(swRegistration.waiting);
+
+        swRegistration.addEventListener('updatefound', () => {
+            const installing = swRegistration.installing;
+            if (!installing) return;
+            installing.addEventListener('statechange', () => {
+                // "installed" with an existing controller means an UPDATE, not
+                // a first install — only then is there anything to offer.
+                if (installing.state === 'installed' && navigator.serviceWorker.controller) {
+                    offerUpdate(installing);
+                }
+            });
+        });
+
+        /*
+         * Check for a new build when the dispatcher returns to the app, rather
+         * than on a timer. A shift is hours long and a deploy mid-shift should
+         * not go unnoticed until tomorrow.
+         */
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) swRegistration.update().catch(() => {});
+        });
+    } catch (err) {
+        console.warn('[pwa] service worker registration failed:', err && err.message);
+    }
+}
+
+function offerUpdate(worker) {
+    waitingWorker = worker;
+    $('update-bar').classList.remove('hidden');
+}
+
+$('update-apply').addEventListener('click', () => {
+    if (!waitingWorker) { location.reload(); return; }
+    // Reload once the new worker takes control, not before, or the old shell
+    // is what gets re-rendered.
+    navigator.serviceWorker.addEventListener('controllerchange', () => location.reload(), { once: true });
+    waitingWorker.postMessage({ type: 'SKIP_WAITING' });
+});
+
+$('update-later').addEventListener('click', () => {
+    // Deliberately dismissible. A dispatcher mid-assignment must not have the
+    // page reloaded out from under them.
+    $('update-bar').classList.add('hidden');
+});
+
+/** Ask the worker to drop everything it holds. Called on sign-out. */
+async function clearServiceWorkerCaches() {
+    try {
+        if (!navigator.serviceWorker || !navigator.serviceWorker.controller) return;
+        navigator.serviceWorker.controller.postMessage({ type: 'CLEAR_SENSITIVE' });
+        // Also clear anything this page opened directly, in case no worker is
+        // controlling (first load after install, or registration failed).
+        if (window.caches) {
+            for (const key of await caches.keys()) {
+                if (key.startsWith('kd-')) await caches.delete(key);
+            }
+        }
+    } catch { /* sign-out must never be blocked by cache cleanup */ }
+}
+
+/**
+ * Install prompt.
+ *
+ * Chrome fires this only when the install criteria are met, and only once per
+ * page load. Holding it lets us offer installation at a sensible moment —
+ * during shift setup — rather than the browser's own mini-infobar.
+ */
+let installPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    installPrompt = e;
+    const btn = $('install-app');
+    if (btn) btn.classList.remove('hidden');
+});
+
+window.addEventListener('appinstalled', () => {
+    installPrompt = null;
+    const btn = $('install-app');
+    if (btn) btn.classList.add('hidden');
+    toast('Park Dispatch installed. Open it from your home screen next time.', 'ok');
+});
+
+/** True when running from the home screen rather than a browser tab. */
+function isStandalone() {
+    return window.matchMedia('(display-mode: standalone)').matches
+        || window.navigator.standalone === true;
+}
+
+// ── Network state ────────────────────────────────────────────────────────
+
+/**
+ * Whether the board on screen can be trusted.
+ *
+ * NOT driven by `navigator.onLine`. That property is true whenever the device
+ * has any network interface at all, which on a Nigerian mobile network means it
+ * stays true while attached to a tower with no usable data — precisely the case
+ * a dispatcher most needs warning about. It is used as a hint, never as the
+ * decision.
+ *
+ * What actually decides: consecutive failures of the dashboard request, and how
+ * long it has been since the last successful payload. The safety poll runs
+ * every 7s, so nothing newer than ~20s old is worth complaining about; past
+ * that, the numbers on screen may be describing a queue that has moved on.
+ */
+const STALE_AFTER_MS = 20_000;
+
+function boardIsStale() {
+    return S.failedRefreshes >= 2
+        || (S.lastPayloadAt > 0 && Date.now() - S.lastPayloadAt > STALE_AFTER_MS);
+}
+
+function renderNetwork() {
+    const suspect = !navigator.onLine || boardIsStale();
+    const bar = $('offline-bar');
+    bar.classList.toggle('hidden', !suspect);
+    if (suspect) {
+        const seconds = S.lastPayloadAt ? Math.round((Date.now() - S.lastPayloadAt) / 1000) : null;
+        bar.querySelector('strong').textContent = navigator.onLine
+            ? 'Not receiving updates.'
+            : 'This device is offline.';
+        bar.querySelector('span').textContent = seconds == null
+            ? 'The board below has not loaded. Do not assign from it.'
+            : `The board below is ${seconds}s old. Do not assign from it.`;
+        setConnection(false);
+    }
+}
+
+// Re-evaluate on a timer as well as on events: staleness is a function of
+// elapsed time, so nothing fires when the board quietly goes cold.
+setInterval(() => { if (!document.hidden) renderNetwork(); }, 3000);
+
+window.addEventListener('online', () => {
+    renderNetwork();
+    toast('Back online. Refreshing the board…', 'ok');
+    // Reconcile immediately rather than waiting for the safety poll: the board
+    // on screen is by definition stale.
+    refreshDashboard().catch(() => {});
+    if (S.socket && !S.socket.connected) S.socket.connect();
+});
+window.addEventListener('offline', renderNetwork);
+
 // ── Sign in ──────────────────────────────────────────────────────────────
 
 $('login-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const btn = $('login-btn');
     btn.disabled = true;
+    btn.textContent = 'Signing in…';
     $('login-error').classList.add('hidden');
     try {
         const res = await fetch(`${API_ROOT}/staff/auth/login`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                email: $('login-email').value.trim(),
+                identifier: $('login-identifier').value.trim(),
                 password: $('login-password').value,
             }),
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok || !data.accessToken) {
-            $('login-error').textContent = data.message || 'Incorrect email or password.';
+            /*
+             * Show the server's sentence verbatim. It already decides what may
+             * safely be said: a generic failure for wrong details, and the
+             * specific reason (locked, suspended, setup unfinished) only once
+             * the password has proven the account belongs to whoever is typing.
+             * Rewriting it here would either leak more or say less.
+             */
+            $('login-error').textContent = data.message
+                || (res.status === 429
+                    ? 'Too many attempts. Wait a few minutes and try again.'
+                    : 'Those sign-in details are not correct.');
             $('login-error').classList.remove('hidden');
             return;
         }
@@ -188,25 +367,41 @@ $('login-form').addEventListener('submit', async (e) => {
         sessionStorage.setItem('KD_REFRESH', S.refreshToken);
         await boot();
     } catch {
-        $('login-error').textContent = 'Could not reach the server.';
+        $('login-error').textContent = navigator.onLine
+            ? 'Could not reach KekeRide. Try again in a moment.'
+            : 'This device is offline. Check its mobile data or Wi-Fi.';
         $('login-error').classList.remove('hidden');
     } finally {
         btn.disabled = false;
+        btn.textContent = 'Sign in';
     }
 });
 
-function signOut() {
-    fetch(`${API_ROOT}/staff/auth/logout`, {
+async function signOut() {
+    // Tell the server first so the session is revoked even if the reload is
+    // interrupted, then remove every local trace.
+    await fetch(`${API_ROOT}/staff/auth/logout`, {
         method: 'POST', headers: { Authorization: `Bearer ${S.accessToken}` },
-    }).catch(() => {}).finally(() => {
-        sessionStorage.clear();
-        location.reload();
-    });
+    }).catch(() => {});
+
+    await clearServiceWorkerCaches();
+    sessionStorage.clear();
+    try { localStorage.removeItem('KD_LAST_PARK'); } catch { /* private mode */ }
+
+    // Drop in-memory state too: a reload is not guaranteed to be immediate,
+    // and nothing about the last shift should survive the click.
+    S.accessToken = ''; S.refreshToken = ''; S.me = null; S.shift = null;
+    S.queue = []; S.drivers = []; S.counters = null; S.caps = null;
+    if (S.socket) { try { S.socket.disconnect(); } catch { /* already gone */ } }
+
+    location.replace('./index.html');
 }
 
 // ── Boot ─────────────────────────────────────────────────────────────────
 
 async function boot() {
+    renderNetwork();
+    registerServiceWorker();
     if (!S.accessToken) { showScreen('login'); return; }
     try {
         S.me = await api('/dispatcher/me');
@@ -247,9 +442,88 @@ function showShiftGate() {
     const parks = (S.me.assignedParks || []).filter((p) => p && p.status === 'active');
     select.innerHTML = parks.length
         ? parks.map((p) => `<option value="${esc(p.parkId)}">${esc(p.name)} (${esc(p.code)})</option>`).join('')
-        : '<option value="">No active park assigned to you</option>';
+        : '<option value="">—</option>';
     $('shift-start').disabled = parks.length === 0;
+    $('shift-no-park').classList.toggle('hidden', parks.length > 0);
+
+    // Remember the last park so a dispatcher who works one park does not pick
+    // it from a list every morning. Only a convenience — the server decides
+    // which parks they may open a shift at.
+    try {
+        const last = localStorage.getItem('KD_LAST_PARK');
+        if (last && parks.some((p) => p.parkId === last)) select.value = last;
+    } catch { /* private mode */ }
+
+    renderSetupChecks();
 }
+
+/**
+ * The pre-shift checks.
+ *
+ * Everything here is something that is silently broken until the moment it
+ * matters: an alert nobody can hear, a notification permission never granted,
+ * a Park Dispatch that operations paused an hour ago. Finding out at 07:00 is
+ * cheap; finding out when the first passenger is waiting is not.
+ */
+function renderSetupChecks() {
+    const notif = ('Notification' in window) ? Notification.permission : 'unsupported';
+    $('notif-state').textContent = {
+        granted: 'On',
+        denied: 'Blocked in browser settings',
+        default: 'Not enabled yet',
+        unsupported: 'Not supported on this device',
+    }[notif] || notif;
+    $('notif-enable').classList.toggle('hidden', notif !== 'default');
+
+    // Installability. The prompt only exists on browsers that offer it, and
+    // only when the criteria are met — so absence is not an error, and saying
+    // "already installed" when running standalone avoids a confusing button.
+    const row = $('install-row');
+    if (isStandalone()) {
+        row.classList.remove('hidden');
+        $('install-app').classList.add('hidden');
+        $('install-state').textContent = 'Installed';
+    } else if (installPrompt) {
+        row.classList.remove('hidden');
+        $('install-app').classList.remove('hidden');
+        $('install-state').textContent = '';
+    } else {
+        row.classList.add('hidden');
+    }
+
+    // Park Dispatch state, read before the shift rather than discovered from
+    // an empty queue.
+    api('/dispatcher/me').then(() => api('/dispatcher/switch-state').catch(() => null))
+        .then((st) => {
+            const el = $('setup-dispatch-state');
+            if (!st) { el.textContent = 'Unknown'; el.className = 'setup-state'; return; }
+            el.textContent = st.accepting ? 'Running' : `Paused — ${st.reason || 'by operations'}`;
+            el.className = `setup-state ${st.accepting ? 'setup-ok' : 'setup-warn'}`;
+        })
+        .catch(() => { $('setup-dispatch-state').textContent = 'Unknown'; });
+}
+
+$('sound-test').addEventListener('click', () => {
+    // A real alert, not a different beep: the point is to confirm THIS sound is
+    // audible over a park, at this device's volume.
+    chime(true);
+    buzz([160, 90, 160]);
+    toast('That is the sound a new request makes.', 'ok');
+});
+
+$('notif-enable').addEventListener('click', async () => {
+    try { await Notification.requestPermission(); } catch { /* denied */ }
+    renderSetupChecks();
+});
+
+$('install-app').addEventListener('click', async () => {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    const { outcome } = await installPrompt.userChoice;
+    installPrompt = null;
+    $('install-app').classList.add('hidden');
+    $('install-state').textContent = outcome === 'accepted' ? 'Installing…' : 'Not installed';
+});
 
 $('shift-start').addEventListener('click', async () => {
     const parkId = $('shift-park').value;
@@ -268,6 +542,7 @@ $('shift-start').addEventListener('click', async () => {
             );
         });
         await api('/dispatcher/shifts/open', 'POST', { parkId, ...(coords || {}) });
+        try { localStorage.setItem('KD_LAST_PARK', parkId); } catch { /* private mode */ }
         await boot();
     } catch (err) {
         $('shift-error').textContent = err.message;
@@ -366,6 +641,7 @@ async function refreshDashboard(initial = false) {
         S.drivers = d.drivers || [];
         S.shift = d.myShift || S.shift;
         S.lastPayloadAt = Date.now();
+        S.failedRefreshes = 0;
 
         const previous = S.queue;
         S.queue = d.queue || [];
@@ -387,10 +663,13 @@ async function refreshDashboard(initial = false) {
             S.selectedJobId = (mine || S.queue[0])?.jobId ?? null;
         }
         render();
+        renderNetwork();
     } catch (err) {
         if (err.status === 401) { sessionStorage.clear(); location.reload(); return; }
         if (err.status === 409) { showShiftGate(); return; }
+        S.failedRefreshes += 1;
         setConnection(false);
+        renderNetwork();
     } finally {
         refreshInFlight = false;
     }

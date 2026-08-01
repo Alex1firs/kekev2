@@ -225,6 +225,54 @@ kbd {
     font-variant-numeric: tabular-nums;
 }
 .pill-zero { background: var(--surface-2); color: var(--text-dim); }
+/* Pre-shift checks: sound, notifications, dispatch state, install. */
+.setup-checks {
+    margin: 16px 0;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+}
+.setup-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+}
+.setup-row:last-child { border-bottom: 0; }
+.setup-label { flex: 1; font-size: 0.9rem; color: var(--text-dim); }
+.setup-state { font-size: 0.85rem; color: var(--text-dim); }
+.setup-ok { color: var(--green); }
+.setup-warn { color: #fb7185; }
+
+/* Full-width status bars: offline, update available, dispatch paused. */
+.bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+    margin: 0 var(--gap);
+    padding: 11px 16px;
+    border-radius: 12px;
+    font-size: 0.9rem;
+}
+.bar-offline {
+    background: rgba(244,63,94,0.14);
+    border: 1px solid rgba(244,63,94,0.5);
+    color: #fecdd3;
+}
+.bar-offline span { color: var(--text-dim); }
+.bar-update {
+    background: rgba(56,189,248,0.12);
+    border: 1px solid rgba(56,189,248,0.45);
+    color: #bae6fd;
+}
+.btn-small {
+    min-height: 36px;
+    padding: 0 14px;
+    font-size: 0.85rem;
+    border-radius: 8px;
+}
 .paused {
     display: flex;
     flex-wrap: wrap;

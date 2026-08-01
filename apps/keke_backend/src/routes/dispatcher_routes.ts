@@ -33,6 +33,8 @@ import { ParkDispatchService } from '../services/park_dispatch_service';
 import { ParkAssignmentMode } from '../models/ParkDispatchJob';
 import { DispatcherDashboardService } from '../services/dispatcher_dashboard_service';
 import { errBody, ErrorCode, AppError } from '../utils/errors';
+import { ParkDispatchSwitch } from '../services/park_dispatch_switch';
+import { loadParkDispatchConfig } from '../config/park_dispatch_config';
 
 const router = Router();
 
@@ -121,6 +123,30 @@ router.get('/me', async (req: StaffRequest, res: Response) => {
         });
     } catch (err: any) {
         return fail(res, err, "We couldn't load your dispatcher profile.");
+    }
+});
+
+/**
+ * GET /dispatcher/switch-state
+ *
+ * Is Park Dispatch accepting new work? Read-only, and deliberately available to
+ * any staff session — a dispatcher checking before a shift needs the answer,
+ * and it reveals nothing beyond what an empty queue already implies.
+ *
+ * Distinct from the admin endpoint of the same name: this one cannot change
+ * anything and does not report which environment variable is responsible.
+ */
+router.get('/switch-state', async (req: StaffRequest, res: Response) => {
+    try {
+        if (req.actor?.isLegacy) return res.status(403).json(errBody(ErrorCode.FORBIDDEN, 'Not a staff session.'));
+        const override = await ParkDispatchSwitch.state();
+        const envEnabled = loadParkDispatchConfig().enabled;
+        return res.json({
+            accepting: envEnabled && !override.disabled,
+            reason: override.disabled ? (override.reason ?? 'paused by operations') : null,
+        });
+    } catch (err: any) {
+        return fail(res, err, "We couldn't check whether Park Dispatch is running.");
     }
 });
 

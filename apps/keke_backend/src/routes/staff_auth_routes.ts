@@ -19,7 +19,7 @@ import { StaffAuthService, StaffAuthError } from '../services/staff_auth_service
 import { StaffService } from '../services/staff_service';
 import { AuditService, AuditAction } from '../services/audit_service';
 import { resolveActor, requireRealStaff, StaffRequest, auditActorOf } from '../middleware/staff_auth';
-import { errBody, ErrorCode, AppError } from '../utils/errors';
+import { errBody, ErrorCode, ErrorCodeType, AppError } from '../utils/errors';
 
 const router = Router();
 
@@ -28,8 +28,12 @@ const router = Router();
  * attacker than a passenger account, there are two orders of magnitude fewer of
  * them, and no legitimate human logs in ten times in fifteen minutes.
  *
- * Keyed by IP + submitted email so one attacker cannot lock out a whole office
- * behind a shared NAT, and cannot spread an attack across addresses either.
+ * Keyed by IP + submitted identifier so one attacker cannot lock out a whole
+ * office behind a shared NAT, and cannot spread an attack across accounts
+ * either. The identifier may be an email or a phone number — keying on `email`
+ * alone would have put every phone login into one shared bucket, which both
+ * rate-limits honest dispatchers against each other and removes the per-account
+ * ceiling from anyone attacking by phone number.
  */
 const staffLoginLimiter = rateLimit({
     windowMs: Number(process.env.STAFF_LOGIN_WINDOW_MS) || 15 * 60_000,
@@ -37,8 +41,10 @@ const staffLoginLimiter = rateLimit({
     standardHeaders: true,
     legacyHeaders: false,
     keyGenerator: (req: any) => {
-        const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
-        return `${ipKeyGenerator(req.ip)}|${email}`;
+        const identifier = typeof req.body?.identifier === 'string' ? req.body.identifier
+            : typeof req.body?.email === 'string' ? req.body.email
+            : '';
+        return `${ipKeyGenerator(req.ip)}|${identifier.trim().toLowerCase()}`;
     },
     message: { code: ErrorCode.RATE_LIMITED, message: 'Too many sign-in attempts. Please wait and try again.' },
 });
@@ -52,7 +58,38 @@ const staffSetupLimiter = rateLimit({
 });
 
 /** One sentence for every credential failure. See rule 1 above. */
-const GENERIC_LOGIN_FAILURE = 'Incorrect email or password.';
+const GENERIC_LOGIN_FAILURE = 'Those sign-in details are not correct.';
+
+/**
+ * What the caller is told, per failure kind.
+ *
+ * Only reachable AFTER a correct password (see StaffAuthService.login) — the
+ * service checks credentials before it looks at account state, so none of these
+ * can be used to discover whether an account exists. Anything not listed here
+ * falls back to the generic sentence.
+ */
+const LOGIN_FAILURE_MESSAGE: Partial<Record<string, { status: number; code: ErrorCodeType; message: string }>> = {
+    account_locked: {
+        status: 423,
+        code: ErrorCode.FORBIDDEN,
+        message: 'This account is temporarily locked after too many failed attempts. Try again later or ask Operations to unlock it.',
+    },
+    account_suspended: {
+        status: 403,
+        code: ErrorCode.FORBIDDEN,
+        message: 'This account has been suspended. Contact Operations.',
+    },
+    account_deactivated: {
+        status: 403,
+        code: ErrorCode.FORBIDDEN,
+        message: 'This account is no longer active. Contact Operations.',
+    },
+    account_not_set_up: {
+        status: 401,
+        code: ErrorCode.INVALID_CREDENTIALS,
+        message: 'This account has not finished setup. Use the invitation link Operations sent you, or ask for a new one.',
+    },
+};
 
 function requestContext(req: Request) {
     return {
@@ -67,16 +104,23 @@ function requestContext(req: Request) {
  */
 router.post('/login', staffLoginLimiter, async (req: Request, res: Response) => {
     const ctx = requestContext(req);
-    const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+    /*
+     * `identifier` is an email address OR a phone number; `email` remains
+     * accepted so existing callers keep working. The distinction is resolved
+     * by shape inside the service, not here.
+     */
+    const identifier = typeof req.body?.identifier === 'string' ? req.body.identifier.trim()
+        : typeof req.body?.email === 'string' ? req.body.email.trim()
+        : '';
     const password = typeof req.body?.password === 'string' ? req.body.password : '';
 
-    if (!email || !password) {
-        return res.status(400).json(errBody(ErrorCode.MISSING_FIELDS, 'Email and password are required.'));
+    if (!identifier || !password) {
+        return res.status(400).json(errBody(ErrorCode.MISSING_FIELDS, 'Enter your email or phone number and your password.'));
     }
 
     try {
         const { staff, roles, accessToken, refreshToken } = await StaffAuthService.login({
-            email,
+            identifier,
             password,
             ipAddress: ctx.ipAddress,
             userAgent: ctx.userAgent,
@@ -112,6 +156,10 @@ router.post('/login', staffLoginLimiter, async (req: Request, res: Response) => 
                 metadata: { reasonCode: err.kind },
                 ...ctx,
             });
+            const specific = LOGIN_FAILURE_MESSAGE[err.kind];
+            if (specific) {
+                return res.status(specific.status).json(errBody(specific.code, specific.message));
+            }
             return res.status(401).json(errBody(ErrorCode.INVALID_CREDENTIALS, GENERIC_LOGIN_FAILURE));
         }
         console.error('[STAFF_AUTH] login error:', err?.message);

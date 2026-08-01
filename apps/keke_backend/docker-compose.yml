@@ -58,6 +58,16 @@ services:
       # exactly the pre-Park behaviour (needs a container restart — for an
       # incident use the Redis switch instead, which is immediate).
       PARK_DISPATCH_ENABLED: ${PARK_DISPATCH_ENABLED:-true}
+
+      # ── Dispatcher Web Push ──────────────────────────────────────────
+      # Public browser identifiers. The Admin service account above stays
+      # server-only and is unrelated to these.
+      FIREBASE_WEB_API_KEY: ${FIREBASE_WEB_API_KEY}
+      FIREBASE_WEB_AUTH_DOMAIN: ${FIREBASE_WEB_AUTH_DOMAIN}
+      FIREBASE_WEB_PROJECT_ID: ${FIREBASE_WEB_PROJECT_ID}
+      FIREBASE_WEB_MESSAGING_SENDER_ID: ${FIREBASE_WEB_MESSAGING_SENDER_ID}
+      FIREBASE_WEB_APP_ID: ${FIREBASE_WEB_APP_ID}
+      FIREBASE_VAPID_PUBLIC_KEY: ${FIREBASE_VAPID_PUBLIC_KEY}
     depends_on:
       postgres_shared:
         condition: service_healthy
@@ -95,6 +105,24 @@ services:
       SMILE_ID_API_KEY: ${SMILE_ID_API_KEY}
       SMILE_ID_USE_SANDBOX: ${SMILE_ID_USE_SANDBOX}
       FIREBASE_SERVICE_ACCOUNT_JSON: ${FIREBASE_SERVICE_ACCOUNT_JSON}
+
+      # ── Park Dispatch ────────────────────────────────────────────────
+      # Staging is where the dispatcher PWA is exercised on real phones
+      # before launch, so it needs the same configuration as production.
+      STAFF_JWT_SECRET: ${STAFF_JWT_SECRET}
+      PARK_DISPATCH_ENABLED: ${PARK_DISPATCH_ENABLED:-true}
+
+      # ── Dispatcher Web Push ──────────────────────────────────────────
+      # Public browser identifiers, not secrets — see
+      # docs/dispatcher_web_push_audit.md §2. Until these are set the
+      # dispatcher app reports push as unavailable and names what is
+      # missing; it does not fail silently.
+      FIREBASE_WEB_API_KEY: ${FIREBASE_WEB_API_KEY}
+      FIREBASE_WEB_AUTH_DOMAIN: ${FIREBASE_WEB_AUTH_DOMAIN}
+      FIREBASE_WEB_PROJECT_ID: ${FIREBASE_WEB_PROJECT_ID}
+      FIREBASE_WEB_MESSAGING_SENDER_ID: ${FIREBASE_WEB_MESSAGING_SENDER_ID}
+      FIREBASE_WEB_APP_ID: ${FIREBASE_WEB_APP_ID}
+      FIREBASE_VAPID_PUBLIC_KEY: ${FIREBASE_VAPID_PUBLIC_KEY}
     depends_on:
       postgres_shared:
         condition: service_healthy

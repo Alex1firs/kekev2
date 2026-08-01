@@ -11,13 +11,13 @@ admin dashboard under **Role Matrix**.
 
 | Code | Abbr. | Who holds it | Permissions |
 |---|---|---|---|
-| `SUPER_ADMIN` | SA | Very few people. MFA mandatory once enforcement lands | 40 |
-| `OPERATIONS_ADMIN` | OA | Runs supply: parks, devices, rosters, badges | 19 |
-| `PARK_SUPERVISOR` | PS | Runs **one** park; supervises dispatchers, approves settlements | 17 |
-| `PARK_DISPATCHER` | PD | The park floor. Claims requests, assigns drivers | 8 |
+| `SUPER_ADMIN` | SA | Very few people. MFA mandatory once enforcement lands | 47 |
+| `OPERATIONS_ADMIN` | OA | Runs supply: parks, zones, rosters, badges | 25 |
+| `PARK_SUPERVISOR` | PS | Runs **one** park; supervises dispatchers, approves settlements | 24 |
+| `PARK_DISPATCHER` | PD | The park floor. Runs shifts, roster, queue and presence | 13 |
 | `CASHIER` | CA | Handles driver cash at a park | 5 |
-| `SUPPORT_OFFICER` | SO | Handles live passenger and driver calls | 10 |
-| `READ_ONLY_ANALYST` | RA | Reads numbers | 9 |
+| `SUPPORT_OFFICER` | SO | Handles live passenger and driver calls | 12 |
+| `READ_ONLY_ANALYST` | RA | Reads numbers | 11 |
 
 A person may hold several roles; their effective permissions are the **union**. A person who is not
 `ACTIVE` holds **none**, whatever they were granted.
@@ -45,16 +45,23 @@ A person may hold several roles; their effective permissions are the **union**. 
 | `park:activate` | ✅ | ✅ | · | · | · | · | · |
 | `park:assign_dispatcher` | ✅ | ✅ | ✅ | · | · | · | · |
 | `park:create` | ✅ | ✅ | · | · | · | · | · |
+| `park:manage_roster` | ✅ | ✅ | ✅ | ✅ | · | · | · |
+| `park:manage_zones` | ✅ | ✅ | ✅ | · | · | · | · |
 | `park:read` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `park:suspend` | ✅ | ✅ | · | · | · | · | · |
 | `park:update` | ✅ | ✅ | · | · | · | · | · |
 | `park:view_metrics` | ✅ | ✅ | ✅ | · | · | · | ✅ |
+| `presence:read` | ✅ | ✅ | ✅ | ✅ | · | ✅ | ✅ |
+| `presence:write` | ✅ | ✅ | ✅ | ✅ | · | · | · |
 | `ride:cancel_override` | ✅ | · | · | · | · | ✅ | · |
 | `ride:intervene` | ✅ | · | · | · | · | ✅ | · |
 | `ride:read` | ✅ | ✅ | ✅ | ✅ | · | ✅ | ✅ |
 | `ride:reveal_contact` | ✅ | · | · | · | · | ✅ | · |
 | `settlement:approve` | ✅ | · | ✅ | · | · | · | · |
 | `settlement:read` | ✅ | ✅ | ✅ | · | ✅ | · | ✅ |
+| `shift:close_any` | ✅ | ✅ | ✅ | · | · | · | · |
+| `shift:open` | ✅ | · | ✅ | ✅ | · | · | · |
+| `shift:read` | ✅ | ✅ | ✅ | ✅ | · | ✅ | ✅ |
 | `staff:assign_roles` | ✅ | · | · | · | · | · | · |
 | `staff:create` | ✅ | · | · | · | · | · | · |
 | `staff:read` | ✅ | ✅ | · | · | · | · | · |
@@ -71,7 +78,8 @@ A person may hold several roles; their effective permissions are the **union**. 
 
 These are the design decisions the matrix encodes. Each has a test that fails if it is reversed.
 
-**A dispatcher holds no ride-lifecycle permission — because none exists.** There is no
+**Phase 2 added shifts, rosters, queues and presence to the dispatcher — and still no
+ride-lifecycle permission, because none exists.** There is no
 `ride:mark_arrived`, `ride:start` or `ride:complete` anywhere in the catalogue. "A dispatcher cannot
 fake a completed trip" is therefore not a permission setting somebody could change; it is the absence
 of a capability. This is the property the whole Park Dispatch fraud model rests on
@@ -106,7 +114,7 @@ Exactly four permissions, and never more:
 
 `monitor:read` · `monitor:reveal_contact` · `metrics:read` · `admin:write`
 
-`LEGACY_FORBIDDEN_PERMISSIONS` in `staff_permissions.ts` names 24 permissions a legacy key may never
+`LEGACY_FORBIDDEN_PERMISSIONS` in `staff_permissions.ts` names 29 permissions a legacy key may never
 hold — the whole park domain, all badge mutations, all money movement, staff administration, contact
 reveal and audit export. `legacyPermissions()` filters through it, so adding a permission to a legacy
 role in future cannot accidentally grant a shared secret the power to issue a badge. See

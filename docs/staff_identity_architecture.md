@@ -254,9 +254,9 @@ in parallel workers.
    delivering credentials over email deserves its own decision, not a default.
 3. **Device binding is a column, not a mechanism.** `StaffSession.deviceId` is recorded but nothing
    issues or validates a device credential; that arrives with `ParkDevice` in Phase 2.
-4. **`park_id` role scoping is not enforced.** `StaffRoleAssignment.parkId` is stored but no check
-   consults it, because no park entity exists yet. Park-bound roles are effectively global until
-   Phase 2 — **do not grant `PARK_SUPERVISOR` or `PARK_DISPATCHER` in production before then.**
+4. ~~**`park_id` role scoping is not enforced.**~~ **CLOSED in Phase 2.** `middleware/park_scope.ts`
+   now enforces it: a grant with a `parkId` authorises that park and no other. See
+   [park_operations_architecture.md](./park_operations_architecture.md) §6.
 5. **The Socket.IO handshake was not modified.** Covered by secret separation, but it lacks the
    explicit `typ === 'staff'` rejection that `authMiddleware` now has. Deliberate: keeping this change
    out of the live dispatch path was worth more than a third layer of defence.

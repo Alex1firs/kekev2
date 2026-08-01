@@ -22,6 +22,18 @@ export class DeviceToken {
     @Column({ nullable: true })
     deviceLabel?: string;
 
+    /**
+     * App version this device last registered with, e.g. "1.4.2".
+     *
+     * Null for every install that predates the change, which is exactly what
+     * makes it useful: contact-privacy enforcement treats an unknown version as
+     * OLD and keeps the legacy behaviour, so tightening the offer payload can
+     * never break an app that has not told us what it is.
+     * See services/contact_access_service.ts.
+     */
+    @Column({ type: "varchar", length: 32, nullable: true })
+    appVersion?: string | null;
+
     @Index()
     @Column({ default: true })
     isActive!: boolean;

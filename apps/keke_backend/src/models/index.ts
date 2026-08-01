@@ -12,3 +12,8 @@ export * from "./Setting";
 export * from "./SosAlert";
 export * from "./RideReview";
 export * from "./DispatchEvent";
+export * from "./StaffUser";
+export * from "./StaffRoleAssignment";
+export * from "./StaffSession";
+export * from "./StaffAuditEvent";
+export * from "./ContactRevealEvent";

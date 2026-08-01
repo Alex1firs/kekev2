@@ -20,6 +20,7 @@ import notificationRoutes from "./routes/notification_routes";
 import passengerRoutes from "./routes/passenger_routes";
 import { NotificationService } from './services/notification_service';
 import { StaleRideSweeper } from './services/stale_ride_sweeper';
+import { ParkJobSweeper } from './services/park_job_sweeper';
 import { redis } from './config/redis';
 
 dotenv.config();
@@ -171,6 +172,15 @@ AppDataSource.initialize()
       StaleRideSweeper.start();
     } catch (e: any) {
       console.error(JSON.stringify({ level: 'error', message: 'Failed to start stale-ride sweeper', error: e.message }));
+    }
+
+    // Expires park dispatch jobs whose claim or assignment window elapsed. A
+    // no-op unless PARK_DISPATCH_ENABLED is true, and guarded by its own
+    // advisory lock so several instances can run it safely.
+    try {
+      ParkJobSweeper.start();
+    } catch (e: any) {
+      console.error(JSON.stringify({ level: 'error', message: 'Failed to start park job sweeper', error: e.message }));
     }
 
     const server = httpServer.listen(PORT, () => {

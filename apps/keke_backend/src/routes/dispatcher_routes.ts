@@ -12,9 +12,11 @@
  * dispatcher receives requests, assigns a driver and monitors the assignment.
  * After assignment the ride belongs to the driver, exactly as it does today.
  *
- * Phase 2 provides the operational surface only — shifts, roster, queue,
- * presence. Receiving park requests and assigning a driver arrive in Phase 4;
- * nothing here touches dispatch.
+ * Phase 2 built the operational surface — shifts, roster, queue, presence.
+ * Phase 3 adds the park request queue: requests direct dispatch could not fill,
+ * and the four actions a dispatcher may take on one (claim, assign, skip,
+ * reject, escalate). Assignment is the LAST thing a dispatcher does; from that
+ * moment the ride belongs to the driver and runs through the existing lifecycle.
  */
 import { Router, Response } from 'express';
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
@@ -27,6 +29,8 @@ import { DriverPresenceService } from '../services/driver_presence_service';
 import { ParkService } from '../services/park_service';
 import { ParkRepository } from '../repositories/park_repository';
 import { DriverPresenceState, PresenceSource } from '../models/DriverPresence';
+import { ParkDispatchService } from '../services/park_dispatch_service';
+import { ParkAssignmentMode } from '../models/ParkDispatchJob';
 import { errBody, ErrorCode, AppError } from '../utils/errors';
 
 const router = Router();
@@ -178,12 +182,13 @@ router.get('/dashboard', async (req: StaffRequest, res: Response) => {
         }
 
         const park = await ParkService.requirePark(parkId);
-        const [counts, queue, presence, onDuty, stale] = await Promise.all([
+        const [counts, queue, presence, onDuty, stale, requests] = await Promise.all([
             ParkRepository.counts(park),
             ParkRosterService.queue(parkId),
             DriverPresenceService.atPark(parkId),
             DispatcherShiftService.onDuty(parkId),
             DriverPresenceService.stale(parkId, 180),
+            ParkDispatchService.queueForPark(parkId),
         ]);
 
         return res.json({
@@ -193,13 +198,18 @@ router.get('/dashboard', async (req: StaffRequest, res: Response) => {
             queue,
             presence,
             staleWarnings: stale,
+            /** Ride requests direct dispatch could not fill. */
+            requests,
             /**
              * Stated in the payload, not only in documentation. A dispatcher
-             * client should have no code path that expects to advance a ride.
+             * client must have no code path that expects to advance a ride:
+             * assignment is the last thing they do, and everything after it
+             * belongs to the driver.
              */
             capabilities: {
-                canAssignRides: false,
-                reason: 'Park request assignment arrives in a later phase. A dispatcher never advances a ride lifecycle.',
+                canAssignRides: true,
+                canAdvanceRideLifecycle: false,
+                reason: 'A dispatcher assigns a driver and is then finished. Arrival, start and completion belong to the driver.',
             },
         });
     } catch (err: any) {
@@ -318,6 +328,129 @@ router.post('/presence', requireStaffPermission(StaffPermission.PRESENCE_WRITE),
         return res.json(result);
     } catch (err: any) {
         return fail(res, err, "We couldn't update presence.");
+    }
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Park Dispatch queue  (Phase 3)
+// ═══════════════════════════════════════════════════════════════════════
+
+/**
+ * GET /dispatcher/requests
+ *
+ * The queue of ride requests direct dispatch could not fill, for the park this
+ * dispatcher is on duty at. Each card carries everything the brief specifies:
+ * pickup, destination, passenger name, estimated fare, time waiting, priority
+ * and how many parks have already been tried.
+ *
+ * Passenger contact is MASKED. A dispatcher sourcing a driver has no need to
+ * phone a passenger who never asked to hear from them; a supervisor can reveal
+ * it deliberately, and that reveal is audited and expires.
+ */
+router.get('/requests', async (req: StaffRequest, res: Response) => {
+    try {
+        const shift = await requireOpenShift(req);
+        const queue = await ParkDispatchService.queueForPark(shift.parkId);
+        return res.json({
+            parkId: shift.parkId,
+            requests: queue,
+            total: queue.length,
+        });
+    } catch (err: any) {
+        return fail(res, err, "We couldn't load park requests.");
+    }
+});
+
+/**
+ * GET /dispatcher/requests/:jobId/drivers
+ * Who at this park could take this ride right now, longest-waiting first, each
+ * annotated with why they cannot if they cannot.
+ */
+router.get('/requests/:jobId/drivers', async (req: StaffRequest, res: Response) => {
+    try {
+        const shift = await requireOpenShift(req);
+        const drivers = await ParkDispatchService.assignableDrivers(shift.parkId);
+        return res.json({ parkId: shift.parkId, drivers, total: drivers.length });
+    } catch (err: any) {
+        return fail(res, err, "We couldn't load assignable drivers.");
+    }
+});
+
+/** POST /dispatcher/requests/:jobId/claim — take responsibility for sourcing a driver. */
+router.post('/requests/:jobId/claim', requireStaffPermission(StaffPermission.DISPATCH_CLAIM), async (req: StaffRequest, res: Response) => {
+    try {
+        const card = await ParkDispatchService.claim(auditActorOf(req.actor), String(req.params.jobId), ctxOf(req));
+        return res.json({ request: card });
+    } catch (err: any) {
+        return fail(res, err, "We couldn't take this request.");
+    }
+});
+
+/**
+ * POST /dispatcher/requests/:jobId/assign
+ *
+ * The dispatcher's LAST act on this ride. After this the ride is `accepted`,
+ * owned by the driver, and every later transition runs through the existing
+ * lifecycle handlers exactly as for a ride a smartphone driver accepted.
+ *
+ * `mode`:
+ *   electronic — smartphone driver; the assignment appears in their app.
+ *   verbal     — feature-phone driver; the dispatcher read the trip details out
+ *                and is recording that they did. The DRIVER still owns the ride.
+ */
+router.post('/requests/:jobId/assign', requireStaffPermission(StaffPermission.DISPATCH_ASSIGN_DRIVER), async (req: StaffRequest, res: Response) => {
+    try {
+        const rawMode = String(req.body?.mode ?? ParkAssignmentMode.ELECTRONIC);
+        if (!Object.values(ParkAssignmentMode).includes(rawMode as ParkAssignmentMode)) {
+            return res.status(400).json(errBody(ErrorCode.VALIDATION_ERROR, 'mode must be "electronic" or "verbal".'));
+        }
+        const result = await ParkDispatchService.assignDriver(
+            auditActorOf(req.actor),
+            String(req.params.jobId),
+            String(req.body?.driverId ?? ''),
+            rawMode as ParkAssignmentMode,
+            ctxOf(req),
+        );
+        return res.json({
+            ...result,
+            message: 'Driver assigned. The ride now belongs to the driver — nothing further is needed from you.',
+        });
+    } catch (err: any) {
+        return fail(res, err, "We couldn't assign this driver.");
+    }
+});
+
+/** POST /dispatcher/requests/:jobId/skip — no driver here for this one. */
+router.post('/requests/:jobId/skip', requireStaffPermission(StaffPermission.DISPATCH_RELEASE), async (req: StaffRequest, res: Response) => {
+    try {
+        await ParkDispatchService.skip(auditActorOf(req.actor), String(req.params.jobId), String(req.body?.reason ?? ''), ctxOf(req));
+        return res.json({ message: 'Request skipped.' });
+    } catch (err: any) {
+        return fail(res, err, "We couldn't skip this request.");
+    }
+});
+
+/** POST /dispatcher/requests/:jobId/reject — decline outright, with a reason. */
+router.post('/requests/:jobId/reject', requireStaffPermission(StaffPermission.DISPATCH_RELEASE), async (req: StaffRequest, res: Response) => {
+    try {
+        await ParkDispatchService.reject(auditActorOf(req.actor), String(req.params.jobId), String(req.body?.reason ?? ''), ctxOf(req));
+        return res.json({ message: 'Request rejected.' });
+    } catch (err: any) {
+        return fail(res, err, "We couldn't reject this request.");
+    }
+});
+
+/**
+ * POST /dispatcher/requests/:jobId/escalate
+ * Hands the request to a human. Deliberately NOT a cancellation — the ride keeps
+ * searching and the existing coordination flow continues to own it.
+ */
+router.post('/requests/:jobId/escalate', requireStaffPermission(StaffPermission.DISPATCH_REPORT_ISSUE), async (req: StaffRequest, res: Response) => {
+    try {
+        await ParkDispatchService.escalate(auditActorOf(req.actor), String(req.params.jobId), String(req.body?.reason ?? ''), ctxOf(req));
+        return res.json({ message: 'Escalated to support. The ride keeps searching.' });
+    } catch (err: any) {
+        return fail(res, err, "We couldn't escalate this request.");
     }
 });
 

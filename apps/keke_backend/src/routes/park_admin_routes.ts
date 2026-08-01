@@ -18,6 +18,9 @@ import { DriverPresenceService } from '../services/driver_presence_service';
 import { BadgeService } from '../services/badge_service';
 import { ParkRepository } from '../repositories/park_repository';
 import { DriverBadgeRepository } from '../repositories/driver_badge_repository';
+import { ParkDispatchJobRepository, LIVE_JOB_STATUSES } from '../repositories/park_dispatch_job_repository';
+import { ParkJobStatus } from '../models/ParkDispatchJob';
+import { loadParkDispatchConfig } from '../config/park_dispatch_config';
 import { requireStaffPermission, requireRealStaff, StaffRequest, auditActorOf } from '../middleware/staff_auth';
 import { requireParkScope, staffParkScope } from '../middleware/park_scope';
 import { StaffPermission } from '../config/staff_permissions';
@@ -435,6 +438,100 @@ router.post('/badges/:badgeSerial/replace', requireRealStaff, requireStaffPermis
         return res.status(201).json({ badge });
     } catch (err: any) {
         return fail(res, err, "We couldn't replace this badge.");
+    }
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Park Dispatch monitoring  (Phase 3)
+// ═══════════════════════════════════════════════════════════════════════
+
+/**
+ * GET /admin/park-dispatch/overview
+ *
+ * The operational picture across every park: what is live right now, and how the
+ * channel has performed over the window.
+ *
+ * Response times are MEDIAN, not mean. One dispatcher who left a device on a
+ * bench while they went to lunch would drag a mean into meaninglessness, and the
+ * number that matters is what a typical request experiences.
+ */
+router.get('/park-dispatch/overview', requireStaffPermission(StaffPermission.PARK_VIEW_METRICS, StaffPermission.MONITOR_READ), async (req: StaffRequest, res: Response) => {
+    try {
+        const hours = Math.min(720, Math.max(1, Number(req.query.hours) || 24));
+        const since = new Date(Date.now() - hours * 3600_000);
+        const parkId = (req.query.parkId as string) || undefined;
+
+        const [metrics, dispatcherStats, live] = await Promise.all([
+            ParkDispatchJobRepository.metrics(since, parkId),
+            ParkDispatchJobRepository.dispatcherStats(since, parkId),
+            ParkDispatchJobRepository.list({ statuses: LIVE_JOB_STATUSES, pageSize: 100 }),
+        ]);
+
+        // Park utilisation: how much of each park's capacity is actually being
+        // used right now, beside how much work it has been given.
+        const parks = await ParkRepository.findDispatchable();
+        const counts = await ParkRepository.countsForMany(parks);
+        const utilisation = await Promise.all(parks.map(async (p) => ({
+            parkId: p.parkId,
+            name: p.name,
+            code: p.code,
+            counts: counts.get(p.parkId),
+            liveJobs: await ParkDispatchJobRepository.countLiveForPark(p.parkId),
+            windowMetrics: await ParkDispatchJobRepository.metrics(since, p.parkId),
+        })));
+
+        // Resolve dispatcher names for display.
+        const staffIds = [...new Set(dispatcherStats.map((d) => d.staffUserId))];
+        const staff = staffIds.length
+            ? await AppDataSource.getRepository(StaffUser).createQueryBuilder('s')
+                .where('s.id IN (:...ids)', { ids: staffIds }).getMany()
+            : [];
+        const nameBy = new Map(staff.map((s) => [s.id, `${s.firstName} ${s.lastName}`]));
+
+        return res.json({
+            windowHours: hours,
+            enabled: loadParkDispatchConfig().enabled,
+            metrics,
+            dispatchers: dispatcherStats.map((d) => ({
+                staffUserId: d.staffUserId,
+                name: nameBy.get(d.staffUserId) ?? d.staffUserId,
+                claimed: Number(d.claimed),
+                assigned: Number(d.assigned),
+                skipped: Number(d.skipped),
+                avgResponseMs: d.avgResponseMs == null ? null : Number(d.avgResponseMs),
+            })),
+            liveJobs: live.items,
+            parkUtilisation: utilisation,
+        });
+    } catch (err: any) {
+        return fail(res, err, "We couldn't load park dispatch monitoring.");
+    }
+});
+
+/** GET /admin/park-dispatch/jobs — paged job history for investigation. */
+router.get('/park-dispatch/jobs', requireStaffPermission(StaffPermission.PARK_VIEW_METRICS, StaffPermission.MONITOR_READ), async (req: StaffRequest, res: Response) => {
+    try {
+        const status = req.query.status as ParkJobStatus | undefined;
+        const result = await ParkDispatchJobRepository.list({
+            parkId: (req.query.parkId as string) || undefined,
+            status: status && Object.values(ParkJobStatus).includes(status) ? status : undefined,
+            from: req.query.from ? new Date(String(req.query.from)) : undefined,
+            to: req.query.to ? new Date(String(req.query.to)) : undefined,
+            page: req.query.page ? Number(req.query.page) : 1,
+            pageSize: req.query.pageSize ? Number(req.query.pageSize) : 50,
+        });
+        return res.json(result);
+    } catch (err: any) {
+        return fail(res, err, "We couldn't load park dispatch jobs.");
+    }
+});
+
+/** GET /admin/park-dispatch/rides/:rideId — every park attempt for one ride. */
+router.get('/park-dispatch/rides/:rideId', requireStaffPermission(StaffPermission.MONITOR_READ), async (req: StaffRequest, res: Response) => {
+    try {
+        return res.json({ jobs: await ParkDispatchJobRepository.findAllForRide(String(req.params.rideId)) });
+    } catch (err: any) {
+        return fail(res, err, "We couldn't load this ride's park history.");
     }
 });
 

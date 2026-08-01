@@ -52,6 +52,23 @@ export const StaffPermission = {
     PARK_SUSPEND: 'park:suspend',
     PARK_ASSIGN_DISPATCHER: 'park:assign_dispatcher',
     PARK_VIEW_METRICS: 'park:view_metrics',
+    /** Add or remove drivers on a park's roster, and reorder its queue. */
+    PARK_MANAGE_ROSTER: 'park:manage_roster',
+    /** Manage a park's zones (staging areas, boarding points, service sub-areas). */
+    PARK_MANAGE_ZONES: 'park:manage_zones',
+
+    // ── Dispatcher shifts ───────────────────────────────────────────────
+    /** Open and close one's OWN shift at an assigned park. */
+    SHIFT_OPEN: 'shift:open',
+    /** Read shift history for a park. */
+    SHIFT_READ: 'shift:read',
+    /** Force-close somebody else's shift (supervisor / operations recovery). */
+    SHIFT_CLOSE_ANY: 'shift:close_any',
+
+    // ── Driver operational presence ─────────────────────────────────────
+    PRESENCE_READ: 'presence:read',
+    /** Record a presence transition on a driver's behalf (dispatcher at a park). */
+    PRESENCE_WRITE: 'presence:write',
 
     // ── Dispatcher operations ───────────────────────────────────────────
     DISPATCH_CLAIM: 'dispatch:claim',
@@ -122,6 +139,11 @@ export const LEGACY_FORBIDDEN_PERMISSIONS: ReadonlySet<string> = new Set<string>
     StaffPermission.PARK_ACTIVATE,
     StaffPermission.PARK_SUSPEND,
     StaffPermission.PARK_ASSIGN_DISPATCHER,
+    StaffPermission.PARK_MANAGE_ROSTER,
+    StaffPermission.PARK_MANAGE_ZONES,
+    StaffPermission.SHIFT_OPEN,
+    StaffPermission.SHIFT_CLOSE_ANY,
+    StaffPermission.PRESENCE_WRITE,
     StaffPermission.DISPATCH_CLAIM,
     StaffPermission.DISPATCH_ASSIGN_DRIVER,
     StaffPermission.DISPATCH_RELEASE,
@@ -172,6 +194,12 @@ const ROLE_MATRIX: Record<StaffRole, StaffPermissionType[]> = {
         StaffPermission.PARK_SUSPEND,
         StaffPermission.PARK_ASSIGN_DISPATCHER,
         StaffPermission.PARK_VIEW_METRICS,
+        StaffPermission.PARK_MANAGE_ROSTER,
+        StaffPermission.PARK_MANAGE_ZONES,
+        StaffPermission.SHIFT_READ,
+        StaffPermission.SHIFT_CLOSE_ANY,
+        StaffPermission.PRESENCE_READ,
+        StaffPermission.PRESENCE_WRITE,
         StaffPermission.BADGE_ISSUE,
         StaffPermission.BADGE_READ,
         StaffPermission.BADGE_REVOKE,
@@ -193,6 +221,13 @@ const ROLE_MATRIX: Record<StaffRole, StaffPermissionType[]> = {
         StaffPermission.PARK_READ,
         StaffPermission.PARK_VIEW_METRICS,
         StaffPermission.PARK_ASSIGN_DISPATCHER,
+        StaffPermission.PARK_MANAGE_ROSTER,
+        StaffPermission.PARK_MANAGE_ZONES,
+        StaffPermission.SHIFT_OPEN,
+        StaffPermission.SHIFT_READ,
+        StaffPermission.SHIFT_CLOSE_ANY,
+        StaffPermission.PRESENCE_READ,
+        StaffPermission.PRESENCE_WRITE,
         StaffPermission.BADGE_READ,
         StaffPermission.DISPATCH_CLAIM,
         StaffPermission.DISPATCH_ASSIGN_DRIVER,
@@ -226,6 +261,14 @@ const ROLE_MATRIX: Record<StaffRole, StaffPermissionType[]> = {
         StaffPermission.DISPATCH_REPORT_ISSUE,
         StaffPermission.DISPATCH_VIEW_PASSENGER_MASKED_CONTACT,
         StaffPermission.RIDE_READ,
+        // Runs the park floor: opens their own shift, keeps the roster and the
+        // queue honest, records what drivers are actually doing. None of this
+        // touches a ride's lifecycle — no such permission exists.
+        StaffPermission.SHIFT_OPEN,
+        StaffPermission.SHIFT_READ,
+        StaffPermission.PARK_MANAGE_ROSTER,
+        StaffPermission.PRESENCE_READ,
+        StaffPermission.PRESENCE_WRITE,
     ],
 
     /**
@@ -256,6 +299,8 @@ const ROLE_MATRIX: Record<StaffRole, StaffPermissionType[]> = {
         StaffPermission.MONITOR_REVEAL_CONTACT,
         StaffPermission.PARK_READ,
         StaffPermission.DISPATCH_VIEW_PASSENGER_MASKED_CONTACT,
+        StaffPermission.PRESENCE_READ,
+        StaffPermission.SHIFT_READ,
     ],
 
     /** Reads numbers. Sees no contact data of any kind. */
@@ -269,6 +314,8 @@ const ROLE_MATRIX: Record<StaffRole, StaffPermissionType[]> = {
         StaffPermission.MONITOR_READ,
         StaffPermission.METRICS_READ,
         StaffPermission.BADGE_READ,
+        StaffPermission.PRESENCE_READ,
+        StaffPermission.SHIFT_READ,
     ],
 };
 

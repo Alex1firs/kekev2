@@ -359,8 +359,11 @@ async function main() {
 
     function finish() {
         console.log(`\n  \x1b[1m${pass} passed, ${fail} failed, ${skip} not applicable\x1b[0m\n`);
-        const out = path.join(__dirname, '..', '..', '..', 'emulated-matrix-results.json');
-        try { fs.writeFileSync(out, JSON.stringify(results, null, 2)); } catch {}
+        // Written to the OS temp dir, not the repo. A results file dropped at
+        // the repository root is the kind of thing that gets committed by a
+        // wide `git add` and then lives there forever.
+        const out = path.join(require('os').tmpdir(), 'keke-emulated-matrix-results.json');
+        try { fs.writeFileSync(out, JSON.stringify(results, null, 2)); console.log(`  results: ${out}`); } catch {}
         ws.close(); chrome.kill();
         setTimeout(() => {
             try { fs.rmSync(profile, { recursive: true, force: true }); } catch {}

@@ -2,6 +2,10 @@
 
 **Status: INCOMPLETE — the physical device test has not been performed.**
 
+**Updated 2026-08-01 (Phase 6):** dispatcher Web Push is now implemented, so the
+test matrix below has grown. Two things must happen before the test can run at
+all — see §11.
+
 Run date of the automated portions: **2026-08-01**
 Environment: local stack on `192.168.1.250:4100`, real PostgreSQL, real Redis,
 real Socket.IO.
@@ -50,19 +54,14 @@ The app still loads and runs as an ordinary mobile site — it degrades honestly
 and logs `[pwa] insecure context — service worker not registered` rather than
 failing silently.
 
-**To test the PWA properly over the LAN**, on the dispatcher phone open:
+**SUPERSEDED for the final acceptance test.** The LAN address can be made to
+work with `chrome://flags/#unsafely-treat-insecure-origin-as-secure`, and that
+is what the emulated run used — but a PWA behaves differently under that flag,
+and a test that passes only with it has proved nothing about the real thing.
 
-```
-chrome://flags/#unsafely-treat-insecure-origin-as-secure
-```
-
-add `http://192.168.1.250:4100`, set the flag to **Enabled**, and relaunch
-Chrome. This is exactly what the emulated run did (`--unsafely-treat-insecure-origin-as-secure`),
-and it is why the service worker registered there.
-
-The alternative — and the better one if the droplet is reachable — is to test
-against real HTTPS at `https://dispatch.kekeride.ng`, where none of this
-applies.
+The final test must use HTTPS: **`https://staging.kekeride.ng/dispatch/`**.
+See §11.2. The LAN address remains useful for development and for the
+emulated matrix; it is not the acceptance environment.
 
 ---
 
@@ -140,7 +139,7 @@ specifies. **That proves the alert fires. It does not prove it can be heard.**
 
 | Suite | Result |
 |---|---|
-| Jest (unit, integration, concurrency) | **545 passed**, 24 suites |
+| Jest (unit, integration, concurrency) | **563 passed**, 25 suites |
 | TypeScript (`src` + `scripts`) | clean |
 | Acceptance scenarios A–O against a live server | **17/17** |
 | PWA audit | **19/19** |
@@ -342,3 +341,130 @@ commit with a regression test, and the row is retested — not relabelled.
 When §4 is complete and every critical row passes, this report becomes the
 evidence for GO, and `launch_runbook.md` §7–8 has the merge and deployment
 steps.
+
+
+---
+
+## 11. Web Push — what must happen before the physical test
+
+Two blockers, neither of which can be cleared from this repository.
+
+### 11.1 Firebase Web App and VAPID key
+
+Someone with Firebase console access must, in project `keke-ride-75ae8`:
+
+1. **Add a Web App** — *Project settings → General → Your apps → Add app → Web*.
+   Name it `KekeRide Park Dispatch`. Copy the config object.
+2. **Generate a Web Push certificate** — *Project settings → Cloud Messaging →
+   Web configuration → Generate key pair*. Copy the **public** key.
+3. Set on the backend (all public identifiers; the service account is unchanged
+   and stays server-only):
+
+```
+FIREBASE_WEB_API_KEY=…
+FIREBASE_WEB_AUTH_DOMAIN=keke-ride-75ae8.firebaseapp.com
+FIREBASE_WEB_PROJECT_ID=keke-ride-75ae8
+FIREBASE_WEB_MESSAGING_SENDER_ID=889922883046
+FIREBASE_WEB_APP_ID=1:889922883046:web:…
+FIREBASE_VAPID_PUBLIC_KEY=…
+```
+
+Until these are set the app reports push as unavailable and says exactly which
+values are missing — it does not fail silently. Verified:
+
+```
+GET /dispatcher/push/config
+{"available":false,"missing":["FIREBASE_WEB_API_KEY", … 6 values],
+ "message":"Push is not configured on this server. Alerts will only work while the app is open."}
+```
+
+### 11.2 An HTTPS test URL
+
+**The final acceptance test must not use Chrome's
+`unsafely-treat-insecure-origin-as-secure` flag.** A PWA behaves differently
+under it, and a test that passes only with a flag has proved nothing about the
+real thing.
+
+`staging.kekeride.ng` already exists, resolves to the droplet (206.189.96.147)
+and serves HTTPS — it currently returns 401 because it sits behind nginx basic
+auth. That is the intended test URL:
+
+**`https://staging.kekeride.ng/dispatch/`**
+
+Deploying this branch to staging is the one remaining action, and it has not
+been taken because it touches shared infrastructure. The commands are in
+`launch_runbook.md` §3b with `api_staging` in place of `api_prod`.
+
+Note for the tester: the basic-auth prompt appears once per browser. The service
+worker's own fetches carry the credentials afterwards, but if push behaves oddly
+under basic auth, removing the htpasswd line for `staging.kekeride.ng` during the
+test window is the cleaner path.
+
+---
+
+## 12. Web Push test matrix — for the human tester
+
+Fill this in on the real phone. Nothing here has been performed.
+
+**Device details**
+
+| | |
+|---|---|
+| Device model | |
+| Android version | |
+| Browser + version | |
+| Network (Wi-Fi / MTN / Airtel / Glo) | |
+| Installed as PWA? | |
+| Date / tester | |
+
+**The tests**
+
+| # | Step | Expected | Actual | P/F |
+|---|---|---|---|---|
+| 1 | Open `https://staging.kekeride.ng/dispatch/` | Loads over HTTPS, no flag needed | | |
+| 2 | Install to home screen | Prompt offered; KekeRide diamond icon | | |
+| 3 | Open from the home screen | Standalone, no address bar | | |
+| 4 | Sign in as the park dispatcher | Works | | |
+| 5 | Shift screen → **Set up** background alerts | Permission prompt; then "On" | | |
+| 6 | **Send test** | Notification arrives within seconds | | |
+| 7 | Is it **audible** at the phone's normal volume? | Yes | | |
+| 8 | Does it **vibrate**? | Yes | | |
+| 9 | Open a shift | Starts; no silent-shift warning | | |
+| 10 | **Lock the screen.** Generate a real park request | Notification on the lock screen | | |
+| 11 | Audible with the screen locked? | Yes | | |
+| 12 | **Fully close the PWA** (swipe from recents). Generate another | Notification still arrives | | |
+| 13 | …and after the phone has sat idle 10+ minutes? | Arrives, possibly delayed | | |
+| 14 | Tap the notification | Opens Park Dispatch **on that request** | | |
+| 15 | Is the request state current, not the notification's? | Board shows authoritative state | | |
+| 16 | Assign a smartphone driver from the opened request | Works | | |
+| 17 | Repeat with a feature-phone **verbal handoff** | Works | | |
+| 18 | Leave a request unanswered ~15 s | **One** reminder, not a stream | | |
+| 19 | Let it run to expiry | Final call, then **silence** | | |
+| 20 | Claim a request immediately | **No** reminder afterwards | | |
+| 21 | Restart the app; generate a request | Still alerts | | |
+| 22 | **Restart the phone**; open the app once; lock it; generate a request | Still alerts | | |
+| 23 | Switch Wi-Fi off, use mobile data; repeat | Still alerts | | |
+| 24 | Sign out, sign in again | Token re-registers; alerts resume | | |
+| 25 | Uninstall, reinstall, sign in | New token; alerts resume; no duplicates | | |
+| 26 | Two dispatchers at the same park | Both alerted; one claim silences both | | |
+| 27 | End the shift; generate a request | **No** alert — the device is unbound | | |
+
+**Critical rows: 7, 10, 11, 12, 14.** If a dispatcher cannot be alerted with the
+screen locked, or the notification does not open the right request, this is a
+NO-GO regardless of everything else.
+
+### What to expect on a non-stock Android
+
+Row 12 and 13 are the ones most likely to fail, and it will not be a bug in this
+code. Xiaomi/MIUI, Huawei/EMUI, Oppo/ColorOS and aggressive Samsung battery
+settings kill Chrome's background process, and a killed browser receives
+nothing. If they fail:
+
+1. Record the exact device and Android skin.
+2. Add Chrome to the device's protected/auto-start apps and disable battery
+   optimisation for it, then retest.
+3. If it still fails, that phone model is unsuitable as a dispatcher device and
+   the operating procedure must keep the app open on it.
+
+This is documented honestly in `dispatcher_web_push_audit.md` §4. The web cannot
+override an OEM battery manager, and no amount of code will change that.

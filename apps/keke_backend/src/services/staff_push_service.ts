@@ -98,9 +98,9 @@ export class StaffPushService {
      * Register or refresh a dispatcher's push token.
      *
      * Idempotent per token. If the token already exists under ANOTHER staff
-     * member, the old association is revoked rather than kept: the same browser
-     * cannot be two people at once, and a device handed from one dispatcher to
-     * the next must stop alerting the previous one.
+     * member the row is reassigned: the same browser cannot be two people at
+     * once, and a device handed from one dispatcher to the next must stop
+     * alerting the previous one.
      */
     static async register(input: RegisterTokenInput): Promise<StaffDeviceToken> {
         const token = String(input.token ?? '').trim();
@@ -110,17 +110,22 @@ export class StaffPushService {
 
         const existing = await this.tokens.findOne({ where: { token } });
 
-        if (existing && existing.staffUserId !== input.staffUserId) {
-            /*
-             * Same browser, different person. Revoke rather than reassign, so
-             * the handover is visible in the record instead of one row quietly
-             * changing owner.
-             */
-            existing.status = StaffTokenStatus.REVOKED;
-            existing.revokedReason = 'device registered by another staff member';
-            existing.revokedAt = new Date();
-            await this.tokens.save(existing);
-        }
+        /*
+         * Same browser, different person — a park tablet handed over.
+         *
+         * The token is globally unique (one browser, one token), so the row is
+         * REASSIGNED rather than duplicated. An earlier version tried to revoke
+         * the old row and insert a new one with the same token, which the
+         * unique index correctly refused.
+         *
+         * What matters operationally is that the previous dispatcher stops
+         * being alerted, and reassignment achieves that: the row now belongs to
+         * whoever is holding the device. The handover itself stays visible in
+         * the delivery history, which is keyed on staff and keeps its rows.
+         */
+        const handedOverFrom = existing && existing.staffUserId !== input.staffUserId
+            ? existing.staffUserId
+            : null;
 
         /*
          * One live token per (staff, device). A browser that rotates its token
@@ -142,9 +147,7 @@ export class StaffPushService {
                 .execute();
         }
 
-        const row = (existing && existing.staffUserId === input.staffUserId)
-            ? existing
-            : this.tokens.create({ token });
+        const row = existing ?? this.tokens.create({ token });
 
         row.staffUserId = input.staffUserId;
         row.platform = input.platform ?? StaffDevicePlatform.WEB;
@@ -155,8 +158,20 @@ export class StaffPushService {
         row.deviceLabel = input.deviceLabel?.slice(0, 120) ?? row.deviceLabel ?? null;
         row.userAgent = input.userAgent?.slice(0, 300) ?? null;
         row.lastSeenAt = new Date();
-        row.revokedReason = null;
+        row.revokedReason = handedOverFrom
+            ? `taken over from staff ${handedOverFrom}`
+            : null;
         row.revokedAt = null;
+
+        // A handover resets the park binding: the new holder gets whatever
+        // their own shift says, never the previous dispatcher's park.
+        if (handedOverFrom) {
+            row.parkId = input.parkId ?? null;
+            row.shiftId = input.shiftId ?? null;
+            row.lastPushAcceptedAt = null;
+            row.lastPushReceivedAt = null;
+            row.lastNotificationOpenedAt = null;
+        }
 
         return this.tokens.save(row);
     }

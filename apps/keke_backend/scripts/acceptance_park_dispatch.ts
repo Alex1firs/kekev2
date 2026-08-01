@@ -311,13 +311,22 @@ async function main() {
     board = await dashboard();
     const anyJob = board.queue[0];
     if (anyJob) {
+        /*
+         * There is no dispatcher-side reveal route, by design. One existed
+         * briefly and could never have worked — it required an open shift AND
+         * monitor:reveal_contact, and no role holds both. A 404 here is the
+         * correct outcome: the park cannot self-serve a passenger's number, and
+         * the working route is a support action on the admin surface.
+         */
         const asDispatcher = await http(`/dispatcher/requests/${anyJob.jobId}/reveal-contact`, {
             method: 'POST', token: D, body: { reason: 'acceptance run probe' },
         });
+        const noParkRoute = asDispatcher.status === 404 || asDispatcher.status === 403;
         const masked = typeof anyJob.passengerPhoneMasked === 'string' && anyJob.passengerPhoneMasked.includes('•');
-        record('M', 'Contact reveal is controlled and audited', asDispatcher.status === 403 && masked,
-            `a dispatcher is refused (${asDispatcher.status}) and sees only "${anyJob.passengerPhoneMasked}"; `
-            + 'revealing needs monitor:reveal_contact, a written reason, and writes an audit row before returning the number');
+        record('M', 'Contact reveal is controlled and audited', noParkRoute && masked,
+            `no dispatcher-side reveal route (${asDispatcher.status}); the board shows only `
+            + `"${anyJob.passengerPhoneMasked}". Revealing is a support action needing `
+            + 'monitor:reveal_contact and a written reason, audited before the number is returned.');
     } else {
         record('M', 'Contact reveal is controlled and audited', true, 'no live request to probe; masking verified on the board above');
     }

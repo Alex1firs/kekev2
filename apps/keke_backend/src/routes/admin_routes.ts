@@ -5,6 +5,7 @@ import { attachAdminIdentity, requirePermission, AdminRequest } from "../middlew
 import { resolveActor, requireStaffAuth } from "../middleware/staff_auth";
 import { SYSTEM_LEGACY_ADMIN } from "../services/audit_service";
 import staffAdminRoutes from "./staff_admin_routes";
+import parkAdminRoutes from "./park_admin_routes";
 import { DispatchMonitorQueryService } from "../services/dispatch_monitor_query_service";
 import { adminLimiter } from "../middleware/rate_limit";
 import { adminRejectionSchema } from "../services/validation_service";
@@ -774,6 +775,9 @@ router.post("/rides/:rideId/void", async (req: Request, res: Response) => {
 // shadow an existing admin path. It inherits the auth chain applied at the top
 // of this file, so there is one way in, not two.
 router.use(staffAdminRoutes);
+// Park infrastructure, rosters, shifts, presence and badges. Same auth chain,
+// same precedence rule: mounted last so nothing above can be shadowed.
+router.use(parkAdminRoutes);
 
 export default router;
 

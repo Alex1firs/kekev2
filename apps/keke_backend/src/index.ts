@@ -14,6 +14,7 @@ import adminRoutes from './routes/admin_routes';
 import driverRoutes from "./routes/driver_routes";
 import authRoutes, { driverAuthRouter } from "./routes/auth_routes";
 import staffAuthRoutes from "./routes/staff_auth_routes";
+import dispatcherRoutes from "./routes/dispatcher_routes";
 import rideRoutes from "./routes/ride_routes";
 import notificationRoutes from "./routes/notification_routes";
 import passengerRoutes from "./routes/passenger_routes";
@@ -101,6 +102,9 @@ app.use('/api/v1/driver/auth', driverAuthRouter);
 // Staff identity. Deliberately its own path and its own token audience — a
 // staff session must never be reachable through the customer auth surface.
 app.use('/api/v1/staff/auth', staffAuthRoutes);
+// The park dispatcher device surface. Staff sessions only — the legacy shared
+// key is refused outright, because every action here must name a person.
+app.use('/api/v1/dispatcher', dispatcherRoutes);
 app.use('/api/v1/finance', financeRoutes);
 app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/drivers', driverRoutes);

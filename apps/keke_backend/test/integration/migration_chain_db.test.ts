@@ -62,9 +62,32 @@ async function withAdmin<T>(fn: (ds: DataSource) => Promise<T>): Promise<T> {
     try { return await fn(admin); } finally { await admin.destroy(); }
 }
 
-/** A scratch database, dropped and recreated so each case starts truly empty. */
-async function freshDatabase(name: string): Promise<string> {
+/**
+ * A scratch database, unique to this worker and run.
+ *
+ * Jest runs suites in parallel workers against one Postgres. A fixed database
+ * name meant two runs — or a leftover from a killed run — could collide, and
+ * DROP DATABASE fails outright while anything else holds a connection to it.
+ * That surfaced as an occasional single failure in an otherwise green suite,
+ * which is the worst kind: it looks like a real defect and it is not.
+ *
+ * The pid makes the name unique; terminating stragglers first makes the drop
+ * reliable even when a previous run died without cleaning up.
+ */
+const SCRATCH_SUFFIX = `${process.pid}`;
+
+function scratchName(base: string): string {
+    return `${base}_${SCRATCH_SUFFIX}`;
+}
+
+async function freshDatabase(base: string): Promise<string> {
+    const name = scratchName(base);
     await withAdmin(async (admin) => {
+        // Anything still attached would make the drop fail.
+        await admin.query(
+            `SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+             WHERE datname = $1 AND pid <> pg_backend_pid()`, [name],
+        ).catch(() => { /* the database may not exist yet */ });
         await admin.query(`DROP DATABASE IF EXISTS "${name}"`);
         await admin.query(`CREATE DATABASE "${name}"`);
     });
@@ -172,7 +195,12 @@ describeDb('the migration chain', () => {
 
     afterAll(async () => {
         await withAdmin(async (admin) => {
-            for (const db of ['keke_chain_virgin', 'keke_chain_prodsim']) {
+            for (const base of ['keke_chain_virgin', 'keke_chain_prodsim']) {
+                const db = scratchName(base);
+                await admin.query(
+                    `SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+                     WHERE datname = $1 AND pid <> pg_backend_pid()`, [db],
+                ).catch(() => {});
                 await admin.query(`DROP DATABASE IF EXISTS "${db}"`).catch(() => {});
             }
         });

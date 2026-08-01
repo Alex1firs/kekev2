@@ -382,6 +382,17 @@ export class StaffPushService {
 
     /** A single test push to one device, from the setup screen. */
     static async sendTest(staffUserId: string, tokenId: string): Promise<{ accepted: boolean; detail: string }> {
+        /*
+         * Guard the shape before it reaches Postgres. `id` is a uuid column, so
+         * an empty or malformed value makes the query itself fail and the
+         * caller sees a 500 — an infrastructure error for what is really a bad
+         * request, and the least useful thing to show someone whose alerts are
+         * not working.
+         */
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tokenId ?? '')) {
+            throw new AppError(400, ErrorCode.VALIDATION_ERROR, 'Choose a registered device to test.');
+        }
+
         const device = await this.tokens.findOne({ where: { id: tokenId, staffUserId } });
         if (!device) throw new AppError(404, ErrorCode.NOT_FOUND, 'That device is not registered to you.');
         if (device.status !== StaffTokenStatus.ACTIVE) {
@@ -420,6 +431,15 @@ export class StaffPushService {
                 reason: PushReason.TEST, state: PushDeliveryState.PROVIDER_ACCEPTED,
                 providerRef: messageId,
             });
+
+            /*
+             * Stamp the device too. The setup screen reads "last successful
+             * push" from here, and without this it still says "never"
+             * immediately after a test that worked — precisely when somebody is
+             * checking whether their device is set up.
+             */
+            device.lastPushAcceptedAt = new Date();
+            await this.tokens.save(device);
 
             return {
                 accepted: true,

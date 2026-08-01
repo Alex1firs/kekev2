@@ -64,10 +64,22 @@ async function main() {
     const send = (method, params = {}) => new Promise((res) => {
         const i = ++id; pending.set(i, res); ws.send(JSON.stringify({ id: i, method, params }));
     });
-    const js = async (expr, awaitPromise = true) => {
-        const r = await send('Runtime.evaluate', { expression: expr, awaitPromise, returnByValue: true });
+    /**
+     * Evaluate in the page.
+     *
+     * An explicit timeout matters: negotiating an FCM token can take tens of
+     * seconds on a cold service worker, and without one CDP gives up and
+     * returns an undefined value with no error — which reads as "the app
+     * failed" when nothing failed at all.
+     */
+    const js = async (expr, awaitPromise = true, timeout = 60000) => {
+        const r = await send('Runtime.evaluate', { expression: expr, awaitPromise, returnByValue: true, timeout });
         if (r.result?.exceptionDetails) return `EXCEPTION: ${r.result.exceptionDetails.text}`;
-        return r.result?.result?.value;
+        const res = r.result?.result;
+        if (res && res.value === undefined && res.type !== 'undefined') {
+            return `NO VALUE (type=${res.type}) — likely an evaluation timeout`;
+        }
+        return res?.value;
     };
 
     await send('Page.enable'); await send('Runtime.enable'); await send('Log.enable');
@@ -128,6 +140,10 @@ async function main() {
     else bad('service worker', String(swState));
 
     // ── 4. an FCM token, using the VAPID key ─────────────────────────────
+    // A freshly activated worker needs a moment before it can back a
+    // subscription; asking immediately is the commonest way to see a spurious
+    // failure here.
+    await sleep(2000);
     const tokenResult = await js(`(async () => {
         const cfgRes = await fetch('/api/v1/dispatcher/push/config', {
             headers: { Authorization: 'Bearer ' + sessionStorage.getItem('KD_TOKEN') } });
@@ -187,6 +203,27 @@ async function main() {
     if (regData.registered) ok('token registered to the dispatcher', `park bound: ${regData.boundToShift}`);
     else bad('token registration', reg);
 
+    /*
+     * Refresh the staff session before the send.
+     *
+     * Access tokens are deliberately short-lived, and this run spends a while
+     * installing a service worker and negotiating an FCM token — long enough
+     * to age one out. The app does this transparently on a 401; a script has
+     * to ask.
+     */
+    await js(`(async () => {
+        const r = await fetch('/api/v1/staff/auth/refresh', { method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ refreshToken: sessionStorage.getItem('KD_REFRESH') }) });
+        if (r.ok) {
+            const d = await r.json();
+            sessionStorage.setItem('KD_TOKEN', d.accessToken);
+            sessionStorage.setItem('KD_REFRESH', d.refreshToken);
+            return 'refreshed';
+        }
+        return 'refresh failed ' + r.status;
+    })()`);
+
     // ── 6. send a real push and read what Google said ────────────────────
     const test = await js(`(async () => {
         const r = await fetch('/api/v1/dispatcher/push/test', { method: 'POST',
@@ -206,7 +243,7 @@ async function main() {
             { headers: { Authorization: 'Bearer ' + sessionStorage.getItem('KD_TOKEN') } });
         return JSON.stringify(await r.json());
     })()`));
-    const latest = (status.recent || [])[0];
+    const latest = (status.recent || [])[0] ?? null;
     if (latest) {
         ok('delivery evidence recorded',
             `state=${latest.state} reason=${latest.reason} providerRef=${(latest.providerRef || '').slice(0, 40)}`);
@@ -225,7 +262,7 @@ async function main() {
         const s = await fetch('/api/v1/dispatcher/push/status',
             { headers: { Authorization: 'Bearer ' + sessionStorage.getItem('KD_TOKEN') } });
         const d = await s.json();
-        return (d.devices[0] || {}).lastPushReceivedAt || 'none';
+        return ((d.devices || [])[0] || {}).lastPushReceivedAt || 'none';
     })()`);
     console.log(`  \x1b[33mINFO\x1b[0m  service-worker receipt: ${received}`
         + (received === 'none' ? '\n        (headless often will not run the push handler — expected; the phone test covers this)' : ''));

@@ -1078,3 +1078,146 @@ body.authenticated .admin-container { display: flex; }
 .role-card small { display: block; margin-top: 12px; color: var(--text-secondary); font-size: 0.75rem; }
 
 .table-container.compact table { font-size: 0.8rem; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Park operations (Phase 2)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.park-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 18px;
+}
+.park-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    padding: 20px;
+    cursor: pointer;
+    transition: border-color 0.15s, transform 0.15s;
+}
+.park-card:hover {
+    border-color: var(--accent-amber);
+    transform: translateY(-2px);
+}
+.park-card-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+.park-card h3 { font-size: 1.05rem; margin-bottom: 4px; }
+.park-code {
+    background: rgba(255, 204, 0, 0.12);
+    color: var(--accent-amber);
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 0.72rem;
+    letter-spacing: 0.05em;
+}
+.park-address {
+    color: var(--text-secondary);
+    font-size: 0.84rem;
+    margin-bottom: 16px;
+}
+
+/* The four numbers a supervisor actually looks at. Large, because they are
+   read across a room and at a glance. */
+.park-metrics {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    padding: 14px 0;
+    border-top: 1px solid var(--border-color);
+    border-bottom: 1px solid var(--border-color);
+}
+.park-metrics.wide {
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    margin: 20px 0;
+    border-radius: 14px;
+    border: 1px solid var(--border-color);
+    padding: 18px;
+}
+.park-metrics > div { text-align: center; }
+.park-metrics span {
+    display: block;
+    font-size: 1.4rem;
+    font-weight: 800;
+    color: var(--accent-amber);
+    line-height: 1.2;
+}
+.park-metrics label {
+    font-size: 0.68rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+.park-foot {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 14px;
+    font-size: 0.76rem;
+    color: var(--text-secondary);
+}
+.open-now { color: var(--accent-emerald); font-weight: 700; }
+.closed-now { color: var(--text-secondary); }
+
+.park-detail-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 20px;
+    flex-wrap: wrap;
+    margin: 18px 0;
+}
+.park-detail-head h2 { display: flex; align-items: center; gap: 10px; }
+
+/* Activation blockers are the one thing on the page that must not be missed:
+   a park that looks configured but cannot go live. */
+.blocker-box {
+    background: rgba(230, 161, 92, 0.1);
+    border: 1px solid rgba(230, 161, 92, 0.45);
+    border-radius: 12px;
+    padding: 16px 20px;
+    margin: 16px 0;
+    color: #e6a15c;
+}
+.blocker-box ul { margin: 10px 0 8px 20px; }
+.blocker-box li { margin: 4px 0; font-size: 0.88rem; }
+.blocker-box small { color: var(--text-secondary); }
+
+.wallet-blocked { color: #fb7185; font-weight: 700; }
+.wallet-blocked small,
+.park-detail-body small { display: block; font-size: 0.7rem; opacity: 0.8; }
+
+.badge-counts {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+}
+.count-tile {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 14px 22px;
+    text-align: center;
+    min-width: 120px;
+}
+.count-tile span {
+    display: block;
+    font-size: 1.5rem;
+    font-weight: 800;
+    color: var(--accent-amber);
+}
+.count-tile label {
+    font-size: 0.68rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+/* Park detail is reached by clicking a card, not from the sidebar. */
+.nav-links li.hidden-nav { display: none; }

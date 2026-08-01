@@ -99,6 +99,7 @@ async function init() {
     setupAuthListeners();
     setupSettingsForm();
     setupStaffListeners();
+    setupParkListeners();
     applyPermissionGating();
     renderActorBadge();
 
@@ -118,6 +119,7 @@ async function init() {
     fetchSosAlerts().catch(() => {});
 
     setInterval(refreshOverview, 30000);
+
 }
 
 window.onerror = (msg) => { console.error('[Global Error]:', msg); };
@@ -157,6 +159,8 @@ function switchSection(id) {
     if (id === 'driver-dispatch-metrics') fetchDispatchMetrics();
     if (id === 'sos-alerts')    fetchSosAlerts();
     if (id === 'audit-log')     fetchAuditLog();
+    if (id === 'parks')         fetchParks();
+    if (id === 'badges')        fetchBadges();
     if (id === 'staff')         fetchStaffList();
     if (id === 'role-matrix')   fetchRoleMatrix();
     if (id === 'staff-audit')   fetchStaffAudit();
@@ -1711,6 +1715,521 @@ async function exportStaffAudit() {
     } catch {
         showToast('Export failed', 'error');
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Park Operations  (Phase 2)
+// ═══════════════════════════════════════════════════════════════════════════
+
+const PRESENCE_LABEL = {
+    offline: 'Offline', online: 'Online', at_park: 'At park', waiting: 'Waiting',
+    assigned: 'Assigned', en_route: 'En route', passenger_boarding: 'Boarding',
+    trip_started: 'On trip', unavailable: 'Unavailable',
+};
+const PRESENCE_TONE = {
+    offline: 'muted', online: 'info', at_park: 'info', waiting: 'success',
+    assigned: 'warn', en_route: 'warn', passenger_boarding: 'warn',
+    trip_started: 'warn', unavailable: 'error',
+};
+
+let currentParkId = null;
+
+function setupParkListeners() {
+    let t = null;
+    document.getElementById('park-search')?.addEventListener('input', () => {
+        clearTimeout(t); t = setTimeout(fetchParks, 350);
+    });
+    document.getElementById('park-status-filter')?.addEventListener('change', fetchParks);
+    document.getElementById('btn-new-park')?.addEventListener('click', openCreateParkModal);
+
+    let bt = null;
+    document.getElementById('badge-search')?.addEventListener('input', () => {
+        clearTimeout(bt); bt = setTimeout(fetchBadges, 350);
+    });
+    document.getElementById('badge-status-filter')?.addEventListener('change', fetchBadges);
+    document.getElementById('btn-issue-badge')?.addEventListener('click', openIssueBadgeModal);
+}
+
+function parkStatusChip(status) {
+    const tone = { active: 'success', draft: 'info', inactive: 'muted', suspended: 'error' }[status] || 'muted';
+    return `<span class="chip chip-${tone}">${escapeHtml(status)}</span>`;
+}
+
+function fmtDuration(seconds) {
+    if (seconds == null) return '—';
+    const m = Math.floor(seconds / 60);
+    if (m < 60) return `${m}m`;
+    return `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+
+// ── Park list ──────────────────────────────────────────────────────────────
+
+async function fetchParks() {
+    if (!can('park:read')) return;
+    const params = new URLSearchParams({ pageSize: '50' });
+    const search = document.getElementById('park-search')?.value.trim();
+    const status = document.getElementById('park-status-filter')?.value;
+    if (search) params.set('search', search);
+    if (status) params.set('status', status);
+
+    try {
+        const data = await adminFetch(`/parks?${params.toString()}`);
+        const grid = document.getElementById('parks-grid');
+        if (!grid) return;
+
+        if (!data.items.length) {
+            grid.innerHTML = `<p class="section-note">No parks yet. Create one to begin — it starts as a
+                <strong>draft</strong> and cannot receive work until it has a supervisor and a staging zone.</p>`;
+            return;
+        }
+
+        grid.innerHTML = data.items.map(p => {
+            const c = p.counts || {};
+            return `
+            <div class="park-card" onclick="openParkDetail('${escapeHtml(p.parkId)}')">
+                <div class="park-card-head">
+                    <div>
+                        <h3>${escapeHtml(p.name)}</h3>
+                        <code class="park-code">${escapeHtml(p.code)}</code>
+                    </div>
+                    ${parkStatusChip(p.status)}
+                </div>
+                <p class="park-address">${escapeHtml(p.addressLine || p.city || '—')}</p>
+                <div class="park-metrics">
+                    <div><span>${c.waitingDriverCount ?? 0}</span><label>Waiting</label></div>
+                    <div><span>${c.activeDriverCount ?? 0}</span><label>At park</label></div>
+                    <div><span>${c.onRideCount ?? 0}</span><label>On trip</label></div>
+                    <div><span>${c.rosterSize ?? 0}</span><label>Roster</label></div>
+                </div>
+                <div class="park-foot">
+                    <span>${p.serviceRadiusKm} km radius · capacity ${p.capacityDrivers}</span>
+                    <span class="${p.withinOperatingHours ? 'open-now' : 'closed-now'}">
+                        ${p.withinOperatingHours ? 'Open now' : 'Closed'}
+                    </span>
+                </div>
+            </div>`;
+        }).join('');
+    } catch { /* surfaced by adminFetch */ }
+}
+
+// ── Park detail ────────────────────────────────────────────────────────────
+
+async function openParkDetail(parkId) {
+    currentParkId = parkId;
+    switchSection('park-detail');
+    const body = document.getElementById('park-detail-body');
+    body.innerHTML = '<p class="section-note">Loading…</p>';
+
+    try {
+        const [detail, rosterRes, queueRes] = await Promise.all([
+            adminFetch(`/parks/${parkId}`),
+            adminFetch(`/parks/${parkId}/roster`).catch(() => ({ roster: [] })),
+            adminFetch(`/parks/${parkId}/queue`).catch(() => ({ queue: [] })),
+        ]);
+        renderParkDetail(detail, rosterRes.roster, queueRes.queue);
+    } catch {
+        body.innerHTML = '<p class="section-note">Could not load this park.</p>';
+    }
+}
+
+function renderParkDetail(detail, roster, queue) {
+    const p = detail.park;
+    const c = p.counts || {};
+    const blockers = detail.activationBlockers || [];
+    const body = document.getElementById('park-detail-body');
+    if (!body) return;
+
+    body.innerHTML = `
+        <div class="park-detail-head">
+            <div>
+                <h2>${escapeHtml(p.name)} <code class="park-code">${escapeHtml(p.code)}</code></h2>
+                <p class="section-note">${escapeHtml(p.addressLine || '')} ${p.city ? '· ' + escapeHtml(p.city) : ''}</p>
+            </div>
+            <div class="action-row">
+                ${parkStatusChip(p.status)}
+                ${p.status !== 'active' && can('park:activate')
+                    ? `<button class="btn-primary" onclick="activatePark('${escapeHtml(p.parkId)}')">Activate</button>` : ''}
+                ${p.status === 'active' && can('park:suspend')
+                    ? `<button class="btn-danger" onclick="suspendPark('${escapeHtml(p.parkId)}')">Suspend</button>` : ''}
+            </div>
+        </div>
+
+        ${blockers.length ? `
+            <div class="blocker-box">
+                <strong>Not ready to activate.</strong>
+                <ul>${blockers.map(b => `<li>${escapeHtml(b)}</li>`).join('')}</ul>
+                <small>A park cannot receive real passengers until each of these is resolved.</small>
+            </div>` : ''}
+
+        <div class="park-metrics wide">
+            <div><span>${c.waitingDriverCount ?? 0}</span><label>Waiting</label></div>
+            <div><span>${c.activeDriverCount ?? 0}</span><label>At park</label></div>
+            <div><span>${c.onRideCount ?? 0}</span><label>On trip</label></div>
+            <div><span>${c.unavailableCount ?? 0}</span><label>Unavailable</label></div>
+            <div><span>${c.rosterActive ?? 0}</span><label>Roster (active)</label></div>
+            <div><span>${c.capacityUtilisationPct ?? 0}%</span><label>Capacity used</label></div>
+        </div>
+
+        <div class="detail-grid">
+            <div><span>Coordinates</span>${p.lat}, ${p.lng}</div>
+            <div><span>Service radius</span>${p.serviceRadiusKm} km</div>
+            <div><span>On-site radius</span>${p.operatingRadiusM} m</div>
+            <div><span>Capacity</span>${p.capacityDrivers} drivers</div>
+            <div><span>Hours</span>${p.opensAt ? `${escapeHtml(p.opensAt)}–${escapeHtml(p.closesAt || '')}` : 'always open'}</div>
+            <div><span>Supervisor</span>${escapeHtml(p.supervisorName || 'not assigned')}</div>
+        </div>
+
+        <h4>On duty now</h4>
+        ${detail.onDuty.length ? `
+            <div class="table-container compact">
+                <table>
+                    <thead><tr><th>Dispatcher</th><th>Since</th><th>Duration</th><th>Start location</th><th></th></tr></thead>
+                    <tbody>${detail.onDuty.map(s => `
+                        <tr>
+                            <td>${escapeHtml(s.staffName || s.staffUserId)}</td>
+                            <td>${new Date(s.startedAt).toLocaleTimeString()}</td>
+                            <td>${s.durationMinutes}m</td>
+                            <td>${s.startLocationVerified
+                                ? '<span class="chip chip-success">verified on-site</span>'
+                                : `<span class="chip chip-warn">unverified${s.startDistanceM != null ? ' · ' + Math.round(s.startDistanceM) + 'm' : ''}</span>`}</td>
+                            <td>${can('shift:close_any')
+                                ? `<button class="btn-small" onclick="forceCloseShift('${escapeHtml(s.shiftId)}')">Force close</button>` : ''}</td>
+                        </tr>`).join('')}</tbody>
+                </table>
+            </div>` : '<p class="section-note">Nobody is on duty at this park right now.</p>'}
+
+        <h4>Assigned staff</h4>
+        ${detail.assignedStaff.length ? `
+            <div class="perm-list">${detail.assignedStaff.map(a =>
+                `<code>${escapeHtml(a.name)} · ${escapeHtml(a.role.replace(/_/g, ' '))}</code>`).join(' ')}</div>`
+            : '<p class="section-note">No staff assigned. Grant a park-scoped role under Staff.</p>'}
+
+        <h4>Zones</h4>
+        <div class="action-row">
+            ${can('park:manage_zones') ? `<button class="btn-secondary" onclick="openCreateZoneModal('${escapeHtml(p.parkId)}')">Add zone</button>` : ''}
+        </div>
+        ${detail.zones.length ? `
+            <div class="table-container compact">
+                <table>
+                    <thead><tr><th>Name</th><th>Code</th><th>Kind</th><th>Radius</th><th>Active</th></tr></thead>
+                    <tbody>${detail.zones.map(z => `
+                        <tr>
+                            <td>${escapeHtml(z.name)}</td>
+                            <td><code>${escapeHtml(z.code)}</code></td>
+                            <td>${escapeHtml(z.kind)}</td>
+                            <td>${z.radiusM} m</td>
+                            <td>${z.active ? 'yes' : 'no'}</td>
+                        </tr>`).join('')}</tbody>
+                </table>
+            </div>` : '<p class="section-note">No zones defined. A staging zone is required before activation.</p>'}
+
+        <h4>Queue (${queue.length})</h4>
+        ${queue.length ? `
+            <div class="table-container compact">
+                <table>
+                    <thead><tr><th>#</th><th>Driver</th><th>Unit</th><th>Device</th><th>Presence</th><th>Ready?</th></tr></thead>
+                    <tbody>${queue.map(q => `
+                        <tr class="${q.assignable ? '' : 'row-denied'}">
+                            <td><strong>${q.queuePosition ?? '—'}</strong></td>
+                            <td>${escapeHtml(q.firstName)} ${escapeHtml(q.lastName)}</td>
+                            <td>${escapeHtml(q.unitNumber || '—')}</td>
+                            <td>${deviceChip(q)}</td>
+                            <td>${presenceChip(q.presenceState)}</td>
+                            <td>${q.assignable
+                                ? '<span class="chip chip-success">ready</span>'
+                                : q.problems.map(pr => `<span class="chip chip-warn" title="${escapeHtml(pr.message)}">${escapeHtml(pr.code.replace(/_/g, ' '))}</span>`).join(' ')}</td>
+                        </tr>`).join('')}</tbody>
+                </table>
+            </div>` : '<p class="section-note">Nobody is in the queue.</p>'}
+
+        <h4>Roster (${roster.length})</h4>
+        <div class="action-row">
+            ${can('park:manage_roster') ? `<button class="btn-secondary" onclick="openAddDriverModal('${escapeHtml(p.parkId)}')">Add driver</button>` : ''}
+        </div>
+        <div class="table-container compact">
+            <table>
+                <thead><tr>
+                    <th>Driver</th><th>Unit</th><th>Vehicle</th><th>Device</th><th>Phone</th>
+                    <th>Badge</th><th>Wallet</th><th>Presence</th><th>Last ride</th><th>Queue</th>
+                </tr></thead>
+                <tbody>${roster.length ? roster.map(r => `
+                    <tr class="${r.status === 'suspended' ? 'row-denied' : ''}">
+                        <td>${escapeHtml(r.firstName)} ${escapeHtml(r.lastName)}</td>
+                        <td>${escapeHtml(r.unitNumber || '—')}</td>
+                        <td>${escapeHtml(r.vehiclePlate)}</td>
+                        <td>${deviceChip(r)}</td>
+                        <td style="font-family:monospace">${escapeHtml(r.phone || '—')}</td>
+                        <td>${r.badgeSerial
+                            ? `<code>${escapeHtml(r.badgeSerial)}</code>`
+                            : '<span class="chip chip-warn">none</span>'}</td>
+                        <td class="${r.walletBlocked ? 'wallet-blocked' : ''}">
+                            ₦${Number(r.walletBalance).toLocaleString()}
+                            ${r.commissionDebt > 0 ? `<small>owes ₦${Number(r.commissionDebt).toLocaleString()}</small>` : ''}
+                        </td>
+                        <td>${presenceChip(r.presenceState)}</td>
+                        <td>${r.lastRideAt ? new Date(r.lastRideAt).toLocaleDateString() : 'never'}</td>
+                        <td>${r.queuePosition ?? '—'}</td>
+                    </tr>`).join('')
+                    : '<tr><td colspan="10">No drivers on this roster yet.</td></tr>'}
+                </tbody>
+            </table>
+        </div>`;
+}
+
+/** Device capability must be visible at a glance — it changes how a ride runs. */
+function deviceChip(entry) {
+    if (entry.smartphoneCapable) return '<span class="chip chip-info">smartphone</span>';
+    if (entry.deviceCapability === 'feature_phone') return '<span class="chip chip-warn">feature phone</span>';
+    // "no device", not "no phone": the phone column beside this often holds a
+    // number that reaches the driver through a family member or the park, and
+    // labelling the capability "no phone" made those two read as contradictory.
+    return '<span class="chip chip-error">no device</span>';
+}
+
+function presenceChip(state) {
+    if (!state) return '<span class="chip chip-muted">unknown</span>';
+    return `<span class="chip chip-${PRESENCE_TONE[state] || 'muted'}">${escapeHtml(PRESENCE_LABEL[state] || state)}</span>`;
+}
+
+// ── Park actions ───────────────────────────────────────────────────────────
+
+function openCreateParkModal() {
+    staffModalShell('New park', `
+        <form id="create-park-form" class="stack">
+            <label>Name <input id="np-name" required placeholder="Awka Main Park"></label>
+            <label>Code <input id="np-code" required placeholder="AWK-MAIN" style="text-transform:uppercase"></label>
+            <label>Address <input id="np-address" placeholder="Zik Avenue"></label>
+            <label>City <input id="np-city" placeholder="Awka"></label>
+            <label>Latitude <input id="np-lat" required placeholder="6.2109"></label>
+            <label>Longitude <input id="np-lng" required placeholder="7.0740"></label>
+            <label>Service radius (km) <input id="np-radius" type="number" step="0.1" value="4"></label>
+            <label>Capacity (drivers) <input id="np-capacity" type="number" value="50"></label>
+            <label>Opens at <input id="np-opens" placeholder="06:00"></label>
+            <label>Closes at <input id="np-closes" placeholder="19:00"></label>
+            <p class="section-note">
+                The park is created as a <strong>draft</strong>. It cannot be activated until it has a
+                supervisor and at least one staging zone.
+            </p>
+            <button type="submit" class="btn-primary full-width">Create park</button>
+        </form>`);
+
+    document.getElementById('create-park-form').onsubmit = async (e) => {
+        e.preventDefault();
+        try {
+            const result = await adminFetch('/parks', 'POST', {
+                name: document.getElementById('np-name').value.trim(),
+                code: document.getElementById('np-code').value.trim().toUpperCase(),
+                addressLine: document.getElementById('np-address').value.trim(),
+                city: document.getElementById('np-city').value.trim(),
+                lat: Number(document.getElementById('np-lat').value),
+                lng: Number(document.getElementById('np-lng').value),
+                serviceRadiusKm: Number(document.getElementById('np-radius').value),
+                capacityDrivers: Number(document.getElementById('np-capacity').value),
+                opensAt: document.getElementById('np-opens').value.trim() || null,
+                closesAt: document.getElementById('np-closes').value.trim() || null,
+            });
+            showToast('Park created as draft', 'success');
+            closeStaffModal();
+            openParkDetail(result.park.parkId);
+        } catch { /* surfaced */ }
+    };
+}
+
+function openCreateZoneModal(parkId) {
+    staffModalShell('Add zone', `
+        <form id="create-zone-form" class="stack">
+            <label>Name <input id="nz-name" required placeholder="Main shed"></label>
+            <label>Code <input id="nz-code" required placeholder="BAY-A" style="text-transform:uppercase"></label>
+            <label>Kind
+                <select id="nz-kind">
+                    <option value="staging">Staging — where drivers wait</option>
+                    <option value="boarding">Boarding — where passengers meet their Keke</option>
+                    <option value="service">Service — a sub-area this park covers</option>
+                </select>
+            </label>
+            <label>Latitude <input id="nz-lat" required></label>
+            <label>Longitude <input id="nz-lng" required></label>
+            <label>Radius (m) <input id="nz-radius" type="number" value="150"></label>
+            <button type="submit" class="btn-primary full-width">Add zone</button>
+        </form>`);
+
+    document.getElementById('create-zone-form').onsubmit = async (e) => {
+        e.preventDefault();
+        try {
+            await adminFetch(`/parks/${parkId}/zones`, 'POST', {
+                name: document.getElementById('nz-name').value.trim(),
+                code: document.getElementById('nz-code').value.trim().toUpperCase(),
+                kind: document.getElementById('nz-kind').value,
+                lat: Number(document.getElementById('nz-lat').value),
+                lng: Number(document.getElementById('nz-lng').value),
+                radiusM: Number(document.getElementById('nz-radius').value),
+            });
+            showToast('Zone added', 'success');
+            closeStaffModal();
+            openParkDetail(parkId);
+        } catch { /* surfaced */ }
+    };
+}
+
+async function activatePark(parkId) {
+    try {
+        await adminFetch(`/parks/${parkId}/activate`, 'POST', {});
+        showToast('Park activated', 'success');
+        openParkDetail(parkId);
+    } catch { /* the blockers come back in the error message */ }
+}
+
+async function suspendPark(parkId) {
+    const reason = prompt('Suspend this park.\n\nReason (required, recorded in the audit log):');
+    if (reason == null) return;
+    if (!reason.trim()) return showToast('A reason is required', 'error');
+    try {
+        await adminFetch(`/parks/${parkId}/suspend`, 'POST', { reason: reason.trim() });
+        showToast('Park suspended', 'success');
+        openParkDetail(parkId);
+    } catch { /* surfaced */ }
+}
+
+async function forceCloseShift(shiftId) {
+    const reason = prompt('Force-close this shift.\n\nReason (required):');
+    if (reason == null) return;
+    if (!reason.trim()) return showToast('A reason is required', 'error');
+    try {
+        await adminFetch(`/shifts/${shiftId}/force-close`, 'POST', { reason: reason.trim() });
+        showToast('Shift closed', 'success');
+        if (currentParkId) openParkDetail(currentParkId);
+    } catch { /* surfaced */ }
+}
+
+function openAddDriverModal(parkId) {
+    staffModalShell('Add driver to roster', `
+        <form id="add-driver-form" class="stack">
+            <label>Driver ID <input id="ad-driver" required placeholder="uuid from Approved Drivers"></label>
+            <p class="section-note">
+                Roster membership is not presence and not queue position. Adding a driver means
+                "this driver works out of this park" — they join the queue separately, when they arrive.
+            </p>
+            <button type="submit" class="btn-primary full-width">Add to roster</button>
+        </form>`);
+
+    document.getElementById('add-driver-form').onsubmit = async (e) => {
+        e.preventDefault();
+        try {
+            await adminFetch(`/parks/${parkId}/roster`, 'POST', {
+                driverId: document.getElementById('ad-driver').value.trim(),
+            });
+            showToast('Driver added to roster', 'success');
+            closeStaffModal();
+            openParkDetail(parkId);
+        } catch { /* surfaced */ }
+    };
+}
+
+// ── Badges ─────────────────────────────────────────────────────────────────
+
+async function fetchBadges() {
+    if (!can('badge:read')) return;
+    const params = new URLSearchParams({ pageSize: '100' });
+    const search = document.getElementById('badge-search')?.value.trim();
+    const status = document.getElementById('badge-status-filter')?.value;
+    if (search) params.set('search', search);
+    if (status) params.set('status', status);
+
+    try {
+        const data = await adminFetch(`/badges?${params.toString()}`);
+        const counts = data.counts || {};
+        document.getElementById('badge-counts').innerHTML = Object.entries(counts)
+            .map(([k, v]) => `<div class="count-tile"><span>${v}</span><label>${escapeHtml(k.replace(/_/g, ' '))}</label></div>`)
+            .join('') || '<p class="section-note">No badges issued yet.</p>';
+
+        const list = document.getElementById('badge-list');
+        list.innerHTML = data.items.length ? data.items.map(b => `
+            <tr>
+                <td><code>${escapeHtml(b.badgeSerial)}</code></td>
+                <td>${escapeHtml(b.driverName)}</td>
+                <td>${escapeHtml(b.unitNumber || '—')}</td>
+                <td style="font-family:monospace">${escapeHtml(b.shortCode)}</td>
+                <td>${badgeStatusChip(b.status)}</td>
+                <td>${new Date(b.issuedAt).toLocaleDateString()}</td>
+                <td>
+                    ${b.status === 'pending_activation' && can('badge:issue')
+                        ? `<button class="btn-small" onclick="activateBadge('${escapeHtml(b.badgeSerial)}')">Activate</button>` : ''}
+                    ${(b.status === 'active' || b.status === 'pending_activation') && can('badge:revoke')
+                        ? `<button class="btn-small" onclick="revokeBadge('${escapeHtml(b.badgeSerial)}')">Revoke</button>` : ''}
+                </td>
+            </tr>`).join('')
+            : '<tr><td colspan="7">No badges match these filters.</td></tr>';
+    } catch { /* surfaced */ }
+}
+
+function badgeStatusChip(status) {
+    const tone = { active: 'success', pending_activation: 'info', revoked: 'error', lost: 'error', replaced: 'muted' }[status] || 'muted';
+    return `<span class="chip chip-${tone}">${escapeHtml(status.replace(/_/g, ' '))}</span>`;
+}
+
+function openIssueBadgeModal() {
+    staffModalShell('Issue badge', `
+        <form id="issue-badge-form" class="stack">
+            <label>Driver ID <input id="ib-driver" required placeholder="uuid from Approved Drivers"></label>
+            <p class="section-note">
+                A badge is an <strong>identity claim, not a credential</strong>. It can be photographed,
+                so it never unlocks a wallet, a profile or an account — and it is issued only to an
+                approved driver with a verified photo, because the photo is the control that defeats
+                badge sharing.
+            </p>
+            <button type="submit" class="btn-primary full-width">Issue badge</button>
+        </form>`);
+
+    document.getElementById('issue-badge-form').onsubmit = async (e) => {
+        e.preventDefault();
+        try {
+            const result = await adminFetch('/badges', 'POST', {
+                driverId: document.getElementById('ib-driver').value.trim(),
+            });
+            showBadgeIssuedModal(result.badge);
+            fetchBadges();
+        } catch { /* surfaced */ }
+    };
+}
+
+function showBadgeIssuedModal(badge) {
+    staffModalShell('Badge issued', `
+        <div class="detail-grid">
+            <div><span>Serial</span><code>${escapeHtml(badge.badgeSerial)}</code></div>
+            <div><span>Driver</span>${escapeHtml(badge.driverName)}</div>
+            <div><span>Unit</span>${escapeHtml(badge.unitNumber || '—')}</div>
+            <div><span>Six-digit code</span><code>${escapeHtml(badge.shortCode)}</code></div>
+        </div>
+        <h4>QR payload</h4>
+        <p class="section-note">
+            Opaque and signed. It carries no name, phone, plate or internal id, so a photographed
+            badge reveals nothing about the driver.
+        </p>
+        <pre class="token-box">${escapeHtml(badge.qrPayload)}</pre>
+        <p class="section-note">
+            Status is <strong>pending activation</strong>: the badge identifies nobody until somebody
+            confirms the physical card reached the right person.
+        </p>
+        <button class="btn-primary" onclick="closeStaffModal()">Done</button>`);
+}
+
+async function activateBadge(serial) {
+    try {
+        await adminFetch(`/badges/${serial}/activate`, 'POST', {});
+        showToast('Badge activated', 'success');
+        fetchBadges();
+    } catch { /* surfaced */ }
+}
+
+async function revokeBadge(serial) {
+    const reason = prompt('Revoke this badge.\n\nReason (required):');
+    if (reason == null) return;
+    if (!reason.trim()) return showToast('A reason is required', 'error');
+    try {
+        await adminFetch(`/badges/${serial}/revoke`, 'POST', { reason: reason.trim() });
+        showToast('Badge revoked', 'success');
+        fetchBadges();
+    } catch { /* surfaced */ }
 }
 
 document.addEventListener('DOMContentLoaded', () => {

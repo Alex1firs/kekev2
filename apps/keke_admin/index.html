@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Keke Admin | Dashboard</title>
-    <link rel="stylesheet" href="styles.css?v=4.0">
+    <link rel="stylesheet" href="styles.css?v=4.1">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 </head>
@@ -117,6 +117,15 @@
                 </li>
                 <li data-section="sos-alerts" class="danger-nav">
                     <i class="fas fa-exclamation-triangle" style="color: #ff4d4d;"></i> <span style="color: #ff4d4d;">SOS Alerts</span>
+                </li>
+                <li data-section="parks" data-requires-permission="park:read">
+                    <i class="fas fa-warehouse"></i> <span>Parks</span>
+                </li>
+                <li data-section="park-detail" class="hidden-nav" data-requires-permission="park:read">
+                    <i class="fas fa-map-location-dot"></i> <span>Park Detail</span>
+                </li>
+                <li data-section="badges" data-requires-permission="badge:read">
+                    <i class="fas fa-id-badge"></i> <span>Driver Badges</span>
                 </li>
                 <li data-section="staff" data-requires-permission="staff:read">
                     <i class="fas fa-user-shield"></i> <span>Staff</span>
@@ -511,6 +520,60 @@
                 </section>
 
                 <!-- Audit Log Section -->
+                <!-- Parks -->
+                <section id="parks" class="content-section hidden">
+                    <div class="staff-toolbar">
+                        <input type="search" id="park-search" placeholder="Search name, code or city">
+                        <select id="park-status-filter">
+                            <option value="">All statuses</option>
+                            <option value="draft">Draft</option>
+                            <option value="active">Active</option>
+                            <option value="inactive">Inactive</option>
+                            <option value="suspended">Suspended</option>
+                        </select>
+                        <button id="btn-new-park" class="btn-primary" data-requires-permission="park:create">
+                            <i class="fas fa-plus"></i> New park
+                        </button>
+                    </div>
+                    <div id="parks-grid" class="park-grid"></div>
+                </section>
+
+                <!-- Park detail -->
+                <section id="park-detail" class="content-section hidden">
+                    <button class="btn-small" onclick="switchSection('parks')">&larr; All parks</button>
+                    <div id="park-detail-body"></div>
+                </section>
+
+                <!-- Badges -->
+                <section id="badges" class="content-section hidden">
+                    <div class="staff-toolbar">
+                        <input type="search" id="badge-search" placeholder="Search serial or code">
+                        <select id="badge-status-filter">
+                            <option value="">All statuses</option>
+                            <option value="pending_activation">Pending activation</option>
+                            <option value="active">Active</option>
+                            <option value="revoked">Revoked</option>
+                            <option value="lost">Lost</option>
+                            <option value="replaced">Replaced</option>
+                        </select>
+                        <button id="btn-issue-badge" class="btn-primary" data-requires-permission="badge:issue">
+                            <i class="fas fa-plus"></i> Issue badge
+                        </button>
+                    </div>
+                    <div id="badge-counts" class="badge-counts"></div>
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Serial</th><th>Driver</th><th>Unit</th><th>Code</th>
+                                    <th>Status</th><th>Issued</th><th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="badge-list"></tbody>
+                        </table>
+                    </div>
+                </section>
+
                 <!-- Staff Management -->
                 <section id="staff" class="content-section hidden">
                     <div class="staff-toolbar">
@@ -683,6 +746,6 @@
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="live_requests.js?v=1.2"></script>
-    <script src="app.js?v=4.0"></script>
+    <script src="app.js?v=4.1"></script>
 </body>
 </html>

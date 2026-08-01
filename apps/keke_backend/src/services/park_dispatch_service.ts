@@ -47,6 +47,7 @@ import { maskPhoneNumber } from './contact_access_service';
 import { DriverRecommendationService } from './driver_recommendation_service';
 import { DriverPresenceService } from './driver_presence_service';
 import { DriverPresenceState, PresenceSource } from '../models/DriverPresence';
+import { ParkDispatchSwitch } from './park_dispatch_switch';
 
 export const ParkDispatchAuditAction = {
     PARK_JOB_CLAIMED: 'PARK_JOB_CLAIMED',
@@ -166,7 +167,31 @@ export class ParkDispatchService {
         const config = loadParkDispatchConfig();
         if (!config.enabled) return false;
 
+        /**
+         * The job row, once it exists.
+         *
+         * Everything after the insert — monitoring, the park broadcast, the
+         * passenger events — can in principle throw, and this method reports
+         * failure by returning false, on which the CALLER fails the ride. That
+         * would leave a live `offered` job pointing at a ride that is already
+         * `failed`: a dispatcher sees a card, works it, and the assignment is
+         * then correctly refused by the ride-status guard. No double assignment,
+         * but wasted time on a dead request and a row that lingers until it
+         * expires. So if anything downstream fails, the row goes with it.
+         */
+        let created: ParkDispatchJob | null = null;
+
         try {
+            /**
+             * The no-restart kill switch. Checked here, at the single doorway
+             * into the park phase, so flipping it stops new work immediately
+             * while jobs already claimed by a dispatcher run to completion.
+             *
+             * Inside the try: if this throws, the ride must still fail cleanly
+             * down the normal path rather than take an exception into dispatch.
+             */
+            if (await ParkDispatchSwitch.isDisabled()) return false;
+
             const ride = await AppDataSource.getRepository(Ride).findOne({ where: { rideId } });
             if (!ride) return false;
 
@@ -203,7 +228,7 @@ export class ParkDispatchService {
             const now = new Date();
             const waitedMs = Math.max(0, now.getTime() - new Date(ride.createdAt).getTime());
 
-            const job = await ParkDispatchJobRepository.save(ParkDispatchJobRepository.create({
+            const job = created = await ParkDispatchJobRepository.save(ParkDispatchJobRepository.create({
                 rideId,
                 parkId: chosen.park.parkId,
                 status: ParkJobStatus.OFFERED,
@@ -264,6 +289,25 @@ export class ParkDispatchService {
             console.error(JSON.stringify({
                 level: 'error', event: 'park_offer_failed', rideId, error: err?.message,
             }));
+
+            // Undo the row, so the job's state and the ride's agree. Best
+            // effort by definition: we are already on the failure path, and a
+            // cleanup that throws must not replace the original error.
+            if (created) {
+                try {
+                    // resolveIfLive, not an unconditional update: if a
+                    // dispatcher somehow claimed the job in the moment between
+                    // the insert and this cleanup, their claim wins.
+                    await ParkDispatchJobRepository.resolveIfLive(
+                        created.jobId, ParkJobStatus.CANCELLED, 'offer_failed_after_create',
+                    );
+                } catch (cleanupErr: any) {
+                    console.error(JSON.stringify({
+                        level: 'error', event: 'park_offer_cleanup_failed',
+                        rideId, jobId: created.jobId, error: cleanupErr?.message,
+                    }));
+                }
+            }
             return false;
         }
     }

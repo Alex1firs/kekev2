@@ -70,6 +70,16 @@
         </div>
     </header>
 
+    <!--
+      Shown when operations has paused Park Dispatch centrally. Without it, a
+      paused system and a quiet morning look identical from the park floor.
+    -->
+    <div id="paused" class="paused hidden" role="status">
+        <strong>New requests are paused.</strong>
+        <span id="paused-reason"></span>
+        <span class="paused-note">Requests already in your queue can still be assigned.</span>
+    </div>
+
     <main class="grid">
         <!-- Queue -->
         <section class="panel panel-queue">

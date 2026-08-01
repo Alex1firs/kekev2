@@ -305,6 +305,37 @@ describeDb('park dispatch fallback (database)', () => {
             expect(all).toHaveLength(1);
         });
 
+        /**
+         * Regression. The job row is inserted before the park is notified, and
+         * offerToPark reports failure by returning false — on which the CALLER
+         * fails the ride. A throw between those two points therefore used to
+         * leave a live `offered` job pointing at a ride that was already
+         * `failed`: the dispatcher saw a card for a dead request, worked it, and
+         * only found out when the assignment was refused.
+         *
+         * Found when a script called offerToPark from a process with no host
+         * registered, which is exactly the shape of the bug.
+         */
+        it('leaves no live job behind when notifying the park fails', async () => {
+            await makeReadyPark();
+            const ride = await makeSearchingRide();
+
+            const broken = { ...stubHost, emitToPark: () => { throw new Error('socket gone'); } };
+            ParkDispatchService.setHost(broken as any);
+            try {
+                expect(await ParkDispatchService.offerToPark(ride.rideId)).toBe(false);
+            } finally {
+                ParkDispatchService.setHost(stubHost as any);
+            }
+
+            expect(await ParkDispatchJobRepository.findLiveForRide(ride.rideId)).toBeNull();
+
+            const all = await ParkDispatchJobRepository.findAllForRide(ride.rideId);
+            expect(all).toHaveLength(1);
+            expect(all[0].status).toBe(ParkJobStatus.CANCELLED);
+            expect(all[0].resolutionReason).toBe('offer_failed_after_create');
+        });
+
         it('ranks the nearer park first', async () => {
             // A far park (still in radius) and a near one; the near one wins.
             const near = await makeReadyPark();

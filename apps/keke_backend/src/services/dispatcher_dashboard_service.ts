@@ -23,6 +23,7 @@ import { DriverPresenceService } from './driver_presence_service';
 import { DispatcherShiftService, ShiftDto } from './dispatcher_shift_service';
 import { ParkService, ParkDto } from './park_service';
 import { loadParkDispatchConfig } from '../config/park_dispatch_config';
+import { ParkDispatchSwitch } from './park_dispatch_switch';
 
 /** Everything the dispatcher's header strip shows. */
 export interface DispatcherCounters {
@@ -67,7 +68,10 @@ export interface DispatcherDashboard {
         canClaim: boolean;
         canAssign: boolean;
         canAdvanceRideLifecycle: false;
+        /** Env setting AND the runtime kill switch, together. */
         parkDispatchEnabled: boolean;
+        /** Why new work stopped arriving, when it has. */
+        pausedReason: string | null;
     };
     serverTime: string;
 }
@@ -104,7 +108,7 @@ export class DispatcherDashboardService {
     static async build(parkId: string, staffUserId: string): Promise<DispatcherDashboard> {
         const park = await ParkService.requirePark(parkId);
 
-        const [counts, queue, myShift, onDuty, presence, todayMetrics, drivers] = await Promise.all([
+        const [counts, queue, myShift, onDuty, presence, todayMetrics, drivers, killSwitch] = await Promise.all([
             ParkRepository.counts(park),
             ParkDispatchService.queueForPark(parkId),
             DispatcherShiftService.current(staffUserId),
@@ -112,6 +116,7 @@ export class DispatcherDashboardService {
             this.presenceBreakdown(parkId),
             ParkDispatchJobRepository.metrics(startOfToday(), parkId),
             ParkDispatchService.assignableDrivers(parkId),
+            ParkDispatchSwitch.state(),
         ]);
 
         const mine = queue.filter((c) => c.claimedByStaffId === staffUserId);
@@ -156,7 +161,14 @@ export class DispatcherDashboardService {
                 canClaim: myShift != null,
                 canAssign: myShift != null,
                 canAdvanceRideLifecycle: false,
-                parkDispatchEnabled: loadParkDispatchConfig().enabled,
+                /**
+                 * Both layers, collapsed into the one thing a dispatcher needs
+                 * to know: are new requests still going to arrive? Without
+                 * this, a killed switch looks exactly like a quiet morning,
+                 * and the dispatcher sits watching an empty queue.
+                 */
+                parkDispatchEnabled: loadParkDispatchConfig().enabled && !killSwitch.disabled,
+                pausedReason: killSwitch.disabled ? (killSwitch.reason ?? 'Paused by operations') : null,
             },
             serverTime: new Date().toISOString(),
         };

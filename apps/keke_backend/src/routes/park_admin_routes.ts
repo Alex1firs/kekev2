@@ -22,6 +22,8 @@ import { ParkDispatchJobRepository, LIVE_JOB_STATUSES } from '../repositories/pa
 import { ParkJobStatus } from '../models/ParkDispatchJob';
 import { loadParkDispatchConfig } from '../config/park_dispatch_config';
 import { DispatcherDashboardService } from '../services/dispatcher_dashboard_service';
+import { ParkDispatchSwitch } from '../services/park_dispatch_switch';
+import { AuditService } from '../services/audit_service';
 import { requireStaffPermission, requireRealStaff, StaffRequest, auditActorOf } from '../middleware/staff_auth';
 import { requireParkScope, staffParkScope } from '../middleware/park_scope';
 import { StaffPermission } from '../config/staff_permissions';
@@ -537,6 +539,69 @@ router.get('/park-dispatch/health', requireStaffPermission(StaffPermission.PARK_
         return res.json({ parks: await DispatcherDashboardService.allParkHealth() });
     } catch (err: any) {
         return fail(res, err, "We couldn't load park health.");
+    }
+});
+
+/**
+ * GET /admin/park-dispatch/switch — is Park Dispatch currently accepting work?
+ *
+ * Reports both layers: the deployed environment setting and the Redis override,
+ * because "why is nothing reaching the park?" has two possible answers and an
+ * operator should not have to shell into a container to tell them apart.
+ */
+router.get('/park-dispatch/switch', requireStaffPermission(StaffPermission.PARK_VIEW_METRICS, StaffPermission.MONITOR_READ), async (_req: StaffRequest, res: Response) => {
+    try {
+        const override = await ParkDispatchSwitch.state();
+        const envEnabled = loadParkDispatchConfig().enabled;
+        return res.json({
+            accepting: envEnabled && !override.disabled,
+            envEnabled,
+            override,
+        });
+    } catch (err: any) {
+        return fail(res, err, "We couldn't read the Park Dispatch switch.");
+    }
+});
+
+/**
+ * POST /admin/park-dispatch/switch — break-glass disable / re-enable.
+ *
+ * Body: { disabled: boolean, reason?: string }
+ *
+ * Gated on PARK_SUSPEND, which only SUPER_ADMIN and OPERATIONS_ADMIN hold — a
+ * dispatcher or supervisor cannot take the whole dispatch path offline.
+ *
+ * Deliberately NOT behind requireRealStaff: this is the control you reach for
+ * during an incident, and the shared operations key already carries
+ * PARK_SUSPEND. Every use is audited with whoever presented the credential.
+ */
+router.post('/park-dispatch/switch', requireStaffPermission(StaffPermission.PARK_SUSPEND), async (req: StaffRequest, res: Response) => {
+    try {
+        const disabled = req.body?.disabled === true;
+        const reason = String(req.body?.reason ?? '').trim();
+        if (disabled && reason.length < 3) {
+            return res.status(400).json({ error: 'Give a reason for disabling Park Dispatch.' });
+        }
+
+        const actor = auditActorOf(req.actor);
+        if (disabled) {
+            await ParkDispatchSwitch.disable(reason, actor.staffUserId);
+        } else {
+            await ParkDispatchSwitch.enable();
+        }
+
+        await AuditService.record({
+            actor,
+            action: disabled ? 'park_dispatch.disabled' : 'park_dispatch.enabled',
+            resourceType: 'park_dispatch',
+            resourceId: 'global',
+            reason: reason || null,
+            ...ctxOf(req),
+        });
+
+        return res.json({ ...(await ParkDispatchSwitch.state()), envEnabled: loadParkDispatchConfig().enabled });
+    } catch (err: any) {
+        return fail(res, err, "We couldn't change the Park Dispatch switch.");
     }
 });
 

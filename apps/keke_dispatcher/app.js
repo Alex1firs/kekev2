@@ -49,6 +49,8 @@ const S = {
     driverFilter: '',
     busy: false,
     lastPayloadAt: 0,
+    /** Server-declared capabilities, including whether new work is arriving. */
+    caps: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -360,6 +362,7 @@ async function refreshDashboard(initial = false) {
         const d = await api('/dispatcher/dashboard');
         S.park = d.park;
         S.counters = d.counters;
+        S.caps = d.capabilities || null;
         S.drivers = d.drivers || [];
         S.shift = d.myShift || S.shift;
         S.lastPayloadAt = Date.now();
@@ -418,11 +421,26 @@ function startTicker() {
 // ── Render ───────────────────────────────────────────────────────────────
 
 function render() {
+    renderPaused();
     renderHeader();
     renderCounters();
     renderQueue();
     renderDrivers();
     updateTitleBadge();
+}
+
+/**
+ * Park Dispatch can be paused centrally during an incident. When it is, the
+ * queue simply stops filling — which is indistinguishable from a quiet morning
+ * unless we say so. Claiming and assigning stay available, because jobs already
+ * in the queue must still be finished.
+ */
+function renderPaused() {
+    const paused = S.caps && S.caps.parkDispatchEnabled === false;
+    $('paused').classList.toggle('hidden', !paused);
+    if (paused) {
+        $('paused-reason').textContent = S.caps.pausedReason || 'Paused by operations';
+    }
 }
 
 function renderHeader() {

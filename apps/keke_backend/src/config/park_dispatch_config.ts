@@ -1,10 +1,17 @@
 /**
  * Park Dispatch fallback tuning.
  *
- * DEFAULT OFF. `PARK_DISPATCH_ENABLED` is false unless explicitly set, so
- * deploying this code changes nothing: `finalizeUnsuccessfulDispatch` takes the
- * exact path it takes today and a failed search still fails. Turning it on is a
- * deliberate, separate, reversible act — one environment variable, no deploy.
+ * DEFAULT ON as of the Monday launch. `PARK_DISPATCH_ENABLED` defaults to true;
+ * setting it to false restores the pre-Park behaviour exactly —
+ * `finalizeUnsuccessfulDispatch` takes the path it took before any of this
+ * existed and a failed search simply fails.
+ *
+ * Two ways to switch it off, because they cost different things:
+ *   - this variable, which needs a container restart (~10s of 502s on this
+ *     stack) but survives everything, including Redis being wiped;
+ *   - ParkDispatchSwitch, a Redis override that takes effect on the next
+ *     request with no restart at all. See services/park_dispatch_switch.ts.
+ * The override can only disable, never enable.
  *
  * Every window here sits DOWNSTREAM of direct dispatch. Nothing in this file can
  * shorten, lengthen or otherwise influence a DispatchRun: by the time any of it
@@ -27,14 +34,32 @@ function num(name: string, fallback: number): number {
     return parsed;
 }
 
+/**
+ * Accepts the spellings people actually type into a compose file.
+ *
+ * This matters more now that PARK_DISPATCH_ENABLED defaults to true: under a
+ * strict `=== 'true'` test, an operator writing `PARK_DISPATCH_ENABLED=1` to
+ * turn it ON would have silently turned it OFF. An unrecognised value keeps the
+ * default and says so, rather than guessing.
+ */
 function bool(name: string, fallback: boolean): boolean {
     const raw = process.env[name];
     if (raw == null || raw.trim() === '') return fallback;
-    return raw.trim().toLowerCase() === 'true';
+    const v = raw.trim().toLowerCase();
+    if (['true', '1', 'yes', 'on'].includes(v)) return true;
+    if (['false', '0', 'no', 'off'].includes(v)) return false;
+    console.warn(`[park-dispatch-config] ${name}="${raw}" is not a boolean — using ${fallback}`);
+    return fallback;
 }
 
 export interface ParkDispatchConfig {
-    /** Master switch. False means the fallback is never consulted at all. */
+    /**
+     * Master switch. False means the fallback is never consulted at all.
+     *
+     * This is only the ENVIRONMENT half of the answer — callers that decide
+     * whether a ride may enter the park phase must also consult
+     * ParkDispatchSwitch, which can disable without a restart.
+     */
     enabled: boolean;
 
     /**
@@ -105,7 +130,7 @@ export interface ParkDispatchConfig {
 
 export function loadParkDispatchConfig(): ParkDispatchConfig {
     return {
-        enabled: bool('PARK_DISPATCH_ENABLED', false),
+        enabled: bool('PARK_DISPATCH_ENABLED', true),
         claimWindowMs: num('PARK_CLAIM_WINDOW_MS', 25_000),
         assignWindowMs: num('PARK_ASSIGN_WINDOW_MS', 45_000),
         maxParksPerRide: Math.max(1, Math.floor(num('PARK_MAX_PARKS_PER_RIDE', 1))),

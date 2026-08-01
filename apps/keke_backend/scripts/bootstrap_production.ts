@@ -31,6 +31,7 @@ import { StaffRole } from '../src/config/staff_permissions';
 import { StaffAuthService } from '../src/services/staff_auth_service';
 import { loadParkDispatchConfig } from '../src/config/park_dispatch_config';
 import { ParkDispatchSwitch } from '../src/services/park_dispatch_switch';
+import { activationLink, activationInstructions } from '../src/utils/activation_link';
 import { DeepPartial, Repository } from 'typeorm';
 
 /**
@@ -140,7 +141,18 @@ async function ensureStaff(
             setupTokenExpiresAt: expiresAt,
         }));
 
-        handover.push(`${role.padEnd(18)} ${email}\n      setup token: ${token}`);
+        /*
+         * A link, not a token. Whoever runs this has to get somebody into an
+         * account; handing them a bare string means explaining where to type
+         * it. The link opens the page that sets the password, and that page is
+         * the only thing that ever sees it.
+         */
+        handover.push(
+            `${role}\n`
+            + `      ${email}\n`
+            + `      ${activationLink(token)}\n`
+            + `      ${activationInstructions(expiresAt)}`,
+        );
         ok(`created ${role} ${email} (invited)`);
     } else {
         ok(`${role} ${email} exists (${staff.status})`);

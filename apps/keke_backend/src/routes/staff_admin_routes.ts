@@ -27,6 +27,7 @@ import {
 import { StaffPermission, roleMatrixSnapshot, isStaffRole, StaffRole } from '../config/staff_permissions';
 import { errBody, ErrorCode, AppError } from '../utils/errors';
 import { maskPhoneNumber } from '../services/contact_access_service';
+import { activationLink, activationInstructions } from '../utils/activation_link';
 
 const router = Router();
 
@@ -125,6 +126,15 @@ router.post('/staff', requireRealStaff, requireStaffPermission(StaffPermission.S
         );
         return res.status(201).json({
             staff: result.staff,
+            /*
+             * A link, not just a token. The token alone is a string somebody
+             * has to explain and transcribe; the link is a thing you send.
+             * Both are returned — the raw token so an integration can build
+             * its own URL, the link because that is what a supervisor pastes
+             * into WhatsApp.
+             */
+            activationLink: activationLink(result.setupToken),
+            activationInstructions: activationInstructions(result.setupTokenExpiresAt),
             setupToken: result.setupToken,
             setupTokenExpiresAt: result.setupTokenExpiresAt,
             note: 'Deliver this setup link to the staff member. It is shown once and cannot be retrieved again.',
@@ -209,6 +219,15 @@ router.post('/staff/:id/reset-credentials', requireRealStaff, requireStaffPermis
         );
         return res.json({
             staff: result.staff,
+            /*
+             * A link, not just a token. The token alone is a string somebody
+             * has to explain and transcribe; the link is a thing you send.
+             * Both are returned — the raw token so an integration can build
+             * its own URL, the link because that is what a supervisor pastes
+             * into WhatsApp.
+             */
+            activationLink: activationLink(result.setupToken),
+            activationInstructions: activationInstructions(result.setupTokenExpiresAt),
             setupToken: result.setupToken,
             setupTokenExpiresAt: result.setupTokenExpiresAt,
             note: 'All existing sessions have been ended. Deliver this reset link to the staff member.',

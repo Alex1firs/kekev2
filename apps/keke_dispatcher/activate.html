@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#12161d">
+    <meta name="color-scheme" content="dark">
+    <!-- An activation link must never be indexed or sent to a third party. -->
+    <meta name="robots" content="noindex, nofollow">
+    <meta name="referrer" content="no-referrer">
+    <title>Set your password · KekeRide Park Dispatch</title>
+    <link rel="icon" type="image/png" sizes="64x64" href="icons/favicon-64.png">
+    <link rel="stylesheet" href="styles.css?v=5.1">
+</head>
+<!--
+  Where a one-time activation link is redeemed.
+
+  Until this page existed, `createStaff` and `resetCredentials` minted a token
+  and there was nowhere to spend it — a supervisor got a string with no way to
+  send somebody anywhere. This is that somewhere.
+
+  The token arrives in the query string and is never sent onward: no referrer,
+  no indexing, and it is stripped from the address bar the moment the page
+  loads so it does not sit in browser history or get read over a shoulder.
+-->
+<body>
+<div class="login-screen">
+    <div class="login-card">
+        <div class="brand"><span class="brand-mark">◆</span> KekeRide <strong>Park Dispatch</strong></div>
+
+        <div id="intro">
+            <p class="login-sub" id="who">Set the password for your staff account.</p>
+
+            <form id="form">
+                <label>New password
+                    <input type="password" id="pw1" autocomplete="new-password" required
+                           minlength="12" placeholder="At least 12 characters">
+                </label>
+                <label>Type it again
+                    <input type="password" id="pw2" autocomplete="new-password" required>
+                </label>
+
+                <p class="login-foot" id="rules">
+                    At least 12 characters. Choose something you can type quickly on a
+                    phone but nobody else would guess — three unrelated words work well.
+                </p>
+
+                <button type="submit" id="go" class="btn btn-primary btn-block">Set password</button>
+            </form>
+
+            <p id="err" class="login-error hidden"></p>
+        </div>
+
+        <div id="done" class="hidden">
+            <p class="login-sub">
+                <strong>Your password is set.</strong>
+                Nobody else knows it — not your supervisor, not KekeRide.
+            </p>
+            <a class="btn btn-primary btn-block" href="./index.html">Sign in</a>
+        </div>
+
+        <p class="login-foot">Your actions are recorded against your name.</p>
+    </div>
+</div>
+
+<script src="activate.js"></script>
+</body>
+</html>

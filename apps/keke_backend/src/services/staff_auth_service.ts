@@ -232,15 +232,24 @@ export class StaffAuthService {
     }
 
     static async login(args: {
-        /** Email address or phone number. `email` is accepted as an alias. */
-        identifier: string;
+        /**
+         * Email address or phone number.
+         *
+         * `email` remains accepted as an alias so every existing caller keeps
+         * working — this signature is used from routes, tests and scripts, and
+         * a rename that silently threw at runtime would be a poor trade for a
+         * tidier parameter name.
+         */
+        identifier?: string;
+        email?: string;
         password: string;
         ipAddress?: string | null;
         userAgent?: string | null;
         deviceId?: string | null;
     }): Promise<{ staff: StaffUser; roles: StaffRole[]; accessToken: string; refreshToken: string; session: StaffSession }> {
         const repo = AppDataSource.getRepository(StaffUser);
-        const raw = args.identifier.trim();
+        const raw = (args.identifier ?? args.email ?? '').trim();
+        if (!raw) throw new StaffAuthError('invalid_credentials');
 
         /*
          * Email or phone. Which one is decided by shape, not by a toggle the

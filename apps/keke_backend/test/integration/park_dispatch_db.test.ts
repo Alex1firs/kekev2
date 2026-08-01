@@ -21,6 +21,8 @@ import { DriverPresenceEvent } from '../../src/models/DriverPresenceEvent';
 import { ParkDriverRoster } from '../../src/models/ParkDriverRoster';
 import { DriverBadge } from '../../src/models/DriverBadge';
 import { ParkDispatchJob, ParkJobStatus, ParkAssignmentMode } from '../../src/models/ParkDispatchJob';
+// The queue card now reports what direct dispatch did, from this trail.
+import { DispatchEvent } from '../../src/models/DispatchEvent';
 import { DriverProfile, DriverStatus } from '../../src/models/DriverProfile';
 import { User, UserRole } from '../../src/models/User';
 import { Wallet } from '../../src/models/Wallet';
@@ -170,7 +172,7 @@ describeDb('park dispatch fallback (database)', () => {
             entities: [
                 Park, ParkZone, DispatcherShift, DriverPresence, DriverPresenceEvent,
                 ParkDriverRoster, DriverBadge, ParkDispatchJob, DriverProfile, User,
-                Wallet, Ride, StaffUser, StaffRoleAssignment, StaffAuditEvent,
+                Wallet, Ride, StaffUser, StaffRoleAssignment, StaffAuditEvent, DispatchEvent,
             ],
             synchronize: true, dropSchema: true,
         });

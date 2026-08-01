@@ -2245,8 +2245,76 @@ function fmtMs(ms) {
     return `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
+/**
+ * The runtime suspension control.
+ *
+ * Only rendered for staff who hold `park:suspend`, which the shared admin key
+ * is denied outright — a shared secret has no human behind it and this action's
+ * whole point is being attributable.
+ */
+async function fetchParkDispatchSwitch() {
+    const panel = document.getElementById('pd-switch-panel');
+    if (!panel) return;
+
+    if (!can('park:suspend')) { panel.classList.add('hidden'); return; }
+    panel.classList.remove('hidden');
+
+    try {
+        const st = await adminFetch('/park-dispatch/switch');
+        const suspended = st.override?.disabled === true;
+
+        document.getElementById('btn-pd-suspend').classList.toggle('hidden', suspended);
+        document.getElementById('btn-pd-resume').classList.toggle('hidden', !suspended);
+        document.getElementById('pd-switch-reason').classList.toggle('hidden', suspended);
+
+        const state = document.getElementById('pd-switch-state');
+        if (!st.envEnabled) {
+            // The environment has it off. Nothing here can turn that back on,
+            // and pretending otherwise would send someone hunting the wrong fix.
+            state.innerHTML = '<strong>Disabled in the environment.</strong> '
+                + 'PARK_DISPATCH_ENABLED is false; this control cannot switch it on. '
+                + 'That needs a configuration change and a restart.';
+        } else if (suspended) {
+            const who = st.override.setBy || 'unknown';
+            const when = st.override.setAt ? new Date(st.override.setAt).toLocaleString() : 'unknown time';
+            state.innerHTML = `<strong>Suspended.</strong> ${escapeHtml(st.override.reason || 'no reason recorded')}`
+                + `<br><small>By ${escapeHtml(who)} at ${escapeHtml(when)}</small>`;
+        } else {
+            state.innerHTML = '<strong>Running.</strong> New requests are reaching parks normally.';
+        }
+    } catch (err) {
+        document.getElementById('pd-switch-state').textContent =
+            `Could not read the switch: ${err.message}`;
+    }
+}
+
+document.getElementById('btn-pd-suspend')?.addEventListener('click', async () => {
+    const reason = document.getElementById('pd-switch-reason').value.trim();
+    if (reason.length < 3) {
+        showToast('Give a reason — it is recorded against your name.', 'error');
+        return;
+    }
+    if (!confirm('Suspend new park requests?\n\nRequests already taken by a dispatcher can still be assigned. This does not affect rides already assigned.')) return;
+    try {
+        await adminFetch('/park-dispatch/switch', 'POST', { disabled: true, reason });
+        showToast('Park Dispatch suspended.', 'success');
+        document.getElementById('pd-switch-reason').value = '';
+        await fetchParkDispatchSwitch();
+    } catch (err) { showToast(err.message, 'error'); }
+});
+
+document.getElementById('btn-pd-resume')?.addEventListener('click', async () => {
+    if (!confirm('Resume Park Dispatch? New requests will start reaching parks again.')) return;
+    try {
+        await adminFetch('/park-dispatch/switch', 'POST', { disabled: false });
+        showToast('Park Dispatch resumed.', 'success');
+        await fetchParkDispatchSwitch();
+    } catch (err) { showToast(err.message, 'error'); }
+});
+
 async function fetchParkDispatch() {
     if (!can('park:read')) return;
+    fetchParkDispatchSwitch();
     const hours = document.getElementById('pd-window')?.value || '24';
     try {
         const data = await adminFetch(`/park-dispatch/overview?hours=${hours}`);

@@ -559,6 +559,36 @@
                         <span id="pd-flag" class="chip chip-muted">—</span>
                     </div>
 
+                    <!--
+                      The runtime suspension control.
+
+                      Separate from the environment variable, which needs a
+                      container restart. This takes effect on the next request,
+                      which is what an incident actually needs. It can only
+                      SUSPEND — it cannot switch Park Dispatch on when the
+                      deployment has it off.
+                    -->
+                    <div id="pd-switch-panel" class="panel-card hidden">
+                        <h4>Park Dispatch suspension</h4>
+                        <p class="section-note">
+                            Suspending stops <strong>new</strong> requests reaching parks.
+                            Requests a dispatcher has already taken can still be assigned, and
+                            rides already assigned are untouched — cutting those off would strand
+                            passengers who are being served perfectly well.
+                        </p>
+                        <div id="pd-switch-state" class="section-note"></div>
+                        <div class="staff-toolbar">
+                            <input type="text" id="pd-switch-reason" maxlength="200"
+                                   placeholder="Why are you suspending it? (required, recorded)">
+                            <button id="btn-pd-suspend" class="btn-danger">
+                                <i class="fas fa-pause"></i> Suspend new requests
+                            </button>
+                            <button id="btn-pd-resume" class="btn-primary hidden">
+                                <i class="fas fa-play"></i> Resume
+                            </button>
+                        </div>
+                    </div>
+
                     <div id="pd-metrics" class="badge-counts"></div>
 
                     <h4>Live queue</h4>

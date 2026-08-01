@@ -18,6 +18,8 @@ import { DispatcherShift, DispatcherShiftStatus } from '../../src/models/Dispatc
 import { DriverPresence, DriverPresenceState, PresenceSource } from '../../src/models/DriverPresence';
 import { DriverPresenceEvent } from '../../src/models/DriverPresenceEvent';
 import { ParkDriverRoster, RosterStatus } from '../../src/models/ParkDriverRoster';
+// The shift summary counts this dispatcher's park jobs before allowing a close.
+import { ParkDispatchJob } from '../../src/models/ParkDispatchJob';
 import { DriverBadge, BadgeStatus } from '../../src/models/DriverBadge';
 import { DriverProfile, DriverStatus } from '../../src/models/DriverProfile';
 import { User, UserRole } from '../../src/models/User';
@@ -107,6 +109,7 @@ describeDb('park operations (database)', () => {
             url: TEST_DB,
             schema: 'park_ops_test',
             entities: [
+                ParkDispatchJob,
                 Park, ParkZone, DispatcherShift, DriverPresence, DriverPresenceEvent,
                 ParkDriverRoster, DriverBadge, DriverProfile, User, Wallet, Ride,
                 StaffUser, StaffRoleAssignment, StaffAuditEvent,

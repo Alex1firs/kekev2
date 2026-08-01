@@ -65,6 +65,21 @@ async function main() {
         body:JSON.stringify({identifier:'chidi@kekeride.test',password:'KekeDemo-Pass99'})});
         const d=await r.json(); sessionStorage.setItem('KD_TOKEN',d.accessToken);
         sessionStorage.setItem('KD_REFRESH',d.refreshToken); sessionStorage.setItem('KD_SOUND','off');})()`, true);
+    // Open a shift if this dispatcher is not already on one, so the script is
+    // self-sufficient and can be re-run without hand-setup.
+    const shiftState = await js(`(async () => {
+        const t = sessionStorage.getItem('KD_TOKEN');
+        const me = await (await fetch('/api/v1/dispatcher/me', { headers: { Authorization: 'Bearer ' + t } })).json();
+        if (me.onDuty) return 'already';
+        const park = (me.assignedParks || []).find(p => p.status === 'active');
+        if (!park) return 'no park';
+        const r = await fetch('/api/v1/dispatcher/shifts/open', {
+            method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + t },
+            body: JSON.stringify({ parkId: park.parkId }) });
+        return r.ok ? 'opened' : 'failed ' + r.status;
+    })()`, true);
+    if (/already|opened/.test(shiftState)) ok(`shift ready (${shiftState})`); else bad(`could not open a shift: ${shiftState}`);
+
     await send('Page.navigate', { url: BASE }); await sleep(6000);
 
     const ready = await js(`!document.getElementById('workspace').classList.contains('hidden')`);

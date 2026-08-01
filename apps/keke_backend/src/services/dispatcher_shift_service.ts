@@ -22,6 +22,7 @@ import { StaffUser } from '../models/StaffUser';
 import { AppDataSource } from '../config/data_source';
 import { DispatcherShiftRepository } from '../repositories/dispatcher_shift_repository';
 import { ParkRepository } from '../repositories/park_repository';
+import { ParkDispatchJob } from '../models/ParkDispatchJob';
 import { ParkService } from './park_service';
 import { AuditService, AuditActor } from './audit_service';
 import { AppError, ErrorCode } from '../utils/errors';
@@ -54,6 +55,28 @@ export interface ShiftDto {
     durationMinutes: number;
     requestsReceived: number;
     assignmentsMade: number;
+}
+
+/** What a dispatcher is shown before they sign off. */
+export interface ShiftSummary {
+    shiftId: string;
+    parkId: string;
+    startedAt: Date;
+    durationMinutes: number;
+
+    assigned: number;
+    skipped: number;
+    rejected: number;
+    escalated: number;
+    expired: number;
+    /** Mean offer-to-claim across this shift's requests. */
+    avgResponseSeconds: number | null;
+
+    /** Live requests this dispatcher still holds. Blocks a quiet sign-off. */
+    myUnresolved: number;
+    /** Live requests anywhere at this park, held by anyone. */
+    parkUnresolved: number;
+    unresolved: Array<{ jobId: string; rideId: string; status: string; claimedAt: Date | null }>;
 }
 
 export class DispatcherShiftService {
@@ -172,14 +195,103 @@ export class DispatcherShiftService {
         return this.toDto(shift, { parkName: park.name, parkCode: park.code });
     }
 
-    /** Close one's own shift. */
+    /**
+     * What this shift did, and what it is about to leave behind.
+     *
+     * Read-only, so a dispatcher can be shown the consequences of signing off
+     * BEFORE they sign off rather than after.
+     */
+    static async summary(staffUserId: string): Promise<ShiftSummary> {
+        const shift = await DispatcherShiftRepository.findOpenForStaff(staffUserId);
+        if (!shift) throw new AppError(404, ErrorCode.NOT_FOUND, 'You do not have an open shift.');
+
+        const since = new Date(shift.startedAt);
+        const jobs = AppDataSource.getRepository(ParkDispatchJob);
+
+        const [mine, live] = await Promise.all([
+            jobs.createQueryBuilder('j')
+                .select('j.status', 'status')
+                .addSelect('COUNT(*)', 'count')
+                .addSelect('AVG(j."responseTimeMs")', 'avgResponseMs')
+                .where('j."claimedByStaffId" = :staffUserId', { staffUserId })
+                .andWhere('j."claimedAt" >= :since', { since })
+                .groupBy('j.status')
+                .getRawMany<{ status: string; count: string; avgResponseMs: string | null }>(),
+
+            // Everything still live at this park — not only this dispatcher's.
+            // Signing off with somebody else's unclaimed request on the board
+            // is still leaving a passenger waiting if nobody else is on duty.
+            jobs.createQueryBuilder('j')
+                .where('j."parkId" = :parkId', { parkId: shift.parkId })
+                .andWhere('j.status IN (:...live)', { live: ['offered', 'claimed', 'pending_acceptance'] })
+                .getMany(),
+        ]);
+
+        const countOf = (status: string) => Number(mine.find((m) => m.status === status)?.count ?? 0);
+        const responses = mine.map((m) => Number(m.avgResponseMs)).filter((n) => Number.isFinite(n) && n > 0);
+
+        const minesLive = live.filter((j) => j.claimedByStaffId === staffUserId);
+
+        return {
+            shiftId: shift.shiftId,
+            parkId: shift.parkId,
+            startedAt: shift.startedAt,
+            durationMinutes: Math.round((Date.now() - new Date(shift.startedAt).getTime()) / 60_000),
+
+            assigned: countOf('assigned'),
+            skipped: countOf('skipped'),
+            rejected: countOf('rejected'),
+            escalated: countOf('escalated'),
+            expired: countOf('expired'),
+            avgResponseSeconds: responses.length
+                ? Math.round(responses.reduce((a, b) => a + b, 0) / responses.length / 1000)
+                : null,
+
+            /*
+             * The two numbers that decide whether this shift may simply end.
+             * `myUnresolved` is work this dispatcher took responsibility for
+             * and has not finished; `parkUnresolved` is everything still live
+             * at the park, which matters when nobody else is on duty.
+             */
+            myUnresolved: minesLive.length,
+            parkUnresolved: live.length,
+            unresolved: minesLive.map((j) => ({
+                jobId: j.jobId,
+                rideId: j.rideId,
+                status: j.status,
+                claimedAt: j.claimedAt,
+            })),
+        };
+    }
+
+    /**
+     * Close one's own shift.
+     *
+     * Refuses while this dispatcher still holds live requests, unless they
+     * explicitly hand over. A shift that ends quietly with a claimed request
+     * still on the board leaves a passenger waiting on somebody who has gone
+     * home — the job would eventually expire, but "eventually" is measured in
+     * a passenger's patience.
+     *
+     * `handoverNotes` is what makes it deliberate: state who is taking over, or
+     * release the requests first.
+     */
     static async close(
         actor: AuditActor,
-        input: { handoverNotes?: string | null },
+        input: { handoverNotes?: string | null; force?: boolean },
         ctx: { ipAddress?: string | null; userAgent?: string | null; correlationId?: string | null } = {},
     ): Promise<ShiftDto> {
         const shift = await DispatcherShiftRepository.findOpenForStaff(actor.staffUserId);
         if (!shift) throw new AppError(404, ErrorCode.NOT_FOUND, 'You do not have an open shift.');
+
+        const summary = await this.summary(actor.staffUserId);
+        if (summary.myUnresolved > 0 && !input.handoverNotes?.trim() && !input.force) {
+            throw new AppError(409, ErrorCode.VALIDATION_ERROR,
+                summary.myUnresolved === 1
+                    ? 'You still have 1 request in hand. Finish or release it, or write a handover note saying who is taking it.'
+                    : `You still have ${summary.myUnresolved} requests in hand. `
+                        + 'Finish or release them, or write a handover note saying who is taking them.');
+        }
 
         const closed = await DispatcherShiftRepository.closeIfOpen(shift.shiftId, {
             endedAt: new Date(),
@@ -197,7 +309,13 @@ export class DispatcherShiftService {
             resourceType: 'DISPATCHER_SHIFT',
             resourceId: shift.shiftId,
             parkId: shift.parkId,
-            metadata: { durationMinutes: Math.round((Date.now() - new Date(shift.startedAt).getTime()) / 60_000) },
+            metadata: {
+                durationMinutes: Math.round((Date.now() - new Date(shift.startedAt).getTime()) / 60_000),
+                // Recorded so a shift handed over with work outstanding is
+                // visible later, not just at the moment it happened.
+                unresolvedAtClose: summary.myUnresolved,
+                assigned: summary.assigned,
+            },
             ...ctx,
         });
 

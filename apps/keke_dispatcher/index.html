@@ -129,6 +129,15 @@
         <span>The board below is the last thing we heard from the server. Do not assign from it.</span>
     </div>
 
+    <!--
+      Stays up while any request is unanswered. The chime can be missed in a
+      loud park; a banner that will not go away until somebody acts cannot be.
+    -->
+    <div id="waiting-bar" class="bar bar-waiting hidden" role="status">
+        <strong></strong>
+        <span></span>
+    </div>
+
     <!-- A new build is waiting. Never applied mid-shift without asking. -->
     <div id="update-bar" class="bar bar-update hidden" role="status">
         <span><strong>An update is ready.</strong> It will apply when you reload.</span>
@@ -218,6 +227,34 @@
 
         <button id="sheet-confirm" class="btn btn-primary btn-block btn-tall">Assign ride</button>
         <button id="sheet-cancel" class="btn btn-ghost btn-block">Cancel</button>
+    </div>
+</div>
+
+<!--
+  Shift sign-off.
+
+  Deliberately not a one-tap "End shift". A dispatcher walking away is the last
+  moment anyone can act on a request still sitting on the board, so the numbers
+  and the outstanding work are put in front of them first.
+-->
+<div id="shift-end" class="sheet-scrim hidden" role="dialog" aria-modal="true" aria-labelledby="shift-end-title">
+    <div class="sheet">
+        <div id="shift-end-title" class="sheet-driver-name">End your shift</div>
+        <div id="shift-end-duration" class="sheet-driver-unit"></div>
+
+        <div class="sheet-trip" id="shift-end-stats"></div>
+
+        <div id="shift-end-warning" class="sheet-mode sheet-mode-verbal hidden"></div>
+
+        <label id="shift-end-handover-wrap" class="hidden">Handover note
+            <input type="text" id="shift-end-handover" maxlength="200"
+                   placeholder="Who is taking these requests?">
+        </label>
+
+        <p id="shift-end-error" class="login-error hidden"></p>
+
+        <button id="shift-end-confirm" class="btn btn-primary btn-block btn-tall">End shift</button>
+        <button id="shift-end-cancel" class="btn btn-ghost btn-block">Stay on shift</button>
     </div>
 </div>
 

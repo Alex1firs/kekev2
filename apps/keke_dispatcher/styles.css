@@ -262,6 +262,12 @@ kbd {
     color: #fecdd3;
 }
 .bar-offline span { color: var(--text-dim); }
+.bar-waiting {
+    background: rgba(255,193,7,0.14);
+    border: 1px solid rgba(255,193,7,0.5);
+    color: #fde68a;
+}
+.bar-waiting span { color: var(--text-dim); }
 .bar-update {
     background: rgba(56,189,248,0.12);
     border: 1px solid rgba(56,189,248,0.45);

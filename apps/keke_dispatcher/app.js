@@ -67,14 +67,44 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
 
 // ── API ──────────────────────────────────────────────────────────────────
 
-async function api(path, method = 'GET', body) {
-    const doFetch = () => fetch(`${API_ROOT}${path}`, {
-        method,
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${S.accessToken}` },
-        body: body ? JSON.stringify(body) : undefined,
-    });
+/**
+ * Every request is bounded.
+ *
+ * On a park tablet a stalled connection does not fail, it hangs — and a fetch
+ * with no timeout leaves the button disabled and the dispatcher staring at
+ * "Assigning…" with no idea whether it worked. A bounded request turns that
+ * into a stated outcome they can act on.
+ *
+ * 12s: comfortably longer than any of these endpoints takes on a bad
+ * connection, short enough that nobody stands there wondering.
+ */
+const REQUEST_TIMEOUT_MS = 12_000;
 
-    let res = await doFetch();
+async function api(path, method = 'GET', body) {
+    const doFetch = () => {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+        return fetch(`${API_ROOT}${path}`, {
+            method,
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${S.accessToken}` },
+            body: body ? JSON.stringify(body) : undefined,
+            signal: controller.signal,
+        }).finally(() => clearTimeout(timer));
+    };
+
+    let res;
+    try {
+        res = await doFetch();
+    } catch (err) {
+        // Abort or network failure. Surfaced with no `status`, which callers
+        // read as "outcome unknown" rather than "it failed".
+        const wrapped = new Error(err.name === 'AbortError'
+            ? 'The server did not answer in time.'
+            : 'Could not reach the server.');
+        wrapped.status = 0;
+        throw wrapped;
+    }
+
     // One transparent refresh. A dispatcher mid-shift should never be dumped to
     // a login screen because an access token aged out.
     if (res.status === 401 && await refreshSession()) res = await doFetch();
@@ -151,6 +181,67 @@ function systemNotify(title, body) {
         const n = new Notification(title, { body, tag: 'keke-dispatch', renotify: true, requireInteraction: false });
         n.onclick = () => { window.focus(); n.close(); };
     } catch { /* not fatal */ }
+}
+
+/*
+ * ── Unanswered requests keep asking ─────────────────────────────────────
+ *
+ * A single chime is missed: a park is loud, the tablet is face-down, the
+ * dispatcher is talking to a driver. So an unclaimed request re-alerts.
+ *
+ * It stops. Three reminders, then silence, and any acknowledgement — claiming,
+ * skipping, or simply touching the screen — ends it immediately. An alarm that
+ * cannot be switched off gets the volume turned down for the whole shift, and
+ * then nothing is heard again.
+ */
+const REALERT_INTERVAL_MS = 25_000;
+const REALERT_LIMIT = 3;
+let realertTimer = null;
+let realertCount = 0;
+
+function unansweredRequests() {
+    return S.queue.filter((c) => !c.claimedByStaffId && c.status !== 'pending_acceptance');
+}
+
+function startRealert() {
+    if (realertTimer) return;
+    realertCount = 0;
+    realertTimer = setInterval(() => {
+        const waiting = unansweredRequests();
+        if (waiting.length === 0 || realertCount >= REALERT_LIMIT) { stopRealert(); return; }
+        realertCount += 1;
+        chime(true);
+        buzz([160, 90, 160]);
+        const oldest = Math.max(...waiting.map((c) => c.waitingSeconds || 0));
+        systemNotify(
+            `${waiting.length} request${waiting.length === 1 ? '' : 's'} waiting`,
+            `Longest wait ${fmtWait(oldest)}. Nobody has taken ${waiting.length === 1 ? 'it' : 'them'} yet.`,
+        );
+    }, REALERT_INTERVAL_MS);
+}
+
+function stopRealert() {
+    if (realertTimer) clearInterval(realertTimer);
+    realertTimer = null;
+    realertCount = 0;
+}
+
+/** Any deliberate interaction counts as "I have seen it". */
+['pointerdown', 'keydown'].forEach((evt) =>
+    document.addEventListener(evt, () => { if (realertTimer) stopRealert(); }, { passive: true }));
+
+/** The banner that stays up while anything is unanswered. */
+function renderPendingBanner() {
+    const waiting = unansweredRequests();
+    const bar = $('waiting-bar');
+    if (waiting.length === 0) { bar.classList.add('hidden'); stopRealert(); return; }
+
+    const oldest = Math.max(...waiting.map((c) => c.waitingSeconds || 0));
+    bar.classList.remove('hidden');
+    bar.querySelector('strong').textContent =
+        `${waiting.length} request${waiting.length === 1 ? '' : 's'} not taken`;
+    bar.querySelector('span').textContent = `Longest wait ${fmtWait(oldest)}.`;
+    startRealert();
 }
 
 /** The queue depth in the tab title, for a dispatcher watching another tab. */
@@ -559,15 +650,92 @@ $('shift-start').addEventListener('click', async () => {
 
 $('shift-signout').addEventListener('click', signOut);
 
+/*
+ * ── Signing off ─────────────────────────────────────────────────────────
+ *
+ * Not one tap. A dispatcher leaving is the last moment anybody can act on a
+ * request still on the board, so the shift's numbers and its outstanding work
+ * go in front of them first — and the server refuses a quiet sign-off while
+ * they still hold live requests.
+ */
 $('btn-end-shift').addEventListener('click', async () => {
-    if (S.queue.some((c) => c.claimedByStaffId === S.me.staffUserId)) {
-        toast('Finish or hand back your claimed requests first.', 'warn');
-        return;
-    }
     try {
-        await api('/dispatcher/shifts/close', 'POST', { handoverNotes: null });
-        location.reload();
-    } catch (err) { toast(err.message, 'error'); }
+        const { summary } = await api('/dispatcher/shifts/summary');
+        showShiftEnd(summary);
+    } catch (err) {
+        toast(err.message, 'error');
+    }
+});
+
+function showShiftEnd(summary) {
+    const hours = Math.floor(summary.durationMinutes / 60);
+    const mins = summary.durationMinutes % 60;
+    $('shift-end-duration').textContent =
+        `${S.park?.name || 'this park'} \u00b7 on duty ${hours ? `${hours}h ` : ''}${mins}m`;
+
+    const rows = [
+        ['Rides assigned', summary.assigned],
+        ['Skipped', summary.skipped],
+        ['Escalated', summary.escalated],
+        ['Rejected', summary.rejected],
+        ['Expired before filling', summary.expired],
+        ['Average response', summary.avgResponseSeconds == null ? '\u2014' : `${summary.avgResponseSeconds}s`],
+    ];
+    $('shift-end-stats').innerHTML = rows
+        .map(([label, value]) => `<div class="sheet-row"><span>${esc(label)}</span><b>${esc(value)}</b></div>`)
+        .join('');
+
+    const warn = $('shift-end-warning');
+    const handover = $('shift-end-handover-wrap');
+
+    if (summary.myUnresolved > 0) {
+        warn.classList.remove('hidden');
+        warn.innerHTML = `<b>${summary.myUnresolved} request${summary.myUnresolved === 1 ? '' : 's'} still in your hands.</b>
+            Finish or release ${summary.myUnresolved === 1 ? 'it' : 'them'}, or say who is taking over.
+            A passenger is waiting on each one.`;
+        handover.classList.remove('hidden');
+    } else if (summary.parkUnresolved > 0) {
+        // Not this dispatcher's to finish, but worth knowing before they leave
+        // — especially if they are the last one on duty.
+        warn.classList.remove('hidden');
+        warn.innerHTML = `<b>${summary.parkUnresolved} request${summary.parkUnresolved === 1 ? '' : 's'} still open at this park.</b>
+            Make sure another dispatcher is on duty before you go.`;
+        handover.classList.add('hidden');
+    } else {
+        warn.classList.add('hidden');
+        handover.classList.add('hidden');
+    }
+
+    $('shift-end-error').classList.add('hidden');
+    $('shift-end-confirm').disabled = false;
+    $('shift-end-confirm').textContent = 'End shift';
+    $('shift-end').classList.remove('hidden');
+}
+
+$('shift-end-cancel').addEventListener('click', () => $('shift-end').classList.add('hidden'));
+$('shift-end').addEventListener('click', (e) => {
+    if (e.target.id === 'shift-end') $('shift-end').classList.add('hidden');
+});
+
+$('shift-end-confirm').addEventListener('click', async () => {
+    const btn = $('shift-end-confirm');
+    btn.disabled = true;
+    btn.textContent = 'Ending\u2026';
+    $('shift-end-error').classList.add('hidden');
+    try {
+        await api('/dispatcher/shifts/close', 'POST', {
+            handoverNotes: $('shift-end-handover').value.trim() || null,
+        });
+        stopRealert();
+        location.replace('./index.html');
+    } catch (err) {
+        // The server is the authority on whether this shift may end; show its
+        // sentence rather than guessing at one.
+        $('shift-end-error').textContent = err.message;
+        $('shift-end-error').classList.remove('hidden');
+        btn.disabled = false;
+        btn.textContent = 'End shift';
+    }
 });
 
 // ── Realtime ─────────────────────────────────────────────────────────────
@@ -621,8 +789,51 @@ function connectSocket() {
     });
 
     S.socket.on('park:job_pending_driver', () => refreshDashboard());
+
+    /*
+     * The driver did not answer in time. Distinct from a decline: nobody said
+     * no, the offer simply lapsed, and the dispatcher may well pick the same
+     * driver again after speaking to them.
+     */
+    S.socket.on('park:job_offer_timeout', (p) => {
+        chime(true); buzz([200, 80, 200]);
+        toast(`No answer from ${p?.driverName || 'the driver'} — the request is back with you.`, 'error', 7000);
+        refreshDashboard();
+    });
+
+    /* Returned for reassignment for any other reason. */
+    S.socket.on('park:job_returned', () => {
+        chime(true); buzz([200, 80, 200]);
+        toast('A request came back for reassignment.', 'warn', 6000);
+        refreshDashboard();
+    });
+
+    /* Operations paused or resumed Park Dispatch mid-shift. */
+    S.socket.on('park:dispatch_suspended', (p) => {
+        chime(true);
+        toast(`New requests paused: ${p?.reason || 'by operations'}. Finish what you have.`, 'warn', 9000);
+        systemNotify('Park Dispatch paused', p?.reason || 'Paused by operations.');
+        refreshDashboard();
+    });
+    S.socket.on('park:dispatch_resumed', () => {
+        toast('Park Dispatch is running again.', 'success', 6000);
+        refreshDashboard();
+    });
+
+    /* A supervisor closed this shift, or the session was revoked. */
+    S.socket.on('staff:shift_closed', () => {
+        toast('Your shift was closed. Signing out.', 'warn', 5000);
+        stopRealert();
+        setTimeout(() => location.replace('./index.html'), 2500);
+    });
     S.socket.on('park:job_assigned', (p) => {
         if (p?.acceptedByDriver) { chime(); toast('Driver accepted. The ride is theirs now.', 'success'); }
+        refreshDashboard();
+    });
+
+    S.socket.on('park:job_assignment_failed', (p) => {
+        chime(true); buzz([300]);
+        toast(`Assignment failed: ${p?.reason || 'the driver could not be reached'}. Pick another.`, 'error', 8000);
         refreshDashboard();
     });
 }
@@ -707,6 +918,7 @@ function startTicker() {
 
 function render() {
     renderPaused();
+    renderPendingBanner();
     renderHeader();
     renderCounters();
     renderQueue();

@@ -168,7 +168,28 @@ router.post('/shifts/open', requireStaffPermission(StaffPermission.SHIFT_OPEN), 
     }
 });
 
-/** POST /dispatcher/shifts/close */
+/**
+ * GET /dispatcher/shifts/summary
+ *
+ * What this shift did and what it is about to leave behind — shown BEFORE
+ * signing off, so the consequences are visible while they can still be acted
+ * on.
+ */
+router.get('/shifts/summary', async (req: StaffRequest, res: Response) => {
+    try {
+        if (req.actor?.isLegacy) return res.status(403).json(errBody(ErrorCode.FORBIDDEN, 'Not a staff session.'));
+        return res.json({ summary: await DispatcherShiftService.summary(req.actor!.staffUserId) });
+    } catch (err: any) {
+        return fail(res, err, "We couldn't summarise your shift.");
+    }
+});
+
+/**
+ * POST /dispatcher/shifts/close
+ *
+ * Refuses while the dispatcher still holds live requests, unless they write a
+ * handover note. See DispatcherShiftService.close.
+ */
 router.post('/shifts/close', requireStaffPermission(StaffPermission.SHIFT_OPEN), async (req: StaffRequest, res: Response) => {
     try {
         const shift = await DispatcherShiftService.close(auditActorOf(req.actor), {

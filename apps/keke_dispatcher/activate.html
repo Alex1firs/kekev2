@@ -34,15 +34,23 @@
             <form id="form">
                 <label>New password
                     <input type="password" id="pw1" autocomplete="new-password" required
-                           minlength="12" placeholder="At least 12 characters">
+                           minlength="12" placeholder="12+ chars, a capital and a number">
                 </label>
                 <label>Type it again
                     <input type="password" id="pw2" autocomplete="new-password" required>
                 </label>
 
+                <!--
+                  These are the SERVER's actual rules, not a guess. An earlier
+                  version suggested "three unrelated words", which the policy
+                  rejects for having no capital and no digit — advice that would
+                  have stranded somebody at a park counter.
+                -->
                 <p class="login-foot" id="rules">
-                    At least 12 characters. Choose something you can type quickly on a
-                    phone but nobody else would guess — three unrelated words work well.
+                    At least 12 characters, with a capital letter, a small letter
+                    and a number. Something you can type quickly on a phone but
+                    nobody else would guess — <em>Keke Park Awka 2026</em> is the
+                    right shape.
                 </p>
 
                 <button type="submit" id="go" class="btn btn-primary btn-block">Set password</button>

@@ -52,10 +52,16 @@ $('form').addEventListener('submit', async (e) => {
     const pw1 = $('pw1').value;
     const pw2 = $('pw2').value;
 
-    // Checked here for a fast, kind answer; the server checks it again and is
-    // the one that decides.
+    /*
+     * Mirror the server's policy so somebody finds out before they submit,
+     * not after. The server checks it again and remains the authority — this
+     * only saves a round trip and a confusing rejection.
+     */
     if (pw1 !== pw2) return fail('Those two passwords are not the same.');
     if (pw1.length < 12) return fail('Use at least 12 characters.');
+    if (!/[A-Z]/.test(pw1) || !/[a-z]/.test(pw1) || !/[0-9]/.test(pw1)) {
+        return fail('Include a capital letter, a small letter and a number.');
+    }
 
     const btn = $('go');
     btn.disabled = true;

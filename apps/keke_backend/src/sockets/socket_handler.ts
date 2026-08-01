@@ -32,6 +32,7 @@ import { In } from 'typeorm';
 import { SosAlert, SosAlertStatus } from '../models/SosAlert';
 import { toLocalDialable } from '../utils/phone';
 import { ContactAccessService } from '../services/contact_access_service';
+import { ParkDispatchService } from '../services/park_dispatch_service';
 import {
     RideIntegrityConfig,
     getDriverLiveLocation,
@@ -82,7 +83,7 @@ const id  = () => z.string().min(1).max(128);
 const Schemas = {
     join: z.object({
         userId: id(),
-        role: z.enum(['passenger', 'driver', 'admin', 'ride']),
+        role: z.enum(['passenger', 'driver', 'admin', 'ride', 'park']),
     }),
     heartbeat: z.object({
         driverId: id(),
@@ -287,6 +288,31 @@ export class SocketHandler {
         // Liveness evidence: is this user's socket actually connected right now?
         // Used to tell "slow" from "gone" — a passenger with the app open is not
         // an abandoned ride, however long the driver has taken.
+        // Park Dispatch borrows exactly the capabilities it needs and holds no
+        // socket.io reference or in-memory dispatch state of its own. Note that
+        // `assignDriver` is THIS class's single assignment method — the park
+        // path cannot invent an alternative ride flow.
+        ParkDispatchService.setHost({
+            assignDriver: async (a) => {
+                const result = await this.assignDriverToRide({
+                    rideId: a.rideId,
+                    driverId: a.driverId,
+                    source: 'park',
+                    parkId: a.parkId,
+                    parkJobId: a.parkJobId,
+                    assignmentMode: a.assignmentMode,
+                    assignedByStaffId: a.assignedByStaffId,
+                });
+                return result.ok ? { ok: true } : { ok: false, code: result.code, message: result.message };
+            },
+            emitToRide: (rideId, event, payload) => { this.io.to(`ride:${rideId}`).emit(event, payload); },
+            emitToPark: (parkId, event, payload) => { this.io.to(`park:${parkId}`).emit(event, payload); },
+            emitToAdmin: (event, payload) => { this.io.to('admin').emit(event, payload); },
+            notifyPassenger: (passengerId, title, body, data) => {
+                void NotificationService.sendToUser(passengerId, UserRole.PASSENGER, title, body, data);
+            },
+        });
+
         RideActivityService.setPresenceProbe(async (role, userId) => {
             try {
                 const sockets = await this.io.in(`${role}:${userId}`).fetchSockets();
@@ -353,6 +379,11 @@ export class SocketHandler {
                     }
                 }
 
+                // `park` joins a park room so a dispatcher device receives
+                // offers, cancellations and expiries live. Read-only: joining a
+                // room grants no authority — every dispatcher ACTION is
+                // authorised independently by staff auth, park scope and an
+                // open shift.
                 const room = data.role === 'ride' ? `ride:${data.userId}` : `${data.role}:${data.userId}`;
                 socket.join(room);
                 if (data.role === 'admin') socket.join('admin');
@@ -686,6 +717,9 @@ export class SocketHandler {
                     await this.releaseRideReservations(data.rideId, 'passenger_cancel');
                     if (ride.driverId) await DispatchService.releaseDriver(ride.driverId, data.rideId);
                     await DispatchService.releasePassengerActive(data.passengerId, data.rideId);
+                    // A dispatcher must not be left working a request whose
+                    // passenger has gone. No-op when no park job exists.
+                    void ParkDispatchService.cancelForRide(data.rideId, 'passenger_cancelled');
                     this.dispatchRuns.delete(data.rideId);
                     this.rideExclusions.delete(data.rideId);
                     this.clearDispatch(data.rideId);
@@ -697,141 +731,42 @@ export class SocketHandler {
             });
 
             // --- Driver Accept ---
+            //
+            // A thin shell around assignDriverToRide, which is the ONE place a
+            // ride gains a driver. Park Dispatch calls the same method with
+            // source:'park', so there is exactly one assignment path and one
+            // ride lifecycle — a second flow would inevitably drift from this
+            // one and produce rides that behave subtly differently.
             socket.on('ride:accept', async (raw) => {
                 const data = validate(Schemas.rideAccept, raw, socket);
                 if (!data) return;
                 try {
-                    const profile = await AppDataSource.getRepository(DriverProfile).findOneBy({ userId: data.driverId });
-                    if (!profile || profile.status === 'suspended' || profile.status === 'rejected') {
-                        log.warn(`[SOCKET_BLOCK] Ride acceptance blocked for driver ${data.driverId} (Status: ${profile?.status})`);
-                        socket.emit('error:suspended', { code: 'DRIVER_SUSPENDED', message: 'Your account access is restricted. Please contact support.' });
-                        return;
-                    }
+                    const result = await this.assignDriverToRide({
+                        rideId: data.rideId,
+                        driverId: data.driverId,
+                        source: 'direct',
+                    });
 
-                    // Debt gate for cash rides
-                    const ride = await AppDataSource.getRepository(Ride).findOne({ where: { rideId: data.rideId } });
-                    if (ride?.paymentMode === 'cash') {
-                        const debt = await WalletService.getDriverDebt(data.driverId);
-                        if (debt >= DEBT_CASH_BLOCK) {
-                            log.warn(`[DEBT_BLOCK] Cash ride blocked for driver ${data.driverId} — debt ₦${debt}`);
-                            socket.emit('error:debt_blocked', {
-                                code: 'DEBT_CASH_BLOCKED',
-                                message: 'You cannot accept cash rides until your outstanding balance is cleared. Go to your wallet to pay.',
-                            });
-                            return;
+                    if (!result.ok) {
+                        // Failure codes map to the exact events the driver app
+                        // has always received. Unchanged wire behaviour.
+                        switch (result.code) {
+                            case 'DRIVER_SUSPENDED':
+                                socket.emit('error:suspended', { code: 'DRIVER_SUSPENDED', message: result.message });
+                                return;
+                            case 'DEBT_CASH_BLOCKED':
+                                socket.emit('error:debt_blocked', { code: 'DEBT_CASH_BLOCKED', message: result.message });
+                                return;
+                            case 'RIDE_ALREADY_TAKEN':
+                                socket.emit('ride:expired', { code: 'RIDE_ALREADY_TAKEN', rideId: data.rideId, message: result.message });
+                                return;
+                            default:
+                                socket.emit('ride:error', { code: result.code, message: result.message });
+                                return;
                         }
                     }
 
-                    // Prevent double-assignment: a driver already on an active ride
-                    // cannot accept another until they finish/cancel the current one.
-                    const activeForDriver = await AppDataSource.getRepository(Ride).findOne({
-                        where: { driverId: data.driverId, status: In(['accepted', 'arrived', 'in_progress'] as any[]) },
-                    });
-                    if (activeForDriver && activeForDriver.rideId !== data.rideId) {
-                        socket.emit('ride:error', { code: 'ALREADY_ON_RIDE', message: 'Finish your current ride before accepting a new one.' });
-                        return;
-                    }
-
-                    // Atomic UPDATE: claims the ride only if still 'searching'.
-                    // PostgreSQL row-level locking makes this race-condition-free —
-                    // no two drivers can both get affected=1 for the same row.
-                    const rideRepo = AppDataSource.getRepository(Ride);
-                    const updateResult = await rideRepo
-                        .createQueryBuilder()
-                        .update()
-                        .set({ driverId: data.driverId, status: 'accepted' as any })
-                        .where('"rideId" = :rideId AND status = :status', { rideId: data.rideId, status: 'searching' })
-                        .returning('*')
-                        .execute();
-
-                    if (!updateResult.affected || updateResult.affected === 0) {
-                        socket.emit('ride:expired', { code: 'RIDE_ALREADY_TAKEN', rideId: data.rideId, message: 'This ride is no longer available.' });
-                        return;
-                    }
-
-                    const currentRide = updateResult.raw[0];
-
-                    // Signal the dispatch loop to stop polling
-                    await redis.set(`ride:${data.rideId}:lock`, data.driverId);
-
-                    this.driverRideMap.set(data.driverId, data.rideId);
-
-                    // Anti-fraud evidence: record where the driver was when they
-                    // accepted (no gate here — accepting while stationary is normal).
-                    try {
-                        const acceptLoc = await getDriverLiveLocation(data.driverId);
-                        await rideRepo.update(data.rideId, {
-                            acceptedAt: new Date(),
-                            acceptLat: acceptLoc?.lat ?? null,
-                            acceptLng: acceptLoc?.lng ?? null,
-                        } as any);
-                    } catch (e: any) {
-                        log.warn(`[INTEGRITY] accept evidence capture failed for ${data.rideId}: ${e?.message}`);
-                    }
-
-                    const driverUser = await AppDataSource.getRepository(User).findOne({ where: { id: data.driverId } });
-
-                    const ratingCount = profile.ratingCount ?? 0;
-                    const driverDetails = {
-                        name: `${profile.firstName} ${profile.lastName}`,
-                        plate: profile.vehiclePlate,
-                        model: profile.vehicleModel,
-                        phone: toLocalDialable(driverUser?.phone) ?? null,
-                        photoUrl: profile.photoUrl ?? null,
-                        rating: ratingCount > 0 ? Number(((profile.ratingSum ?? 0) / ratingCount).toFixed(2)) : 0,
-                        ratingCount,
-                    };
-
-                    this.broadcastToRide(data.rideId, 'ride:assigned', {
-                        driverId: data.driverId,
-                        driverDetails,
-                        pickupCode: ride?.pickupCode ?? null,
-                    });
-
-                    NotificationService.sendToUser(currentRide.passengerId || currentRide.passengerId, UserRole.PASSENGER, 'Driver Assigned!', 'A driver is on the way to you.', {
-                        type: 'RIDE_ASSIGNED', rideId: data.rideId, intent: 'active',
-                    });
                     socket.emit('ride:confirmed', { rideId: data.rideId });
-                    this.io.to('admin').emit('ride:status_update', { rideId: data.rideId, status: 'accepted' });
-
-                    // Reservation → assignment. The atomic DB UPDATE above (status
-                    // searching→accepted) is the true arbiter and is retained; here we
-                    // just confirm/log ownership and release ALL of this ride's ring
-                    // reservations. The accepted driver is now excluded from future
-                    // dispatch by DB status='accepted' + driverRideMap, so releasing is
-                    // race-safe (the DB row was flipped before this release).
-                    const resOwner = await DispatchService.getReservationOwner(data.driverId);
-                    rlog('assign', { rideId: data.rideId, driverId: data.driverId, reservationOwner: resOwner, ownershipMatched: resOwner === data.rideId });
-                    // Stop ALL dispatch activity for this ride immediately — the
-                    // in-flight offer window is abandoned rather than run out, and
-                    // no further round can start.
-                    const acceptedRun = this.dispatchRuns.get(data.rideId);
-                    if (acceptedRun) {
-                        acceptedRun.noteAcceptance(data.driverId);
-                        rlog('acceptance', {
-                            rideId: data.rideId,
-                            driverId: data.driverId,
-                            dispatchRound: acceptedRun.evidence.round,
-                            summary: acceptedRun.evidence.summary(false),
-                        });
-                    }
-                    DispatchMonitorService.record({
-                        rideId: data.rideId,
-                        eventType: DispatchEventType.DRIVER_ACCEPTED,
-                        dispatchRound: acceptedRun?.evidence.round ?? null,
-                        driverId: data.driverId,
-                        detail: {
-                            // Time from request creation to assignment.
-                            timeToAssignmentMs: currentRide?.createdAt
-                                ? Date.now() - new Date(currentRide.createdAt).getTime()
-                                : null,
-                        },
-                        withFreshness: true,
-                    });
-                    this.clearDispatchTimers(data.rideId);
-                    await this.releaseRideReservations(data.rideId, 'assigned');
-                    this.rideExclusions.delete(data.rideId);
-                    this.clearDispatch(data.rideId);
                 } catch (err) {
                     log.error('ride:accept failed:', err);
                     socket.emit('ride:error', { code: 'INTERNAL_ERROR', message: 'Could not accept the ride right now. Please try again.' });
@@ -1905,6 +1840,233 @@ export class SocketHandler {
     }
 
     /**
+     * THE one place a ride gains a driver.
+     *
+     * Extracted verbatim from the original `ride:accept` handler so that Park
+     * Dispatch assigns through the identical path rather than a parallel one.
+     * The order of operations, the atomic UPDATE, the evidence capture, the
+     * events emitted and the state cleanup are all unchanged — only the shape
+     * of the result changed, from socket emits to a returned value the caller
+     * presents.
+     *
+     * Two callers:
+     *   source 'direct' — a smartphone driver tapped accept. Identical to
+     *                     before in every observable respect.
+     *   source 'park'   — a dispatcher assigned a driver at a park. Same
+     *                     lifecycle from this moment on: the ride is
+     *                     `accepted`, owned by the driver, and every later
+     *                     transition runs through the existing handlers.
+     *
+     * The conditional `WHERE status = 'searching'` remains the SOLE arbiter of
+     * who owns a ride. A direct acceptance racing a park assignment therefore
+     * cannot both win — one gets affected=1, the other is told the ride is gone.
+     */
+    private async assignDriverToRide(args: {
+        rideId: string;
+        driverId: string;
+        source: 'direct' | 'park';
+        parkId?: string | null;
+        parkJobId?: string | null;
+        assignmentMode?: 'electronic' | 'verbal';
+        /** Staff member who performed a park assignment, for the dispatch trail. */
+        assignedByStaffId?: string | null;
+    }): Promise<
+        | { ok: true; ride: any; driverDetails: Record<string, unknown> }
+        | { ok: false; code: string; message: string }
+    > {
+        const { rideId, driverId } = args;
+
+        const profile = await AppDataSource.getRepository(DriverProfile).findOneBy({ userId: driverId });
+        if (!profile || profile.status === 'suspended' || profile.status === 'rejected') {
+            log.warn(`[SOCKET_BLOCK] Ride acceptance blocked for driver ${driverId} (Status: ${profile?.status})`);
+            return { ok: false, code: 'DRIVER_SUSPENDED', message: 'Your account access is restricted. Please contact support.' };
+        }
+
+        // Debt gate for cash rides
+        const ride = await AppDataSource.getRepository(Ride).findOne({ where: { rideId } });
+        if (ride?.paymentMode === 'cash') {
+            const debt = await WalletService.getDriverDebt(driverId);
+            if (debt >= DEBT_CASH_BLOCK) {
+                log.warn(`[DEBT_BLOCK] Cash ride blocked for driver ${driverId} — debt ₦${debt}`);
+                return {
+                    ok: false,
+                    code: 'DEBT_CASH_BLOCKED',
+                    message: 'You cannot accept cash rides until your outstanding balance is cleared. Go to your wallet to pay.',
+                };
+            }
+        }
+
+        // Prevent double-assignment: a driver already on an active ride
+        // cannot accept another until they finish/cancel the current one.
+        const activeForDriver = await AppDataSource.getRepository(Ride).findOne({
+            where: { driverId, status: In(['accepted', 'arrived', 'in_progress'] as any[]) },
+        });
+        if (activeForDriver && activeForDriver.rideId !== rideId) {
+            return { ok: false, code: 'ALREADY_ON_RIDE', message: 'Finish your current ride before accepting a new one.' };
+        }
+
+        // Atomic UPDATE: claims the ride only if still 'searching'.
+        // PostgreSQL row-level locking makes this race-condition-free —
+        // no two drivers can both get affected=1 for the same row.
+        const rideRepo = AppDataSource.getRepository(Ride);
+        const updateResult = await rideRepo
+            .createQueryBuilder()
+            .update()
+            .set({
+                driverId,
+                status: 'accepted' as any,
+                // Provenance, written in the SAME statement that claims the
+                // ride so a park-assigned ride can never exist without its
+                // park recorded. Null for direct, which is every ride today.
+                ...(args.source === 'park'
+                    ? {
+                        dispatchMode: 'park',
+                        parkId: args.parkId ?? null,
+                        parkJobId: args.parkJobId ?? null,
+                        assignmentMode: args.assignmentMode ?? 'electronic',
+                    }
+                    : {}),
+            } as any)
+            .where('"rideId" = :rideId AND status = :status', { rideId, status: 'searching' })
+            .returning('*')
+            .execute();
+
+        if (!updateResult.affected || updateResult.affected === 0) {
+            return { ok: false, code: 'RIDE_ALREADY_TAKEN', message: 'This ride is no longer available.' };
+        }
+
+        const currentRide = updateResult.raw[0];
+
+        // Signal the dispatch loop to stop polling
+        await redis.set(`ride:${rideId}:lock`, driverId);
+
+        this.driverRideMap.set(driverId, rideId);
+
+        // Anti-fraud evidence: record where the driver was when they
+        // accepted (no gate here — accepting while stationary is normal).
+        //
+        // A feature-phone driver has no GPS at all, so this is legitimately
+        // null for them. That absence is explained by ride.assignmentMode
+        // ('verbal'), NOT inferred — a null fix on a smartphone ride still
+        // means something went wrong.
+        try {
+            const acceptLoc = await getDriverLiveLocation(driverId);
+            await rideRepo.update(rideId, {
+                acceptedAt: new Date(),
+                acceptLat: acceptLoc?.lat ?? null,
+                acceptLng: acceptLoc?.lng ?? null,
+            } as any);
+        } catch (e: any) {
+            log.warn(`[INTEGRITY] accept evidence capture failed for ${rideId}: ${e?.message}`);
+        }
+
+        const driverUser = await AppDataSource.getRepository(User).findOne({ where: { id: driverId } });
+
+        const ratingCount = profile.ratingCount ?? 0;
+        const driverDetails = {
+            name: `${profile.firstName} ${profile.lastName}`,
+            plate: profile.vehiclePlate,
+            model: profile.vehicleModel,
+            phone: toLocalDialable(driverUser?.phone) ?? null,
+            photoUrl: profile.photoUrl ?? null,
+            rating: ratingCount > 0 ? Number(((profile.ratingSum ?? 0) / ratingCount).toFixed(2)) : 0,
+            ratingCount,
+        };
+
+        this.broadcastToRide(rideId, 'ride:assigned', {
+            driverId,
+            driverDetails,
+            pickupCode: ride?.pickupCode ?? null,
+            // Additive fields. Older passenger builds ignore them and render
+            // the driver card exactly as they do for a direct ride — which is
+            // the intent: the passenger must not be able to tell, and must not
+            // care, which supply channel found their Keke.
+            ...(args.source === 'park'
+                ? { dispatchMode: 'park', assignmentMode: args.assignmentMode ?? 'electronic' }
+                : {}),
+        });
+
+        NotificationService.sendToUser(currentRide.passengerId || currentRide.passengerId, UserRole.PASSENGER, 'Driver Assigned!', 'A driver is on the way to you.', {
+            type: 'RIDE_ASSIGNED', rideId, intent: 'active',
+        });
+        this.io.to('admin').emit('ride:status_update', { rideId, status: 'accepted' });
+
+        // A park-assigned SMARTPHONE driver still needs to be told in their app.
+        // The direct path emits ride:confirmed on the accepting socket; here the
+        // driver was not the one who acted, so it goes to their room.
+        if (args.source === 'park') {
+            this.io.to(`driver:${driverId}`).emit('ride:confirmed', { rideId });
+            this.io.to(`driver:${driverId}`).emit('ride:park_assignment', {
+                rideId,
+                parkId: args.parkId ?? null,
+                assignmentMode: args.assignmentMode ?? 'electronic',
+                pickupAddress: currentRide?.pickupAddress ?? null,
+                destinationAddress: currentRide?.destinationAddress ?? null,
+                fare: currentRide?.fare ?? null,
+                paymentMode: currentRide?.paymentMode ?? null,
+                pickupCode: ride?.pickupCode ?? null,
+            });
+        }
+
+        // Reservation → assignment. The atomic DB UPDATE above (status
+        // searching→accepted) is the true arbiter and is retained; here we
+        // just confirm/log ownership and release ALL of this ride's ring
+        // reservations. The accepted driver is now excluded from future
+        // dispatch by DB status='accepted' + driverRideMap, so releasing is
+        // race-safe (the DB row was flipped before this release).
+        const resOwner = await DispatchService.getReservationOwner(driverId);
+        rlog('assign', { rideId, driverId, reservationOwner: resOwner, ownershipMatched: resOwner === rideId, source: args.source });
+        // Stop ALL dispatch activity for this ride immediately — the
+        // in-flight offer window is abandoned rather than run out, and
+        // no further round can start.
+        const acceptedRun = this.dispatchRuns.get(rideId);
+        if (acceptedRun) {
+            acceptedRun.noteAcceptance(driverId);
+            rlog('acceptance', {
+                rideId,
+                driverId,
+                dispatchRound: acceptedRun.evidence.round,
+                summary: acceptedRun.evidence.summary(false),
+            });
+        }
+        DispatchMonitorService.record({
+            rideId,
+            eventType: args.source === 'park'
+                ? DispatchEventType.PARK_DRIVER_ASSIGNED
+                : DispatchEventType.DRIVER_ACCEPTED,
+            dispatchRound: acceptedRun?.evidence.round ?? null,
+            driverId,
+            detail: {
+                // Time from request creation to assignment.
+                timeToAssignmentMs: currentRide?.createdAt
+                    ? Date.now() - new Date(currentRide.createdAt).getTime()
+                    : null,
+                ...(args.source === 'park'
+                    ? {
+                        parkId: args.parkId ?? null,
+                        assignmentMode: args.assignmentMode ?? 'electronic',
+                        assignedByStaffId: args.assignedByStaffId ?? null,
+                    }
+                    : {}),
+            },
+            withFreshness: true,
+        });
+        this.clearDispatchTimers(rideId);
+        await this.releaseRideReservations(rideId, 'assigned');
+        this.rideExclusions.delete(rideId);
+        this.clearDispatch(rideId);
+
+        // A direct driver who accepted during the park phase has just won the
+        // conditional UPDATE. The park's queue must lose the request rather
+        // than leave a dispatcher working a ride that already has a driver.
+        if (args.source === 'direct') {
+            void ParkDispatchService.cancelForRide(rideId, 'taken_by_direct_driver');
+        }
+
+        return { ok: true, ride: currentRide, driverDetails };
+    }
+
+    /**
      * Fan one orchestrator log event out to the durable admin trail.
      * The mapping itself lives in dispatch_event_projection.ts so it can be
      * tested directly and audited in one place.
@@ -2025,6 +2187,34 @@ export class SocketHandler {
         if (await this.isRideAssigned(rideId)) return;
 
         const outcome = result.outcome ?? { code: 'NO_ELIGIBLE_DRIVER' as const, dispatchResult: 'unknown' };
+
+        // ── PARK DISPATCH FALLBACK ───────────────────────────────────────
+        // The ONE point where park dispatch touches the dispatch path, and it
+        // is downstream of everything: the run has finished, its rounds are
+        // exhausted, its evidence is sealed. Nothing below can influence which
+        // drivers were rung or how long they were given.
+        //
+        // Disabled by default (PARK_DISPATCH_ENABLED). When disabled, or when
+        // no park takes the ride, execution continues to the exact `failed`
+        // path this method has always taken. offerToPark never throws — it
+        // catches its own errors and returns false — so a fault in the fallback
+        // degrades to today's behaviour rather than breaking dispatch.
+        try {
+            if (await ParkDispatchService.offerToPark(rideId)) {
+                rlog('park_fallback_engaged', {
+                    rideId,
+                    stopReason: result.stopReason,
+                    directOutcome: outcome.code,
+                });
+                // The ride stays `searching` and is now the park's problem. The
+                // passenger's active-ride slot is deliberately NOT released:
+                // they still have one ride in flight.
+                return;
+            }
+        } catch (err: any) {
+            log.error(JSON.stringify({ level: 'error', event: 'park_fallback_threw', rideId, error: err?.message }));
+        }
+
         await rideRepo.update(rideId, { status: 'failed' as any });
 
         rlog('dispatch_outcome', {

@@ -89,6 +89,41 @@ const dispatcherAppDir = [
   try { return require('fs').existsSync(path.join(candidate, 'index.html')); } catch { return false; }
 });
 if (dispatcherAppDir) {
+  /**
+   * A slightly wider Content-Security-Policy, for the dispatcher app only.
+   *
+   * The global helmet policy is `default-src 'self'`, which means `connect-src`
+   * is also `'self'` — so the Firebase Messaging SDK cannot reach the Google
+   * endpoints it needs to mint a push token, and getToken() fails with an
+   * unhelpful "Failed to fetch". That is what this fixes.
+   *
+   * Deliberately narrow on both axes:
+   *   - it applies ONLY under /dispatch and /dispatcher, never to the API;
+   *   - it names the exact Google hosts involved, not a wildcard.
+   *
+   * `script-src` stays `'self'`. The Firebase SDK is vendored and served from
+   * this origin precisely so the policy does not have to allow executable code
+   * from a third party — that trade is worth making for a network call and not
+   * for a script tag.
+   */
+  const FIREBASE_ENDPOINTS = [
+    'https://fcmregistrations.googleapis.com',
+    'https://firebaseinstallations.googleapis.com',
+    'https://fcm.googleapis.com',
+  ];
+
+  app.use(['/dispatch', '/dispatcher'], helmet({
+    contentSecurityPolicy: {
+      useDefaults: true,
+      directives: {
+        'connect-src': ["'self'", ...FIREBASE_ENDPOINTS],
+        // The service worker is same-origin; stated explicitly because
+        // worker-src otherwise inherits from script-src and is easy to break.
+        'worker-src': ["'self'"],
+      },
+    },
+  }));
+
   const dispatcherStatic = express.static(dispatcherAppDir, {
     setHeaders: (res, filePath) => {
       /*

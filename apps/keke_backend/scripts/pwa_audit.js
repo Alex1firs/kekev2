@@ -117,6 +117,25 @@ async function main() {
     })()`);
     if (signedIn === 'ok') ok('signed in for the offline check'); else bad(`could not sign in: ${signedIn}`);
 
+    /*
+     * Open a shift if there is not one already. Without this the audit depends
+     * on whatever ran before it — the acceptance run closes the shift at its
+     * last scenario, and this would then fail for a reason that has nothing to
+     * do with the PWA.
+     */
+    const shift = await evalJs(`(async () => {
+        const t = sessionStorage.getItem('KD_TOKEN');
+        const me = await (await fetch('/api/v1/dispatcher/me', { headers: { Authorization: 'Bearer ' + t } })).json();
+        if (me.onDuty) return 'already';
+        const park = (me.assignedParks || []).find(p => p.status === 'active');
+        if (!park) return 'no park';
+        const r = await fetch('/api/v1/dispatcher/shifts/open', {
+            method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + t },
+            body: JSON.stringify({ parkId: park.parkId }) });
+        return r.ok ? 'opened' : 'failed ' + r.status;
+    })()`);
+    if (/already|opened/.test(shift)) ok(`shift ready (${shift})`); else bad(`could not open a shift: ${shift}`);
+
     await send('Page.navigate', { url: BASE });
     await sleep(5000);
 

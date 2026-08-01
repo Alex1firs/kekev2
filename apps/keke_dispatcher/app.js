@@ -1135,8 +1135,12 @@ function driverRow(d, hotkey, canAssign) {
                 data-initials="${esc(initials(d))}">`
         : `<div class="driver-photo driver-photo-none">${esc(initials(d))}</div>`;
 
+    /*
+     * Queue position is deliberately absent here — the reason line above
+     * already leads with it where it matters, and printing "#1 in queue" twice
+     * in two lines reads as a rendering bug.
+     */
     const meta = [
-        d.queuePosition != null ? `#${d.queuePosition} in queue` : null,
         d.requiresVerbalAssignment ? 'feature phone' : 'smartphone',
         d.lastAssignedAt ? `last ride ${fmtAgo(d.lastAssignedAt)}` : 'no ride today',
     ].filter(Boolean).join(' \u00b7 ');

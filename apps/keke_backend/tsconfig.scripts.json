@@ -1,0 +1,20 @@
+{
+  /*
+   * Typecheck the operational scripts.
+   *
+   * The main tsconfig has `rootDir: ./src` and `include: ["src/**\/*"]`, so
+   * `npm run build` and `tsc --noEmit` never looked at scripts/ at all. That is
+   * correct for the build — the scripts are run with ts-node and must not land
+   * in dist/ — but it meant three separate scripts shipped with type errors
+   * that only surfaced when somebody ran them, which for a launch-day bootstrap
+   * is precisely the wrong moment.
+   *
+   * `npm run typecheck` covers both.
+   */
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["scripts/**/*.ts", "src/**/*.ts"]
+}

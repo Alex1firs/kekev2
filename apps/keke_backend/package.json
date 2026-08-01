@@ -12,6 +12,7 @@
     "migration:revert": "node ./node_modules/.bin/typeorm migration:revert -d dist/config/data_source.js",
     "migration:run:dev": "npx typeorm-ts-node-commonjs migration:run -d src/config/data_source.ts",
     "migration:generate": "npx typeorm-ts-node-commonjs migration:generate -d src/config/data_source.ts src/migrations/",
+    "typecheck": "tsc --noEmit -p tsconfig.scripts.json",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:unit": "jest --selectProjects unit",

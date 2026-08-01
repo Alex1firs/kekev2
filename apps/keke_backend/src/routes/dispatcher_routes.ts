@@ -34,6 +34,9 @@ import { ParkAssignmentMode } from '../models/ParkDispatchJob';
 import { DispatcherDashboardService } from '../services/dispatcher_dashboard_service';
 import { errBody, ErrorCode, AppError } from '../utils/errors';
 import { ParkDispatchSwitch } from '../services/park_dispatch_switch';
+import { ContactAccessService } from '../services/contact_access_service';
+import { IdempotencyService, InFlightError } from '../services/idempotency_service';
+import { ParkDispatchJobRepository } from '../repositories/park_dispatch_job_repository';
 import { loadParkDispatchConfig } from '../config/park_dispatch_config';
 
 const router = Router();
@@ -385,6 +388,52 @@ router.get('/requests/:jobId/drivers', async (req: StaffRequest, res: Response) 
     }
 });
 
+/**
+ * POST /dispatcher/requests/:jobId/reveal-contact
+ *
+ * The passenger's real number, for the rare case that needs it — a pickup
+ * nobody can find, a passenger who has to be told the Keke is a different
+ * colour than the app says.
+ *
+ * Gated on MONITOR_REVEAL_CONTACT, which a PARK_DISPATCHER does NOT hold: this
+ * is a supervisor action taken on a dispatcher's behalf, not part of the
+ * ordinary flow. A reason is mandatory, the audit row is written before the
+ * number is returned, and the reveal expires.
+ *
+ * Park-scoped like everything else here — a supervisor cannot use it to read
+ * numbers from a park they have no business in.
+ */
+router.post('/requests/:jobId/reveal-contact',
+    requireStaffPermission(StaffPermission.MONITOR_REVEAL_CONTACT),
+    async (req: StaffRequest, res: Response) => {
+        try {
+            const shift = await requireOpenShift(req);
+            const jobId = String(req.params.jobId);
+
+            const job = await ParkDispatchJobRepository.findById(jobId);
+            if (!job) return res.status(404).json(errBody(ErrorCode.NOT_FOUND, 'Request not found.'));
+            if (job.parkId !== shift.parkId) {
+                return res.status(403).json(errBody(ErrorCode.FORBIDDEN, 'That request belongs to another park.'));
+            }
+
+            const reason = String(req.body?.reason ?? '').trim();
+            if (reason.length < 5) {
+                return res.status(400).json(errBody(ErrorCode.VALIDATION_ERROR,
+                    'Say why you need the number. It is recorded against your name.'));
+            }
+
+            const contact = await ContactAccessService.revealPassengerContactForStaff({
+                rideId: job.rideId,
+                actor: auditActorOf(req.actor),
+                reason,
+                ...ctxOf(req),
+            });
+            return res.json({ contact });
+        } catch (err: any) {
+            return fail(res, err, "We couldn't reveal that contact.");
+        }
+    });
+
 /** POST /dispatcher/requests/:jobId/claim — take responsibility for sourcing a driver. */
 router.post('/requests/:jobId/claim', requireStaffPermission(StaffPermission.DISPATCH_CLAIM), async (req: StaffRequest, res: Response) => {
     try {
@@ -413,18 +462,36 @@ router.post('/requests/:jobId/assign', requireStaffPermission(StaffPermission.DI
         if (!Object.values(ParkAssignmentMode).includes(rawMode as ParkAssignmentMode)) {
             return res.status(400).json(errBody(ErrorCode.VALIDATION_ERROR, 'mode must be "electronic" or "verbal".'));
         }
-        const result = await ParkDispatchService.assignDriver(
-            auditActorOf(req.actor),
-            String(req.params.jobId),
-            String(req.body?.driverId ?? ''),
-            rawMode as ParkAssignmentMode,
-            ctxOf(req),
+        /*
+         * Idempotent by key. A tablet that loses the reply and retries gets the
+         * ORIGINAL outcome back, not a second assignment and not a spurious
+         * "already assigned" error. The atomic arbiter still decides who gets
+         * the ride; this only stops it being asked twice.
+         */
+        const { replayed, value: result } = await IdempotencyService.run(
+            'park_assign',
+            req.actor!.staffUserId,
+            typeof req.body?.idempotencyKey === 'string' ? req.body.idempotencyKey : null,
+            () => ParkDispatchService.assignDriver(
+                auditActorOf(req.actor),
+                String(req.params.jobId),
+                String(req.body?.driverId ?? ''),
+                rawMode as ParkAssignmentMode,
+                ctxOf(req),
+            ),
         );
+
         return res.json({
             ...result,
+            replayed,
             message: 'Driver assigned. The ride now belongs to the driver — nothing further is needed from you.',
         });
     } catch (err: any) {
+        if (err instanceof InFlightError) {
+            // 409, not 500: nothing is wrong, the first tap is still working.
+            return res.status(409).json(errBody(ErrorCode.RIDE_ALREADY_TAKEN,
+                'That assignment is already going through. Give it a moment.'));
+        }
         return fail(res, err, "We couldn't assign this driver.");
     }
 });

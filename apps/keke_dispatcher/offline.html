@@ -27,7 +27,9 @@
             Check the tablet's mobile data or Wi-Fi, then try again. If other
             dispatchers are online, call your supervisor so the park is covered.
         </p>
-        <button class="btn btn-primary btn-block" onclick="location.replace('./index.html')">Try again</button>
+        <!-- A link, not a button with an inline handler: the API's CSP sets
+             script-src-attr 'none', so onclick= would silently do nothing. -->
+        <a class="btn btn-primary btn-block" href="./index.html">Try again</a>
     </div>
 </div>
 </body>

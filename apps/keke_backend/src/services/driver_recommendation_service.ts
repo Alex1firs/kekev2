@@ -59,8 +59,47 @@ export interface RecommendedDriver extends RosterEntry {
     acceptanceRate: number | null;
     /** Rides this driver has been assigned today. */
     workloadToday: number;
+    /** When this driver was last given a park ride. Null if never. */
+    lastAssignedAt: Date | null;
     requiresVerbalAssignment: boolean;
+    /**
+     * Which section of the dispatcher's list this driver belongs in.
+     *
+     * Decided here rather than in the client so that "available" means the same
+     * thing to the board, to the tests and to anyone reading a log — and so a
+     * second client could never quietly invent its own definition.
+     */
+    group: DriverGroup;
 }
+
+/**
+ * The sections of the driver list, in the order they are shown.
+ *
+ * Ordered by what a dispatcher should consider first. Everything from
+ * `unavailable` down cannot be assigned; they are still listed, because a
+ * missing driver prompts a question and a listed one with a reason answers it.
+ */
+export type DriverGroup =
+    | 'recommended'
+    | 'available'
+    | 'returning_soon'
+    | 'unavailable'
+    | 'wallet_blocked'
+    | 'verification_issue';
+
+export const DRIVER_GROUP_ORDER: DriverGroup[] = [
+    'recommended', 'available', 'returning_soon',
+    'unavailable', 'wallet_blocked', 'verification_issue',
+];
+
+export const DRIVER_GROUP_LABEL: Record<DriverGroup, string> = {
+    recommended: 'Recommended',
+    available: 'Available',
+    returning_soon: 'Returning soon',
+    unavailable: 'Unavailable',
+    wallet_blocked: 'Wallet blocked',
+    verification_issue: 'Badge or verification issue',
+};
 
 /**
  * Weights, as plain numbers so the ranking can be read and argued with.
@@ -98,9 +137,10 @@ export class DriverRecommendationService {
 
         const declined = new Set(args.declinedDriverIds ?? []);
         const driverIds = roster.map((r) => r.driverId);
-        const [acceptance, workload] = await Promise.all([
+        const [acceptance, workload, lastAssigned] = await Promise.all([
             this.acceptanceRates(driverIds),
             this.workloadToday(driverIds),
+            this.lastAssignedAt(driverIds),
         ]);
 
         // Distance from the PARK to the pickup is the same for every driver at
@@ -164,7 +204,9 @@ export class DriverRecommendationService {
                 distanceToPickupM,
                 acceptanceRate: rate,
                 workloadToday: today,
+                lastAssignedAt: lastAssigned.get(entry.driverId) ?? null,
                 requiresVerbalAssignment: !entry.smartphoneCapable,
+                group: this.groupFor(entry, { assignable, problems }),
             };
         });
 
@@ -180,8 +222,64 @@ export class DriverRecommendationService {
         if (top) {
             top.recommended = true;
             top.badges = ['recommended', ...top.badges.filter((b) => b !== 'recommended')];
+            // Exactly one driver is ever in the recommended group, and it is
+            // the same one carrying the badge.
+            top.group = 'recommended';
         }
         return ranked;
+    }
+
+    /**
+     * Which section of the list a driver belongs in.
+     *
+     * Ordered by how the dispatcher should read it: who can go now, who will be
+     * able to shortly, and who cannot — with the two reasons a supervisor can
+     * actually fix (money owed, missing badge) called out separately from
+     * "busy", because they need a different action.
+     */
+    private static groupFor(
+        entry: RosterEntry,
+        ctx: { assignable: boolean; problems: Array<{ code: string }> },
+    ): DriverGroup {
+        if (ctx.assignable) return 'available';
+
+        const has = (code: string) => ctx.problems.some((p) => p.code === code);
+
+        // Money first: a driver who owes is blocked from cash rides regardless
+        // of where they are standing, and that is the fact to act on.
+        if (has('wallet_blocked')) return 'wallet_blocked';
+        if (has('no_badge') || has('badge_revoked') || has('not_approved') || has('roster_suspended')) {
+            return 'verification_issue';
+        }
+
+        // On a trip now, but the park will have them back — worth waiting for
+        // when nobody else is free.
+        if (entry.presenceState === DriverPresenceState.TRIP_STARTED
+            || entry.presenceState === DriverPresenceState.EN_ROUTE
+            || entry.presenceState === DriverPresenceState.PASSENGER_BOARDING
+            || entry.presenceState === DriverPresenceState.ASSIGNED) {
+            return 'returning_soon';
+        }
+
+        return 'unavailable';
+    }
+
+    /** The most recent park assignment per driver, for "last assignment". */
+    static async lastAssignedAt(driverIds: string[]): Promise<Map<string, Date>> {
+        const out = new Map<string, Date>();
+        if (driverIds.length === 0) return out;
+
+        const rows = await AppDataSource.getRepository(ParkDispatchJob)
+            .createQueryBuilder('j')
+            .select('j."assignedDriverId"', 'driverId')
+            .addSelect('MAX(j."assignedAt")', 'last')
+            .where('j."assignedDriverId" IN (:...driverIds)', { driverIds })
+            .andWhere('j."assignedAt" IS NOT NULL')
+            .groupBy('j."assignedDriverId"')
+            .getRawMany<{ driverId: string; last: Date }>();
+
+        for (const row of rows) out.set(row.driverId, new Date(row.last));
+        return out;
     }
 
     /** The badges shown on a driver row, most important first. */

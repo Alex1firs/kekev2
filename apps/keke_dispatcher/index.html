@@ -179,13 +179,46 @@
     <footer class="shortcuts">
         <span><kbd>↑</kbd><kbd>↓</kbd> request</span>
         <span><kbd>Enter</kbd> take</span>
-        <span><kbd>1</kbd>–<kbd>9</kbd> assign driver</span>
-        <span><kbd>V</kbd> verbal assign</span>
+        <span><kbd>1</kbd>–<kbd>9</kbd> choose driver</span>
+        <span><kbd>V</kbd> recommended</span>
         <span><kbd>K</kbd> skip</span>
         <span><kbd>E</kbd> escalate</span>
         <span><kbd>/</kbd> search</span>
         <span><kbd>S</kbd> sound</span>
     </footer>
+</div>
+
+<!--
+  Assignment sheet.
+
+  Phase 4 assigned on a single tap with no confirmation, which was fast and
+  wrong: a dispatcher scrolling a list on a tablet could assign the driver
+  their thumb happened to land on, and the first they would know is a Keke
+  arriving for the wrong trip. This is the smallest thing that cannot happen
+  by accident — everything needed to check the decision, one button to make it.
+-->
+<div id="sheet" class="sheet-scrim hidden" role="dialog" aria-modal="true" aria-labelledby="sheet-driver">
+    <div class="sheet">
+        <div class="sheet-driver">
+            <div id="sheet-photo" class="driver-photo driver-photo-none"></div>
+            <div>
+                <div id="sheet-driver" class="sheet-driver-name"></div>
+                <div id="sheet-unit" class="sheet-driver-unit"></div>
+            </div>
+        </div>
+
+        <div class="sheet-trip">
+            <div class="sheet-row"><span>Pickup</span><b id="sheet-pickup"></b></div>
+            <div class="sheet-row"><span>Destination</span><b id="sheet-dest"></b></div>
+            <div class="sheet-row"><span>Passenger</span><b id="sheet-passenger"></b></div>
+            <div class="sheet-row"><span>Fare</span><b id="sheet-fare"></b></div>
+        </div>
+
+        <div id="sheet-mode" class="sheet-mode"></div>
+
+        <button id="sheet-confirm" class="btn btn-primary btn-block btn-tall">Assign ride</button>
+        <button id="sheet-cancel" class="btn btn-ghost btn-block">Cancel</button>
+    </div>
 </div>
 
 <div id="toasts" class="toasts" aria-live="polite"></div>

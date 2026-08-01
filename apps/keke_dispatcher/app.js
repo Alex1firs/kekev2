@@ -51,6 +51,12 @@ const S = {
     lastPayloadAt: 0,
     /** Consecutive dashboard refresh failures. Drives the stale-board warning. */
     failedRefreshes: 0,
+    /** Bumped only after a CONFIRMED outcome, so a retry reuses its key. */
+    assignAttempt: 1,
+    /** Driver ids addressable by number keys, in display order. */
+    assignableOrder: [],
+    /** How long a smartphone driver has to answer; from the server. */
+    acceptWindowMs: 18000,
     /** Server-declared capabilities, including whether new work is arriving. */
     caps: null,
 };
@@ -775,7 +781,7 @@ function renderQueue() {
 
         return `
         <article class="card card-p${c.priority} ${selected ? 'selected' : ''} ${isNew ? 'card-new' : ''}"
-                 role="listitem" data-job="${esc(c.jobId)}" onclick="selectJob('${esc(c.jobId)}')">
+                 role="listitem" data-job="${esc(c.jobId)}" tabindex="0">
             <div class="card-top">
                 <div>
                     <div class="card-name">${esc(c.passengerName)}</div>
@@ -796,19 +802,24 @@ function renderQueue() {
                 <span class="tag tag-${esc(c.priorityLabel)}">${esc(c.priorityLabel)}</span>
                 <span class="tag tag-wait">waiting ${fmtWait(c.waitingSeconds)}</span>
                 ${c.estimatedTravelMinutes != null ? `<span class="tag">${c.estimatedTravelMinutes} min away</span>` : ''}
+                ${c.parkToPickupKm != null ? `<span class="tag">${c.parkToPickupKm.toFixed(1)} km from park</span>` : ''}
                 ${c.parksTried > 1 ? `<span class="tag">${c.parksTried} parks tried</span>` : ''}
                 ${pending ? '<span class="tag tag-pending">waiting on driver</span>' : ''}
                 ${isMine && !pending ? '<span class="tag">yours</span>' : ''}
             </div>
 
+            ${c.directDispatch ? `<div class="card-direct" title="What the app did before ringing the park">
+                App tried first: ${esc(c.directDispatch.summary)}
+            </div>` : ''}
+
             <div class="card-actions">
                 ${!isMine && !pending
-                    ? `<button class="btn btn-primary btn-sm" onclick="event.stopPropagation();claimJob('${esc(c.jobId)}')">Take this ride</button>`
+                    ? `<button class="btn btn-primary btn-sm" data-act="claim" data-job="${esc(c.jobId)}">Take this ride</button>`
                     : ''}
                 ${isMine && !pending
-                    ? `<button class="btn btn-sm" onclick="event.stopPropagation();skipJob('${esc(c.jobId)}')">Skip</button>
-                       <button class="btn btn-sm" onclick="event.stopPropagation();escalateJob('${esc(c.jobId)}')">Escalate</button>
-                       <button class="btn btn-danger btn-sm" onclick="event.stopPropagation();rejectJob('${esc(c.jobId)}')">Reject</button>`
+                    ? `<button class="btn btn-sm" data-act="skip" data-job="${esc(c.jobId)}">Skip</button>
+                       <button class="btn btn-sm" data-act="escalate" data-job="${esc(c.jobId)}">Escalate</button>
+                       <button class="btn btn-danger btn-sm" data-act="reject" data-job="${esc(c.jobId)}">Reject</button>`
                     : ''}
                 ${pending ? '<span class="card-meta">Offer sent — waiting for the driver to accept.</span>' : ''}
             </div>
@@ -859,27 +870,106 @@ function renderDrivers() {
     $('driver-count').title = `${ready} of ${S.drivers.length} drivers at this park can be assigned now`;
     $('drivers-empty').style.display = list.length ? 'none' : 'flex';
 
-    $('drivers').innerHTML = list.map((d, i) => `
-        <div class="driver ${d.recommended ? 'driver-recommended' : ''} ${d.assignable ? '' : 'driver-blocked'}" role="listitem">
-            <div class="driver-key">${i < 9 ? i + 1 : '·'}</div>
+    /*
+     * Grouped, in the order a dispatcher should read the list: who can go now,
+     * who will be free shortly, and who cannot — with the two problems a
+     * supervisor can actually fix (money owed, missing badge) called out
+     * separately from "busy", because they need a different action.
+     *
+     * The grouping is the SERVER's, not this file's, so the board, the tests
+     * and the audit trail all mean the same thing by "available".
+     */
+    const GROUPS = [
+        ['recommended', 'Recommended'],
+        ['available', 'Available'],
+        ['returning_soon', 'Returning soon'],
+        ['unavailable', 'Unavailable'],
+        ['wallet_blocked', 'Wallet blocked'],
+        ['verification_issue', 'Badge or verification issue'],
+    ];
+
+    // Number keys address assignable drivers only, in display order, so "3"
+    // always means the third driver a dispatcher could actually pick.
+    let hotkey = 0;
+    S.assignableOrder = [];
+
+    $('drivers').innerHTML = GROUPS.map(([group, label]) => {
+        const members = list.filter((d) => (d.group || 'unavailable') === group);
+        if (members.length === 0) return '';
+        const rows = members.map((d) => {
+            const key = (d.assignable && canAssign && hotkey < 9) ? ++hotkey : null;
+            if (key) S.assignableOrder.push(d.driverId);
+            return driverRow(d, key, canAssign);
+        }).join('');
+        return `<div class="driver-group">
+            <div class="driver-group-head">${esc(label)} <span>${members.length}</span></div>
+            ${rows}
+        </div>`;
+    }).join('');
+}
+
+/** One driver row. Tapping it OPENS THE SHEET — it never assigns. */
+function driverRow(d, hotkey, canAssign) {
+    /*
+     * Fall back to initials if the photo 404s. A broken-image icon next to a
+     * name, on the screen where a dispatcher confirms they are handing a trip
+     * to the right person, is worse than no photo at all.
+     *
+     * Handled by a capturing listener on the list rather than an inline
+     * onerror — see the CSP note on the delegated handlers below.
+     */
+    const photo = d.photoUrl
+        ? `<img class="driver-photo" src="${esc(photoUrl(d.photoUrl))}" alt="" loading="lazy"
+                data-initials="${esc(initials(d))}">`
+        : `<div class="driver-photo driver-photo-none">${esc(initials(d))}</div>`;
+
+    const meta = [
+        d.queuePosition != null ? `#${d.queuePosition} in queue` : null,
+        d.requiresVerbalAssignment ? 'feature phone' : 'smartphone',
+        d.lastAssignedAt ? `last ride ${fmtAgo(d.lastAssignedAt)}` : 'no ride today',
+    ].filter(Boolean).join(' \u00b7 ');
+
+    return `
+        <div class="driver ${d.recommended ? 'driver-recommended' : ''} ${d.assignable ? '' : 'driver-blocked'}"
+             role="listitem"
+             ${d.assignable && canAssign ? `data-driver="${esc(d.driverId)}" tabindex="0"` : ''}>
+            <div class="driver-key">${hotkey || '\u00b7'}</div>
+            ${photo}
             <div class="driver-main">
                 <div class="driver-name">
                     ${esc(d.firstName)} ${esc(d.lastName)}
                     <span class="driver-unit">${esc(d.unitNumber || d.vehiclePlate)}</span>
                 </div>
                 <div class="driver-reason">${esc(d.reason)}</div>
+                <div class="driver-meta">${esc(meta)}</div>
                 <div class="driver-badges">
                     ${d.badges.map((b) => `<span class="badge badge-${esc(b)}">${esc(b.replace(/_/g, ' '))}</span>`).join('')}
                 </div>
             </div>
             <div class="driver-assign">
                 ${d.assignable && canAssign
-                    ? `<button class="btn btn-primary btn-sm" onclick="assignDriver('${esc(d.driverId)}', ${d.requiresVerbalAssignment})">
-                         ${d.requiresVerbalAssignment ? 'Assign verbally' : 'Assign'}
-                       </button>`
+                    ? `<button class="btn btn-primary btn-sm" data-open-sheet="${esc(d.driverId)}">Choose</button>`
                     : ''}
             </div>
-        </div>`).join('');
+        </div>`;
+}
+
+function initials(d) {
+    return `${(d.firstName || '?')[0]}${(d.lastName || '')[0] || ''}`.toUpperCase();
+}
+
+/** Driver photos are served by the API host, which may differ from the page. */
+function photoUrl(raw) {
+    if (/^https?:/i.test(raw)) return raw;
+    return `${SOCKET_URL}/uploads/${String(raw).replace(/^\/?uploads\/?/, '')}`;
+}
+
+function fmtAgo(iso) {
+    const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return `${mins}m ago`;
+    const hours = Math.round(mins / 60);
+    return hours < 24 ? `${hours}h ago` : `${Math.round(hours / 24)}d ago`;
 }
 
 // ── Actions ──────────────────────────────────────────────────────────────
@@ -919,25 +1009,141 @@ function claimJob(jobId) {
  * it claims to prevent. A wrong assignment is recoverable — the driver declines,
  * or the dispatcher reassigns.
  */
+/*
+ * ── Assignment: choose, check, confirm ──────────────────────────────────
+ *
+ * Two steps on purpose. Tapping a driver opens a sheet; the sheet assigns.
+ *
+ * Phase 4 assigned on the first tap with no confirmation, reasoning that a
+ * dispatcher with a passenger waiting should not have to confirm what they
+ * deliberately pressed. That holds right up until the list re-ranks under a
+ * moving thumb — and then it assigns the wrong driver to a real trip, with no
+ * moment at which anybody could have noticed. The sheet costs one tap and
+ * makes that impossible.
+ */
+let sheetDriver = null;
+
+function openAssignSheet(driverId) {
+    const job = S.queue.find((c) => c.jobId === S.selectedJobId);
+    const driver = S.drivers.find((d) => d.driverId === driverId);
+    if (!job || !driver) return;
+
+    // Re-checked here, not only at render: the board may have moved between
+    // the list being drawn and the thumb landing on it.
+    if (job.claimedByStaffId !== S.me.staffUserId) {
+        toast('Take this request before assigning a driver.', 'warn');
+        return;
+    }
+    if (!driver.assignable) {
+        toast(`${driver.firstName} cannot take this ride: ${driver.reason}`, 'warn');
+        return;
+    }
+
+    sheetDriver = driver;
+
+    $('sheet-driver').textContent = `${driver.firstName} ${driver.lastName}`;
+    $('sheet-unit').textContent = `${driver.unitNumber || driver.vehiclePlate}`
+        + (driver.queuePosition != null ? ` \u00b7 #${driver.queuePosition} in queue` : '');
+
+    const photo = $('sheet-photo');
+    photo.className = 'driver-photo driver-photo-none';
+    photo.textContent = initials(driver);
+    if (driver.photoUrl) {
+        // Swap in the photo only once it has actually loaded, so a missing file
+        // leaves the initials rather than a broken image.
+        const img = new Image();
+        img.onload = () => {
+            photo.className = 'driver-photo';
+            photo.textContent = '';
+            photo.appendChild(img);
+        };
+        img.src = photoUrl(driver.photoUrl);
+        img.alt = '';
+    }
+
+    $('sheet-pickup').textContent = job.pickupAddress || '\u2014';
+    $('sheet-dest').textContent = job.destinationAddress || '\u2014';
+    $('sheet-passenger').textContent = job.passengerName || '\u2014';
+    $('sheet-fare').textContent = `\u20a6${Number(job.estimatedFare || 0).toLocaleString()}`;
+
+    const seconds = Math.round((S.acceptWindowMs || 18000) / 1000);
+    $('sheet-mode').className = `sheet-mode ${driver.requiresVerbalAssignment ? 'sheet-mode-verbal' : 'sheet-mode-electronic'}`;
+    $('sheet-mode').innerHTML = driver.requiresVerbalAssignment
+        ? `<b>Verbal handoff.</b> ${esc(driver.firstName)} has a feature phone.
+           Confirm out loud that they will take this trip before you assign.`
+        : `<b>Sent to their phone.</b> ${esc(driver.firstName)} has ${seconds}s to accept.
+           If they decline or do not answer, the request comes back to you.`;
+
+    $('sheet-confirm').textContent = driver.requiresVerbalAssignment
+        ? 'They agreed \u2014 assign ride' : 'Send to driver';
+    $('sheet-confirm').disabled = false;
+    $('sheet').classList.remove('hidden');
+    $('sheet-confirm').focus();
+}
+
+function closeAssignSheet() {
+    $('sheet').classList.add('hidden');
+    sheetDriver = null;
+}
+
+$('sheet-cancel').addEventListener('click', closeAssignSheet);
+$('sheet').addEventListener('click', (e) => { if (e.target.id === 'sheet') closeAssignSheet(); });
+
+$('sheet-confirm').addEventListener('click', () => {
+    if (!sheetDriver) return;
+    const driver = sheetDriver;
+    $('sheet-confirm').disabled = true;
+    $('sheet-confirm').textContent = 'Assigning\u2026';
+    assignDriver(driver.driverId, driver.requiresVerbalAssignment).finally(closeAssignSheet);
+});
+
+// Delegated, so rows redrawn by a live update keep working.
+$('drivers').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-open-sheet]');
+    if (btn) { openAssignSheet(btn.getAttribute('data-open-sheet')); return; }
+    const row = e.target.closest('[data-driver]');
+    if (row) openAssignSheet(row.getAttribute('data-driver'));
+});
+
 function assignDriver(driverId, verbal) {
     return guard(async () => {
         const jobId = S.selectedJobId;
         if (!jobId) { toast('Select a request first.', 'warn'); return; }
+
+        /*
+         * One key per (job, driver, attempt). If the reply is lost on a bad
+         * connection and the dispatcher retries, the server replays the
+         * original outcome rather than assigning again — so a retry cannot
+         * produce a second assignment, and the dispatcher is not told
+         * "already assigned" for the thing they are still waiting on.
+         */
+        const idempotencyKey = `${jobId}:${driverId}:${S.assignAttempt}`;
+
         try {
             const res = await api(`/dispatcher/requests/${jobId}/assign`, 'POST', {
                 driverId,
                 mode: verbal ? 'verbal' : 'electronic',
+                idempotencyKey,
             });
+            S.assignAttempt += 1;
             if (res.pending) {
-                toast('Offer sent. Waiting for the driver to accept.', 'info', 5000);
+                toast('Sent. Waiting for the driver to accept.', 'info', 5000);
             } else {
                 chime();
-                toast('Assigned. The ride is the driver\'s now — nothing more from you.', 'success', 5000);
+                toast("Assigned. The ride is the driver's now \u2014 nothing more from you.", 'success', 5000);
             }
             await refreshDashboard();
         } catch (err) {
             chime(true); buzz([300]);
-            toast(err.message, 'error', 7000);
+            /*
+             * Never say "assigned" on an error, and never burn the idempotency
+             * key: a timeout means the outcome is genuinely unknown, so the
+             * SAME key must be reusable on retry. The refresh below is what
+             * settles it — the board is the truth, not the button.
+             */
+            toast(!err.status
+                ? 'Could not reach the server. Check the board before trying again.'
+                : err.message, 'error', 7000);
             await refreshDashboard();
         }
     });
@@ -988,6 +1194,13 @@ document.addEventListener('keydown', (e) => {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     if ($('workspace').classList.contains('hidden')) return;
 
+    /*
+     * With the sheet open it owns the keyboard. Enter confirms it natively
+     * (the confirm button holds focus) and Escape closes it; nothing else
+     * should reach the board underneath.
+     */
+    if (!$('sheet').classList.contains('hidden') && e.key !== 'Escape') return;
+
     const index = S.queue.findIndex((c) => c.jobId === S.selectedJobId);
     const selected = S.queue[index];
 
@@ -1009,6 +1222,9 @@ document.addEventListener('keydown', (e) => {
             e.preventDefault(); $('queue-search').focus();
             break;
         case 'Escape':
+            // The sheet first: Escape should back out of the decision, not
+            // just drop focus behind an open dialog.
+            if (!$('sheet').classList.contains('hidden')) { closeAssignSheet(); break; }
             document.activeElement?.blur();
             break;
         case 's': case 'S':
@@ -1021,20 +1237,25 @@ document.addEventListener('keydown', (e) => {
             if (selected) escalateJob(selected.jobId);
             break;
         case 'v': case 'V': {
-            // Assign the recommended driver verbally — the feature-phone path,
-            // which is the common case at most parks.
-            const d = S.drivers.find((x) => x.assignable);
-            if (d) assignDriver(d.driverId, true);
+            // The recommended driver — the answer the dispatcher wanted in most
+            // cases. Opens the sheet like every other route to an assignment;
+            // no key assigns anybody outright.
+            const first = S.assignableOrder[0];
+            if (first) openAssignSheet(first);
+            else toast('No driver here can take a ride right now.', 'warn');
             break;
         }
         default: {
-            // 1–9 assign the nth listed driver. The recommended one is always
-            // first, so "1" is the answer the dispatcher wanted in most cases.
+            /*
+             * 1–9 address ASSIGNABLE drivers in display order, not the raw
+             * list. With the roster grouped, the nth row on screen is often
+             * someone who cannot be assigned at all, and a number key that
+             * sometimes means "the third driver" and sometimes means "the
+             * third row" is a number key nobody can trust.
+             */
             if (/^[1-9]$/.test(e.key)) {
-                const d = S.drivers.filter((x) => matches(
-                    `${x.firstName} ${x.lastName} ${x.unitNumber} ${x.vehiclePlate}`, S.driverFilter))[Number(e.key) - 1];
-                if (d && d.assignable) assignDriver(d.driverId, d.requiresVerbalAssignment);
-                else if (d) toast(d.reason, 'warn');
+                const driverId = S.assignableOrder[Number(e.key) - 1];
+                if (driverId) openAssignSheet(driverId);
             }
         }
     }
@@ -1048,9 +1269,57 @@ document.addEventListener('visibilitychange', () => {
     }
 });
 
-window.addEventListener('online', () => { if (S.socket) S.socket.connect(); });
+/*
+ * ── Why every handler here is delegated ─────────────────────────────────
+ *
+ * The API sets a strict Content-Security-Policy, and helmet's default includes
+ * `script-src-attr 'none'` — which blocks INLINE EVENT HANDLERS outright, not
+ * just inline <script> blocks. An `onclick="claimJob(...)"` attribute silently
+ * does nothing in production.
+ *
+ * This was live for a while and no screenshot caught it, because every earlier
+ * check drove the API directly instead of tapping the actual buttons. Taking a
+ * request, skipping, escalating and rejecting were all dead on a real device.
+ *
+ * So: no inline handlers anywhere. Everything is a data attribute plus one
+ * listener on a container, which also survives the list being re-rendered
+ * under the dispatcher's thumb by a live update.
+ */
+const QUEUE_ACTIONS = { claim: claimJob, skip: skipJob, escalate: escalateJob, reject: rejectJob };
 
-// Expose the handlers the inline markup calls.
-Object.assign(window, { selectJob, claimJob, assignDriver, skipJob, rejectJob, escalateJob });
+$('queue').addEventListener('click', (e) => {
+    const actionBtn = e.target.closest('[data-act]');
+    if (actionBtn) {
+        e.stopPropagation();
+        const fn = QUEUE_ACTIONS[actionBtn.getAttribute('data-act')];
+        if (fn) fn(actionBtn.getAttribute('data-job'));
+        return;
+    }
+    const card = e.target.closest('[data-job]');
+    if (card) selectJob(card.getAttribute('data-job'));
+});
+
+// Keyboard parity: a card is focusable, so Enter/Space must select it too.
+$('queue').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const card = e.target.closest('.card[data-job]');
+    if (!card) return;
+    e.preventDefault();
+    selectJob(card.getAttribute('data-job'));
+});
+
+/*
+ * Image errors do not bubble, so this listens in the CAPTURE phase. Replacing
+ * the <img> with its initials keeps a missing file from showing a broken-image
+ * glyph next to a driver's name.
+ */
+$('drivers').addEventListener('error', (e) => {
+    const img = e.target;
+    if (!(img instanceof HTMLImageElement) || !img.dataset.initials) return;
+    const fallback = document.createElement('div');
+    fallback.className = 'driver-photo driver-photo-none';
+    fallback.textContent = img.dataset.initials;
+    img.replaceWith(fallback);
+}, true);
 
 boot();

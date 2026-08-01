@@ -33,7 +33,7 @@ import { Ride } from '../models/Ride';
 import { User } from '../models/User';
 import { DriverProfile } from '../models/DriverProfile';
 import { ParkDispatchJob, ParkJobStatus, ParkAssignmentMode } from '../models/ParkDispatchJob';
-import { DispatchEventType } from '../models/DispatchEvent';
+import { DispatchEvent, DispatchEventType } from '../models/DispatchEvent';
 import { ParkDispatchJobRepository } from '../repositories/park_dispatch_job_repository';
 import { ParkRepository } from '../repositories/park_repository';
 import { ParkSelectionService } from './park_selection_service';
@@ -134,6 +134,22 @@ export interface QueueCard {
     /** How many parks this ride has already been offered to, including this one. */
     parksTried: number;
     estimatedTravelMinutes: number | null;
+    /** Straight-line km from the park to the pickup. */
+    parkToPickupKm: number | null;
+    /**
+     * What direct dispatch actually did before the park was asked.
+     *
+     * A dispatcher who can see "2 rounds, 6 drivers, nobody answered" treats
+     * the request differently from one that failed because no driver was
+     * online at all — and it stops the recurring question of whether the app
+     * "even tried" before ringing the park.
+     */
+    directDispatch: {
+        roundsRun: number;
+        driversOffered: number;
+        driversDeclined: number;
+        summary: string;
+    } | null;
     /** Deadline for the current step, so the device can count down. */
     expiresAt: Date;
     claimedByStaffId: string | null;
@@ -351,6 +367,8 @@ export class ParkDispatchService {
             .getRawMany<{ rideId: string; count: string }>();
         const attemptsBy = new Map(attempts.map((a) => [a.rideId, Number(a.count)]));
 
+        const directBy = await this.directDispatchSummaries(rideIds);
+
         const now = Date.now();
         return jobs.map((job) => {
             const ride = rideBy.get(job.rideId);
@@ -379,12 +397,69 @@ export class ParkDispatchService {
                 queuedSeconds: Math.max(0, Math.round((now - new Date(job.offeredAt).getTime()) / 1000)),
                 parksTried: attemptsBy.get(job.rideId) ?? 1,
                 estimatedTravelMinutes: job.estimatedTravelMinutes,
+                parkToPickupKm: job.parkToPickupKm != null ? Number(job.parkToPickupKm) : null,
+                directDispatch: directBy.get(job.rideId) ?? null,
                 expiresAt: job.status === ParkJobStatus.CLAIMED && job.assignmentDeadlineAt
                     ? job.assignmentDeadlineAt
                     : job.offerExpiresAt,
                 claimedByStaffId: job.claimedByStaffId,
             };
         });
+    }
+
+    /**
+     * Summarise what direct dispatch did for each ride, from the event trail it
+     * already writes. Read-only — nothing here influences dispatch, it only
+     * reports what happened before the park was involved.
+     */
+    private static async directDispatchSummaries(
+        rideIds: string[],
+    ): Promise<Map<string, QueueCard['directDispatch']>> {
+        const out = new Map<string, QueueCard['directDispatch']>();
+        if (rideIds.length === 0) return out;
+
+        const rows = await AppDataSource.getRepository(DispatchEvent)
+            .createQueryBuilder('e')
+            .select('e."rideId"', 'rideId')
+            .addSelect('e."eventType"', 'eventType')
+            .addSelect('COUNT(*)', 'count')
+            .where('e."rideId" IN (:...rideIds)', { rideIds })
+            .andWhere('e."eventType" IN (:...types)', {
+                types: [
+                    DispatchEventType.ROUND_STARTED,
+                    // "Offered" means the offer reached a transport, which is
+                    // the honest bar: SOCKET_OFFER_EMITTED is a write to a
+                    // connected socket, not proof the driver saw it.
+                    DispatchEventType.SOCKET_OFFER_EMITTED,
+                    DispatchEventType.DRIVER_REJECTED,
+                ],
+            })
+            .groupBy('e."rideId"')
+            .addGroupBy('e."eventType"')
+            .getRawMany<{ rideId: string; eventType: string; count: string }>();
+
+        const byRide = new Map<string, Record<string, number>>();
+        for (const row of rows) {
+            const bucket = byRide.get(row.rideId) ?? {};
+            bucket[row.eventType] = Number(row.count);
+            byRide.set(row.rideId, bucket);
+        }
+
+        for (const [rideId, counts] of byRide) {
+            const roundsRun = counts[DispatchEventType.ROUND_STARTED] ?? 0;
+            const driversOffered = counts[DispatchEventType.SOCKET_OFFER_EMITTED] ?? 0;
+            const driversDeclined = counts[DispatchEventType.DRIVER_REJECTED] ?? 0;
+
+            // Written as a dispatcher would say it, not as a metric.
+            const summary = driversOffered === 0
+                ? 'No driver was free to ring'
+                : driversDeclined >= driversOffered
+                    ? `${driversOffered} driver${driversOffered === 1 ? '' : 's'} rang, all declined`
+                    : `${driversOffered} driver${driversOffered === 1 ? '' : 's'} rang, no answer`;
+
+            out.set(rideId, { roundsRun, driversOffered, driversDeclined, summary });
+        }
+        return out;
     }
 
     /** Take responsibility for sourcing a driver. */

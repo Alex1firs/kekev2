@@ -2,10 +2,10 @@
  * Park Dispatch fallback: configuration, park ranking, priority and the
  * guarantees that keep direct dispatch untouched.
  *
- * The most important test in this file is the first one. Park Dispatch is
- * DEFAULT OFF, and a deploy that silently turned it on would change how every
- * unfilled ride behaves. Everything else here protects the ranking and the
- * boundary between the two channels.
+ * The first block pins the launch posture: Park Dispatch is DEFAULT ON as of
+ * the Monday launch, and — more importantly — turning it OFF has to actually
+ * work, in every spelling an operator might reach for. Everything else here
+ * protects the ranking and the boundary between the two channels.
  */
 import { loadParkDispatchConfig, computeJobPriority, PRIORITY_LABEL } from '../../src/config/park_dispatch_config';
 import { ASSIGNABLE_PRESENCE_STATES } from '../../src/services/park_selection_service';
@@ -15,29 +15,59 @@ import { LIVE_JOB_STATUSES } from '../../src/repositories/park_dispatch_job_repo
 import { DispatchEventType } from '../../src/models/DispatchEvent';
 import { loadDispatchConfig, MAX_SUPPORTED_ROUNDS } from '../../src/config/dispatch_config';
 
-describe('the fallback is off by default', () => {
+describe('the launch flag', () => {
     const original = process.env.PARK_DISPATCH_ENABLED;
     afterEach(() => {
         if (original == null) delete process.env.PARK_DISPATCH_ENABLED;
         else process.env.PARK_DISPATCH_ENABLED = original;
     });
 
-    it('is disabled unless explicitly enabled', () => {
+    it('is on when nothing is set — the shipped launch posture', () => {
         delete process.env.PARK_DISPATCH_ENABLED;
-        expect(loadParkDispatchConfig().enabled).toBe(false);
+        expect(loadParkDispatchConfig().enabled).toBe(true);
     });
 
-    it('is not enabled by a truthy-looking value that is not "true"', () => {
-        for (const value of ['1', 'yes', 'on', 'TRUE ', '']) {
+    /**
+     * The kill switch has to work in whatever spelling the person reaching for
+     * it at 09:00 actually types. Under the previous strict `=== 'true'` test
+     * this was harmless, because anything unrecognised meant "off" and off was
+     * the default. With the default flipped to on, an unrecognised value would
+     * have silently kept it ON — so each of these is now load-bearing.
+     */
+    it('turns off for every spelling of no', () => {
+        for (const value of ['false', 'FALSE', '0', 'no', 'off', ' Off ']) {
             process.env.PARK_DISPATCH_ENABLED = value;
-            const enabled = loadParkDispatchConfig().enabled;
-            // Only an exact case-insensitive "true" counts.
-            expect(enabled).toBe(value.trim().toLowerCase() === 'true');
+            expect(loadParkDispatchConfig().enabled).toBe(false);
         }
     });
 
-    it('turns on with exactly "true"', () => {
-        process.env.PARK_DISPATCH_ENABLED = 'true';
+    it('turns on for every spelling of yes', () => {
+        for (const value of ['true', 'TRUE', '1', 'yes', 'on', ' On ']) {
+            process.env.PARK_DISPATCH_ENABLED = value;
+            expect(loadParkDispatchConfig().enabled).toBe(true);
+        }
+    });
+
+    /**
+     * A value nobody can interpret must not be guessed at in either direction:
+     * it keeps the default and warns. Silently reading "maybe" as "off" would
+     * take dispatch down for a typo.
+     */
+    it('keeps the default when the value is not a boolean at all', () => {
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+            for (const value of ['maybe', 'enabled', 'sure']) {
+                process.env.PARK_DISPATCH_ENABLED = value;
+                expect(loadParkDispatchConfig().enabled).toBe(true);
+            }
+            expect(warn).toHaveBeenCalled();
+        } finally {
+            warn.mockRestore();
+        }
+    });
+
+    it('an empty value is not a decision — it keeps the default', () => {
+        process.env.PARK_DISPATCH_ENABLED = '';
         expect(loadParkDispatchConfig().enabled).toBe(true);
     });
 });

@@ -13,6 +13,36 @@ const API_BASE = (() => {
 })();
 let ADMIN_KEY = sessionStorage.getItem('KEKE_ADMIN_KEY') || '';
 
+// --- Staff identity ---
+// A staff session takes precedence over the legacy shared key everywhere. The
+// key path survives only so an operator is never locked out mid-migration; see
+// docs/admin_auth_migration.md.
+let STAFF_TOKEN   = sessionStorage.getItem('KEKE_STAFF_TOKEN') || '';
+let STAFF_REFRESH = sessionStorage.getItem('KEKE_STAFF_REFRESH') || '';
+let STAFF_ME = null;              // { id, firstName, lastName, roles, ... }
+let STAFF_PERMISSIONS = new Set();
+
+/** The base URL for non-admin API calls (staff auth lives outside /admin). */
+const API_ROOT = API_BASE.replace(/\/admin$/, '');
+
+function isStaffSession() { return !!STAFF_TOKEN; }
+
+/** Whether the signed-in actor holds a permission. Legacy keys hold very few. */
+function can(permission) { return STAFF_PERMISSIONS.has(permission); }
+
+/**
+ * Hide every control the current actor cannot use.
+ *
+ * Presentational only — the server denies the same actions independently. A
+ * hidden button is a courtesy, never a security boundary.
+ */
+function applyPermissionGating() {
+    document.querySelectorAll('[data-requires-permission]').forEach(el => {
+        const needed = el.getAttribute('data-requires-permission');
+        el.classList.toggle('hidden', !can(needed));
+    });
+}
+
 // --- XSS Protection ---
 function escapeHtml(str) {
   if (str == null) return '';
@@ -42,7 +72,18 @@ function captureElements() {
 
 // --- Init ---
 async function init() {
-    if (!ADMIN_KEY) { showLoginScreen(); return; }
+    if (!ADMIN_KEY && !STAFF_TOKEN) { showLoginScreen(); return; }
+
+    // Resolve who we are before rendering anything, so the navigation and the
+    // action buttons reflect real authority rather than being drawn and then
+    // retracted.
+    if (STAFF_TOKEN) {
+        const ok = await loadStaffIdentity();
+        if (!ok) { showLoginScreen(); return; }
+    } else {
+        // Legacy key: the four monitoring permissions and nothing else.
+        STAFF_PERMISSIONS = new Set(['monitor:read', 'metrics:read', 'admin:write', 'monitor:reveal_contact']);
+    }
 
     document.body.classList.remove('auth-loading');
     document.body.classList.add('authenticated');
@@ -57,6 +98,9 @@ async function init() {
     setupNavigation();
     setupAuthListeners();
     setupSettingsForm();
+    setupStaffListeners();
+    applyPermissionGating();
+    renderActorBadge();
 
     document.getElementById('btn-view-sos')?.addEventListener('click', () => {
         switchSection('sos-alerts');
@@ -113,6 +157,9 @@ function switchSection(id) {
     if (id === 'driver-dispatch-metrics') fetchDispatchMetrics();
     if (id === 'sos-alerts')    fetchSosAlerts();
     if (id === 'audit-log')     fetchAuditLog();
+    if (id === 'staff')         fetchStaffList();
+    if (id === 'role-matrix')   fetchRoleMatrix();
+    if (id === 'staff-audit')   fetchStaffAudit();
     if (id === 'settings')      fetchSettings();
 }
 
@@ -123,6 +170,80 @@ function showLoginScreen() {
 
     const envSelect = document.getElementById('admin-env-select');
     if (envSelect) envSelect.value = ADMIN_ENV;
+
+    // --- Mode tabs: staff account (primary) vs legacy key (fallback) ---
+    const staffTab   = document.getElementById('tab-staff-login');
+    const legacyTab  = document.getElementById('tab-legacy-login');
+    const staffForm  = document.getElementById('staff-login-form');
+    const legacyForm = document.getElementById('login-form');
+    const subtitle   = document.getElementById('login-subtitle');
+
+    function selectMode(mode) {
+        const staff = mode === 'staff';
+        staffTab?.classList.toggle('active', staff);
+        legacyTab?.classList.toggle('active', !staff);
+        staffForm?.classList.toggle('hidden', !staff);
+        legacyForm?.classList.toggle('hidden', staff);
+        if (subtitle) {
+            subtitle.innerText = staff
+                ? 'Sign in with your KekeRide staff account.'
+                : 'Legacy shared key — limited access, not attributed to you.';
+        }
+    }
+    staffTab?.addEventListener('click', () => selectMode('staff'));
+    legacyTab?.addEventListener('click', () => selectMode('legacy'));
+    selectMode('staff');
+
+    function apiRootForEnv(env) {
+        const host = window.location.hostname;
+        if (host === 'localhost' || host === '127.0.0.1') {
+            return env === 'staging' ? 'http://localhost:3000/api/v1' : 'http://localhost:4000/api/v1';
+        }
+        return env === 'staging' ? 'https://staging.kekeride.ng/api/v1' : 'https://api.kekeride.ng/api/v1';
+    }
+
+    // --- Staff sign-in ---
+    if (staffForm) {
+        staffForm.onsubmit = async (e) => {
+            e.preventDefault();
+            const email = document.getElementById('staff-email-input').value.trim();
+            const password = document.getElementById('staff-password-input').value;
+            const env = envSelect ? envSelect.value : 'production';
+            const btn = document.getElementById('btn-staff-login');
+            if (!email || !password) return;
+
+            btn.disabled = true;
+            btn.querySelector('.btn-spinner').classList.remove('hidden');
+            try {
+                const res = await fetch(`${apiRootForEnv(env)}/staff/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password }),
+                });
+                const data = await res.json().catch(() => ({}));
+                if (res.ok && data.accessToken) {
+                    sessionStorage.setItem('KEKE_STAFF_TOKEN', data.accessToken);
+                    sessionStorage.setItem('KEKE_STAFF_REFRESH', data.refreshToken || '');
+                    sessionStorage.setItem('KEKE_ADMIN_ENV', env);
+                    // A staff session supersedes any stored shared key on this
+                    // workstation — two credentials in one browser is how an
+                    // action ends up attributed to the wrong one.
+                    sessionStorage.removeItem('KEKE_ADMIN_KEY');
+                    showToast('Signed in', 'success');
+                    location.reload();
+                } else {
+                    // The server returns one message for every credential
+                    // failure; do not embellish it here.
+                    showToast(data.message || 'Incorrect email or password.', 'error');
+                }
+            } catch {
+                showToast('Connection failed', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.querySelector('.btn-spinner').classList.add('hidden');
+            }
+        };
+    }
 
     const form = document.getElementById('login-form');
     form.onsubmit = async (e) => {
@@ -173,8 +294,80 @@ function setupAuthListeners() {
 }
 
 function handleLogout() {
+    // End the session server-side first so the refresh token dies with it —
+    // clearing sessionStorage alone would leave a usable credential behind.
+    if (isStaffSession()) {
+        fetch(`${API_ROOT}/staff/auth/logout`, {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        }).catch(() => {}).finally(() => {
+            sessionStorage.removeItem('KEKE_STAFF_TOKEN');
+            sessionStorage.removeItem('KEKE_STAFF_REFRESH');
+            sessionStorage.removeItem('KEKE_ADMIN_KEY');
+            location.reload();
+        });
+        return;
+    }
     sessionStorage.removeItem('KEKE_ADMIN_KEY');
     location.reload();
+}
+
+/** Exchange the refresh token for a new access token. Returns true on success. */
+async function tryRefreshStaffSession() {
+    if (!STAFF_REFRESH) return false;
+    try {
+        const res = await fetch(`${API_ROOT}/staff/auth/refresh`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ refreshToken: STAFF_REFRESH }),
+        });
+        if (!res.ok) return false;
+        const data = await res.json();
+        STAFF_TOKEN = data.accessToken;
+        STAFF_REFRESH = data.refreshToken;
+        sessionStorage.setItem('KEKE_STAFF_TOKEN', STAFF_TOKEN);
+        sessionStorage.setItem('KEKE_STAFF_REFRESH', STAFF_REFRESH);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+function handleStaffSessionExpired() {
+    sessionStorage.removeItem('KEKE_STAFF_TOKEN');
+    sessionStorage.removeItem('KEKE_STAFF_REFRESH');
+    showToast('Your session has expired. Please sign in again.', 'error');
+    setTimeout(() => location.reload(), 1200);
+}
+
+/** Load the signed-in staff member and their effective permissions. */
+async function loadStaffIdentity() {
+    try {
+        let res = await fetch(`${API_ROOT}/staff/auth/me`, { headers: authHeaders() });
+        if (res.status === 401 && await tryRefreshStaffSession()) {
+            res = await fetch(`${API_ROOT}/staff/auth/me`, { headers: authHeaders() });
+        }
+        if (!res.ok) return false;
+        const data = await res.json();
+        STAFF_ME = data.staff;
+        STAFF_PERMISSIONS = new Set(data.permissions || []);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+/** Show who is signed in, and make a legacy session impossible to miss. */
+function renderActorBadge() {
+    const holder = document.querySelector('.admin-profile span:last-child');
+    if (!holder) return;
+    if (STAFF_ME) {
+        holder.innerHTML = `${escapeHtml(STAFF_ME.firstName)} ${escapeHtml(STAFF_ME.lastName)}
+            <small class="actor-roles">${escapeHtml((STAFF_ME.roles || []).join(', '))}</small>`;
+    } else {
+        holder.innerHTML = `<span class="legacy-actor-chip" title="Actions are recorded as SYSTEM_LEGACY_ADMIN">
+            <i class="fas fa-triangle-exclamation"></i> Legacy shared key</span>`;
+    }
 }
 
 // --- UI Helpers ---
@@ -188,14 +381,37 @@ function showToast(message, type = 'info') {
 }
 
 // --- API ---
+/** Auth header for the current actor: staff bearer token, else the legacy key. */
+function authHeaders() {
+    return isStaffSession()
+        ? { 'Authorization': `Bearer ${STAFF_TOKEN}` }
+        : { 'x-admin-key': ADMIN_KEY };
+}
+
 async function adminFetch(endpoint, method = 'GET', body = null) {
     try {
         const options = {
             method,
-            headers: { 'x-admin-key': ADMIN_KEY, 'Content-Type': 'application/json' },
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
             body: body ? JSON.stringify(body) : null
         };
         const res = await fetch(`${API_BASE}${endpoint}`, options);
+
+        // A staff access token is short-lived. One transparent refresh-and-retry
+        // keeps a working session from dumping somebody back to the login screen
+        // mid-task; a second failure is a genuinely dead session.
+        if (res.status === 401 && isStaffSession() && !endpoint.startsWith('/__retry')) {
+            const refreshed = await tryRefreshStaffSession();
+            if (refreshed) {
+                const retry = await fetch(`${API_BASE}${endpoint}`, {
+                    ...options,
+                    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+                });
+                if (retry.ok) return await retry.json();
+            }
+            handleStaffSessionExpired();
+            throw new Error('Session expired');
+        }
 
         if (res.status === 429) {
             showToast('Rate limit exceeded. Please wait.', 'error');
@@ -1116,6 +1332,384 @@ function setupSettingsForm() {
                 }
             }
         };
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Staff Management
+// ═══════════════════════════════════════════════════════════════════════════
+
+const STAFF_ROLES = [
+    'SUPER_ADMIN', 'OPERATIONS_ADMIN', 'PARK_SUPERVISOR',
+    'PARK_DISPATCHER', 'CASHIER', 'SUPPORT_OFFICER', 'READ_ONLY_ANALYST',
+];
+
+let staffPage = 1;
+let staffAuditPage = 1;
+
+function setupStaffListeners() {
+    const roleFilter = document.getElementById('staff-role-filter');
+    if (roleFilter && roleFilter.options.length <= 1) {
+        STAFF_ROLES.forEach(r => {
+            const opt = document.createElement('option');
+            opt.value = r; opt.textContent = r.replace(/_/g, ' ');
+            roleFilter.appendChild(opt);
+        });
+    }
+
+    let searchTimer = null;
+    document.getElementById('staff-search')?.addEventListener('input', () => {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => { staffPage = 1; fetchStaffList(); }, 350);
+    });
+    document.getElementById('staff-status-filter')?.addEventListener('change', () => { staffPage = 1; fetchStaffList(); });
+    document.getElementById('staff-role-filter')?.addEventListener('change', () => { staffPage = 1; fetchStaffList(); });
+    document.getElementById('btn-new-staff')?.addEventListener('click', openCreateStaffModal);
+
+    document.getElementById('btn-audit-filter')?.addEventListener('click', () => { staffAuditPage = 1; fetchStaffAudit(); });
+    document.getElementById('btn-audit-export')?.addEventListener('click', exportStaffAudit);
+}
+
+function statusChip(status) {
+    const tone = {
+        active: 'success', invited: 'info', locked: 'warn',
+        suspended: 'error', deactivated: 'muted',
+    }[status] || 'muted';
+    return `<span class="chip chip-${tone}">${escapeHtml(status)}</span>`;
+}
+
+async function fetchStaffList() {
+    if (!can('staff:read')) return;
+    const params = new URLSearchParams({ page: String(staffPage), pageSize: '25' });
+    const search = document.getElementById('staff-search')?.value.trim();
+    const status = document.getElementById('staff-status-filter')?.value;
+    const role   = document.getElementById('staff-role-filter')?.value;
+    if (search) params.set('search', search);
+    if (status) params.set('status', status);
+    if (role)   params.set('role', role);
+
+    try {
+        const data = await adminFetch(`/staff?${params.toString()}`);
+        renderStaffList(data);
+    } catch { /* adminFetch has already surfaced the error */ }
+}
+
+function renderStaffList(data) {
+    const list = document.getElementById('staff-list');
+    if (!list) return;
+
+    if (!data.items.length) {
+        list.innerHTML = '<tr><td colspan="7">No staff accounts match these filters.</td></tr>';
+        document.getElementById('staff-pager').innerHTML = '';
+        return;
+    }
+
+    list.innerHTML = data.items.map(s => `
+        <tr>
+            <td>${escapeHtml(s.firstName)} ${escapeHtml(s.lastName)}</td>
+            <td>${escapeHtml(s.email)}</td>
+            <td style="font-family:monospace;">${escapeHtml(s.phone || '—')}</td>
+            <td>${s.roles.map(r => `<span class="chip chip-role">${escapeHtml(r.replace(/_/g, ' '))}</span>`).join(' ') || '—'}</td>
+            <td>${statusChip(s.status)}</td>
+            <td>${s.lastLoginAt ? new Date(s.lastLoginAt).toLocaleString() : 'never'}</td>
+            <td>
+                <button class="btn-small" onclick="openStaffDetail('${escapeHtml(s.id)}')">Open</button>
+            </td>
+        </tr>
+    `).join('');
+
+    const pages = Math.max(1, Math.ceil(data.total / data.pageSize));
+    document.getElementById('staff-pager').innerHTML = `
+        <button class="btn-small" ${data.page <= 1 ? 'disabled' : ''} onclick="changeStaffPage(-1)">Previous</button>
+        <span>Page ${data.page} of ${pages} · ${data.total} accounts</span>
+        <button class="btn-small" ${data.page >= pages ? 'disabled' : ''} onclick="changeStaffPage(1)">Next</button>`;
+}
+
+function changeStaffPage(delta) {
+    staffPage = Math.max(1, staffPage + delta);
+    fetchStaffList();
+}
+
+function closeStaffModal() {
+    document.getElementById('staff-modal')?.remove();
+}
+
+function staffModalShell(title, innerHtml) {
+    closeStaffModal();
+    const el = document.createElement('div');
+    el.id = 'staff-modal';
+    el.className = 'modal-overlay';
+    el.innerHTML = `
+        <div class="modal-card">
+            <div class="modal-head">
+                <h3>${escapeHtml(title)}</h3>
+                <button class="btn-small" onclick="closeStaffModal()">✕</button>
+            </div>
+            <div class="modal-body">${innerHtml}</div>
+        </div>`;
+    document.body.appendChild(el);
+    return el;
+}
+
+function openCreateStaffModal() {
+    if (!can('staff:create')) return;
+    staffModalShell('New staff member', `
+        <form id="create-staff-form" class="stack">
+            <label>First name <input id="cs-first" required></label>
+            <label>Last name <input id="cs-last" required></label>
+            <label>Email <input id="cs-email" type="email" required></label>
+            <label>Phone <input id="cs-phone" required placeholder="08012345678"></label>
+            <fieldset class="roles-field">
+                <legend>Roles</legend>
+                ${STAFF_ROLES.map(r => `
+                    <label class="check"><input type="checkbox" value="${r}" name="cs-role"> ${escapeHtml(r.replace(/_/g, ' '))}</label>
+                `).join('')}
+            </fieldset>
+            <p class="section-note">
+                No password is set here. The account is created in <strong>INVITED</strong>
+                state and a single-use setup link is shown once, on the next screen.
+            </p>
+            <button type="submit" class="btn-primary full-width">Create account</button>
+        </form>`);
+
+    document.getElementById('create-staff-form').onsubmit = async (e) => {
+        e.preventDefault();
+        const roles = [...document.querySelectorAll('input[name="cs-role"]:checked')].map(i => i.value);
+        if (!roles.length) return showToast('Select at least one role', 'error');
+        try {
+            const result = await adminFetch('/staff', 'POST', {
+                firstName: document.getElementById('cs-first').value.trim(),
+                lastName:  document.getElementById('cs-last').value.trim(),
+                email:     document.getElementById('cs-email').value.trim(),
+                phone:     document.getElementById('cs-phone').value.trim(),
+                roles,
+            });
+            showSetupTokenModal(result.staff, result.setupToken, result.setupTokenExpiresAt);
+            fetchStaffList();
+        } catch { /* surfaced by adminFetch */ }
+    };
+}
+
+/**
+ * The setup token is displayed exactly once — the server keeps only its hash.
+ * Making that explicit here stops somebody closing the dialog expecting to find
+ * it again later.
+ */
+function showSetupTokenModal(staff, token, expiresAt) {
+    staffModalShell('Account created', `
+        <p>Account for <strong>${escapeHtml(staff.firstName)} ${escapeHtml(staff.lastName)}</strong> is ready.</p>
+        <p class="section-note">
+            Deliver this setup token over a trusted channel. It is shown
+            <strong>once</strong> — it cannot be retrieved again, only reissued.
+        </p>
+        <pre class="token-box" id="setup-token-box">${escapeHtml(token)}</pre>
+        <p class="section-note">Expires ${new Date(expiresAt).toLocaleString()}</p>
+        <button class="btn-secondary" onclick="navigator.clipboard.writeText(document.getElementById('setup-token-box').innerText).then(()=>showToast('Copied','success'))">
+            Copy token
+        </button>
+        <button class="btn-primary" onclick="closeStaffModal()">Done</button>`);
+}
+
+async function openStaffDetail(id) {
+    try {
+        const data = await adminFetch(`/staff/${id}`);
+        const s = data.staff;
+        const canManage = can('staff:suspend');
+        const canRoles  = can('staff:assign_roles');
+        const canReset  = can('staff:reset_credentials');
+
+        staffModalShell(`${s.firstName} ${s.lastName}`, `
+            <div class="detail-grid">
+                <div><span>Status</span>${statusChip(s.status)}</div>
+                <div><span>Email</span>${escapeHtml(s.email)}</div>
+                <div><span>Phone</span>${escapeHtml(s.phone || '—')}</div>
+                <div><span>Last login</span>${s.lastLoginAt ? new Date(s.lastLoginAt).toLocaleString() : 'never'}</div>
+                <div><span>Password changed</span>${s.lastPasswordChangeAt ? new Date(s.lastPasswordChangeAt).toLocaleString() : '—'}</div>
+                <div><span>MFA</span>${s.mfaEnabled ? 'Enabled' : 'Not enrolled'}</div>
+                ${s.suspensionReason ? `<div><span>Suspension reason</span>${escapeHtml(s.suspensionReason)}</div>` : ''}
+            </div>
+
+            <h4>Roles</h4>
+            <fieldset class="roles-field" ${canRoles ? '' : 'disabled'}>
+                ${STAFF_ROLES.map(r => `
+                    <label class="check">
+                        <input type="checkbox" name="sd-role" value="${r}" ${s.roles.includes(r) ? 'checked' : ''}>
+                        ${escapeHtml(r.replace(/_/g, ' '))}
+                    </label>`).join('')}
+            </fieldset>
+            ${canRoles ? `
+                <label>Reason (required when removing a role)
+                    <input id="sd-role-reason" placeholder="Why is this changing?">
+                </label>
+                <button class="btn-primary" onclick="saveStaffRoles('${escapeHtml(s.id)}')">Save roles</button>` : ''}
+
+            <h4>Effective permissions</h4>
+            <div class="perm-list">
+                ${s.permissions.length
+                    ? s.permissions.map(p => `<code>${escapeHtml(p)}</code>`).join(' ')
+                    : '<em>None — a staff member who is not ACTIVE holds no permissions.</em>'}
+            </div>
+
+            <h4>Account actions</h4>
+            <div class="action-row">
+                ${canManage && s.status !== 'suspended' && s.status !== 'deactivated'
+                    ? `<button class="btn-danger" onclick="staffAction('${escapeHtml(s.id)}','suspend','Suspend this account')">Suspend</button>` : ''}
+                ${canManage && (s.status === 'suspended' || s.status === 'locked')
+                    ? `<button class="btn-secondary" onclick="staffReactivate('${escapeHtml(s.id)}')">Reactivate</button>` : ''}
+                ${canReset && s.status !== 'deactivated'
+                    ? `<button class="btn-secondary" onclick="staffAction('${escapeHtml(s.id)}','reset-credentials','Reset credentials and end all sessions')">Reset credentials</button>` : ''}
+                ${canManage && s.status !== 'deactivated'
+                    ? `<button class="btn-danger" onclick="staffAction('${escapeHtml(s.id)}','deactivate','Permanently deactivate this account')">Deactivate</button>` : ''}
+            </div>
+
+            <h4>Recent actions</h4>
+            <div class="table-container compact">
+                <table>
+                    <thead><tr><th>Time</th><th>Action</th><th>Resource</th><th>Outcome</th></tr></thead>
+                    <tbody>
+                        ${data.recentActions.length ? data.recentActions.map(a => `
+                            <tr>
+                                <td>${new Date(a.createdAt).toLocaleString()}</td>
+                                <td>${escapeHtml(a.action)}</td>
+                                <td>${escapeHtml(a.resourceType)}</td>
+                                <td>${escapeHtml(a.outcome)}</td>
+                            </tr>`).join('')
+                            : '<tr><td colspan="4">No recorded actions.</td></tr>'}
+                    </tbody>
+                </table>
+            </div>`);
+    } catch { /* surfaced by adminFetch */ }
+}
+
+async function saveStaffRoles(id) {
+    const roles = [...document.querySelectorAll('input[name="sd-role"]:checked')].map(i => i.value);
+    if (!roles.length) return showToast('At least one role is required', 'error');
+    const reason = document.getElementById('sd-role-reason')?.value.trim() || null;
+    try {
+        await adminFetch(`/staff/${id}/roles`, 'PUT', { roles, reason });
+        showToast('Roles updated — existing sessions ended', 'success');
+        closeStaffModal();
+        fetchStaffList();
+    } catch { /* surfaced */ }
+}
+
+/** Suspend / deactivate / reset — each requires a written reason. */
+async function staffAction(id, action, title) {
+    const reason = prompt(`${title}.\n\nReason (required, recorded in the audit log):`);
+    if (reason == null) return;
+    if (!reason.trim()) return showToast('A reason is required', 'error');
+    try {
+        const result = await adminFetch(`/staff/${id}/${action}`, 'POST', { reason: reason.trim() });
+        if (result.setupToken) {
+            showSetupTokenModal(result.staff, result.setupToken, result.setupTokenExpiresAt);
+        } else {
+            showToast('Done', 'success');
+            closeStaffModal();
+        }
+        fetchStaffList();
+    } catch { /* surfaced */ }
+}
+
+async function staffReactivate(id) {
+    try {
+        await adminFetch(`/staff/${id}/reactivate`, 'POST', {});
+        showToast('Account reactivated', 'success');
+        closeStaffModal();
+        fetchStaffList();
+    } catch { /* surfaced */ }
+}
+
+// ── Role matrix ────────────────────────────────────────────────────────────
+
+async function fetchRoleMatrix() {
+    try {
+        const data = await adminFetch('/staff/role-matrix');
+        const body = document.getElementById('role-matrix-body');
+        if (!body) return;
+        body.innerHTML = data.roles.map(r => `
+            <div class="role-card">
+                <h4>${escapeHtml(r.role.replace(/_/g, ' '))}</h4>
+                <div class="perm-list">
+                    ${r.permissions.map(p => `<code>${escapeHtml(p)}</code>`).join(' ')}
+                </div>
+                <small>${r.permissions.length} permissions</small>
+            </div>`).join('');
+    } catch { /* surfaced */ }
+}
+
+// ── Staff audit ────────────────────────────────────────────────────────────
+
+function auditFilterParams() {
+    const params = new URLSearchParams({ page: String(staffAuditPage), pageSize: '50' });
+    const map = {
+        actor:        'audit-actor-filter',
+        action:       'audit-action-filter',
+        resourceType: 'audit-resource-filter',
+        from:         'audit-from-filter',
+        to:           'audit-to-filter',
+        outcome:      'audit-outcome-filter',
+    };
+    for (const [key, elementId] of Object.entries(map)) {
+        const value = document.getElementById(elementId)?.value.trim();
+        if (value) params.set(key, value);
+    }
+    return params;
+}
+
+async function fetchStaffAudit() {
+    if (!can('audit:read')) return;
+    try {
+        const data = await adminFetch(`/audit/events?${auditFilterParams().toString()}`);
+        const list = document.getElementById('staff-audit-list');
+        if (!list) return;
+
+        list.innerHTML = data.items.length ? data.items.map(e => `
+            <tr class="${e.outcome === 'denied' ? 'row-denied' : ''}">
+                <td>${new Date(e.createdAt).toLocaleString()}</td>
+                <td>${e.actorIsLegacy
+                        ? '<span class="chip chip-warn">Legacy key</span>'
+                        : escapeHtml(e.actorName || e.actorStaffUserId)}</td>
+                <td><small>${escapeHtml((e.actorRoleSnapshot || '').replace(/,/g, ', ') || '—')}</small></td>
+                <td>${escapeHtml(e.action)}</td>
+                <td><small>${escapeHtml(e.resourceType)}${e.resourceId ? ' · ' + escapeHtml(e.resourceId) : ''}</small></td>
+                <td>${escapeHtml(e.outcome)}</td>
+                <td>${escapeHtml(e.reason || '—')}</td>
+            </tr>`).join('')
+            : '<tr><td colspan="7">No audit events match these filters.</td></tr>';
+
+        const pages = Math.max(1, Math.ceil(data.total / data.pageSize));
+        document.getElementById('staff-audit-pager').innerHTML = `
+            <button class="btn-small" ${data.page <= 1 ? 'disabled' : ''} onclick="changeAuditPage(-1)">Previous</button>
+            <span>Page ${data.page} of ${pages} · ${data.total} events</span>
+            <button class="btn-small" ${data.page >= pages ? 'disabled' : ''} onclick="changeAuditPage(1)">Next</button>`;
+    } catch { /* surfaced */ }
+}
+
+function changeAuditPage(delta) {
+    staffAuditPage = Math.max(1, staffAuditPage + delta);
+    fetchStaffAudit();
+}
+
+/** CSV export. Gated on audit:export, and the export itself is audited. */
+async function exportStaffAudit() {
+    if (!can('audit:export')) return showToast('You do not have export permission', 'error');
+    const reason = prompt('Reason for this export (recorded in the audit log):');
+    if (reason == null) return;
+    try {
+        const res = await fetch(`${API_BASE}/audit/events/export?limit=5000&reason=${encodeURIComponent(reason)}`, {
+            headers: authHeaders(),
+        });
+        if (!res.ok) return showToast('Export failed', 'error');
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'staff-audit.csv';
+        a.click();
+        URL.revokeObjectURL(url);
+        showToast('Export downloaded', 'success');
+    } catch {
+        showToast('Export failed', 'error');
     }
 }
 

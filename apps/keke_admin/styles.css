@@ -821,3 +821,260 @@ body.authenticated .admin-container { display: flex; }
 .lr-tl-offer_delivery_failed .lr-tl-label { color: #ff8f8f; }
 .lr-tl-round_transition .lr-tl-label, .lr-tl-round_started .lr-tl-label { color: #f5c37a; font-weight: 600; }
 .lr-tl-device_offer_ack .lr-tl-label { color: #8fd0ff; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Staff identity: login modes, staff management, role matrix, staff audit
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* --- Login mode tabs --- */
+.login-mode-tabs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 18px;
+    background: rgba(255, 255, 255, 0.04);
+    padding: 4px;
+    border-radius: 10px;
+}
+.login-tab {
+    flex: 1;
+    padding: 9px 12px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 0.86rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+.login-tab.active {
+    background: var(--accent-amber);
+    color: #14181f;
+}
+.legacy-warning {
+    margin-top: 14px;
+    font-size: 0.78rem;
+    line-height: 1.5;
+    color: #e6a15c;
+    text-align: left;
+}
+.legacy-warning i { margin-right: 5px; }
+
+/* Signed-in actor, top right. A legacy session must never look ordinary. */
+.actor-roles {
+    display: block;
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+    font-weight: 400;
+}
+.legacy-actor-chip {
+    background: rgba(230, 161, 92, 0.15);
+    color: #e6a15c;
+    border: 1px solid rgba(230, 161, 92, 0.4);
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 0.78rem;
+    font-weight: 600;
+}
+
+/* --- Toolbars, pagers, notes --- */
+.staff-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 18px;
+    align-items: center;
+}
+.staff-toolbar input,
+.staff-toolbar select {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    color: inherit;
+    padding: 9px 12px;
+    border-radius: 8px;
+    font-size: 0.86rem;
+    min-width: 150px;
+}
+.section-note {
+    color: var(--text-secondary);
+    font-size: 0.86rem;
+    line-height: 1.6;
+    margin: 8px 0 18px;
+    max-width: 760px;
+}
+.pager {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    justify-content: center;
+    margin-top: 16px;
+    color: var(--text-secondary);
+    font-size: 0.84rem;
+}
+
+/* --- Chips --- */
+.chip {
+    display: inline-block;
+    padding: 3px 9px;
+    border-radius: 20px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+}
+.chip-success { background: rgba(16, 185, 129, 0.16); color: #34d399; }
+.chip-info    { background: rgba(96, 165, 250, 0.16); color: #93c5fd; }
+.chip-warn    { background: rgba(230, 161, 92, 0.16);  color: #e6a15c; }
+.chip-error   { background: rgba(244, 63, 94, 0.16);   color: #fb7185; }
+.chip-muted   { background: rgba(148, 163, 184, 0.14); color: #94a3b8; }
+.chip-role {
+    background: rgba(255, 204, 0, 0.12);
+    color: var(--accent-amber);
+    margin-right: 4px;
+}
+
+/* Denied attempts must stand out — they are the interesting rows. */
+.row-denied { background: rgba(244, 63, 94, 0.07); }
+
+/* --- Buttons --- */
+.btn-small {
+    padding: 5px 12px;
+    font-size: 0.78rem;
+    border-radius: 7px;
+    border: 1px solid var(--border-color);
+    background: var(--card-bg);
+    color: inherit;
+    cursor: pointer;
+}
+.btn-small:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-secondary {
+    padding: 9px 16px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    background: var(--card-bg);
+    color: inherit;
+    cursor: pointer;
+    font-weight: 600;
+}
+.btn-danger {
+    padding: 9px 16px;
+    border-radius: 8px;
+    border: 1px solid rgba(244, 63, 94, 0.5);
+    background: rgba(244, 63, 94, 0.12);
+    color: #fb7185;
+    cursor: pointer;
+    font-weight: 600;
+}
+
+/* --- Modal --- */
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.68);
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 40px 20px;
+    overflow-y: auto;
+    z-index: 900;
+}
+.modal-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    width: min(720px, 100%);
+    padding: 24px;
+}
+.modal-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 18px;
+}
+.modal-body h4 {
+    margin: 22px 0 10px;
+    font-size: 0.92rem;
+    color: var(--accent-amber);
+}
+.stack { display: flex; flex-direction: column; gap: 14px; }
+.stack label,
+.modal-body > label {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 0.84rem;
+    color: var(--text-secondary);
+}
+.stack input,
+.modal-body > label input {
+    background: #171b22;
+    border: 1px solid var(--border-color);
+    color: #e2e8f0;
+    padding: 10px 12px;
+    border-radius: 8px;
+}
+.roles-field {
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 14px;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 10px;
+}
+.roles-field legend { padding: 0 6px; font-size: 0.8rem; color: var(--text-secondary); }
+.roles-field:disabled { opacity: 0.55; }
+.check {
+    flex-direction: row !important;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.82rem;
+    color: #e2e8f0;
+}
+
+.detail-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 14px;
+}
+.detail-grid > div { display: flex; flex-direction: column; gap: 4px; font-size: 0.86rem; }
+.detail-grid span { font-size: 0.72rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.04em; }
+
+.perm-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.perm-list code {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border-color);
+    padding: 3px 8px;
+    border-radius: 6px;
+    font-size: 0.74rem;
+    color: #cbd5e1;
+}
+
+.action-row { display: flex; flex-wrap: wrap; gap: 10px; }
+
+/* A one-time secret: monospaced, selectable, obviously not ordinary copy. */
+.token-box {
+    background: #0f1319;
+    border: 1px dashed var(--accent-amber);
+    border-radius: 10px;
+    padding: 14px;
+    font-family: monospace;
+    font-size: 0.86rem;
+    color: var(--accent-amber);
+    word-break: break-all;
+    user-select: all;
+}
+
+.role-matrix-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 16px;
+}
+.role-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    padding: 18px;
+}
+.role-card h4 { color: var(--accent-amber); margin-bottom: 12px; font-size: 0.92rem; }
+.role-card small { display: block; margin-top: 12px; color: var(--text-secondary); font-size: 0.75rem; }
+
+.table-container.compact table { font-size: 0.8rem; }

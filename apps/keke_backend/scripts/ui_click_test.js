@@ -9,7 +9,8 @@
 const { spawn } = require('child_process');
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-const BASE = 'http://127.0.0.1:4100/dispatch/index.html';
+// Overridable so the same clicks can be driven against staging over HTTPS.
+const BASE = process.argv[2] || 'http://127.0.0.1:4100/dispatch/index.html';
 
 let pass = 0, fail = 0;
 const ok = (m) => { console.log(`  PASS  ${m}`); pass++; };
@@ -62,7 +63,10 @@ async function main() {
     await send('Page.navigate', { url: BASE }); await sleep(2000);
     await js(`(async()=>{const r=await fetch('/api/v1/staff/auth/login',{method:'POST',
         headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({identifier:'chidi@kekeride.test',password:'KekeDemo-Pass99'})});
+        body:JSON.stringify(${JSON.stringify({
+            identifier: process.env.DISPATCHER_EMAIL || 'chidi@kekeride.test',
+            password: process.env.DISPATCHER_PASSWORD || 'KekeDemo-Pass99',
+        })})});
         const d=await r.json(); sessionStorage.setItem('KD_TOKEN',d.accessToken);
         sessionStorage.setItem('KD_REFRESH',d.refreshToken); sessionStorage.setItem('KD_SOUND','off');})()`, true);
     // Open a shift if this dispatcher is not already on one, so the script is

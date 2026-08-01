@@ -7,7 +7,9 @@
  */
 const { spawn } = require('child_process');
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-const BASE = 'http://127.0.0.1:4100/dispatch/';
+// Overridable so the same audit can be run against staging over real HTTPS,
+// which is the only environment the launch gate accepts.
+const BASE = process.argv[2] || process.env.PWA_AUDIT_URL || 'http://127.0.0.1:4100/dispatch/';
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 let pass = 0, fail = 0;
@@ -21,7 +23,9 @@ async function main() {
         `--remote-debugging-port=${PORT}`, `--user-data-dir=${profile}`,
         // 127.0.0.1 is already a secure context; stated explicitly so the
         // audit matches what an https:// deployment will do.
-        `--unsafely-treat-insecure-origin-as-secure=http://127.0.0.1:4100`,
+        // Only needed for a plain-http origin. Harmless (and ignored) for
+        // https, where the origin is already a secure context.
+        `--unsafely-treat-insecure-origin-as-secure=${new URL(BASE).origin}`,
         'about:blank'], { stdio: 'ignore' });
 
     let target;
@@ -107,7 +111,10 @@ async function main() {
     const signedIn = await evalJs(`(async () => {
         const r = await fetch('/api/v1/staff/auth/login', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ identifier: 'chidi@kekeride.test', password: 'KekeDemo-Pass99' }) });
+            body: JSON.stringify(${JSON.stringify({
+                identifier: process.env.DISPATCHER_EMAIL || 'chidi@kekeride.test',
+                password: process.env.DISPATCHER_PASSWORD || 'KekeDemo-Pass99',
+            })}) });
         const d = await r.json();
         if (!d.accessToken) return 'login failed: ' + (d.message || r.status);
         sessionStorage.setItem('KD_TOKEN', d.accessToken);

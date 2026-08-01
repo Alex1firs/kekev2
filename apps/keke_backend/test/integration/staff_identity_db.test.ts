@@ -76,11 +76,12 @@ describeDb('staff identity (database)', () => {
 
         // Own Postgres schema, not `public`.
         //
-        // test/integration/dispatch-db.test.ts also runs with dropSchema:true
-        // against the same TEST_DATABASE_URL, and Jest runs test FILES in
-        // parallel workers — so sharing `public` means whichever suite starts
-        // second drops the other's tables mid-run. Scoping to a private schema
-        // makes the two independent.
+        // Jest runs test FILES in parallel workers against the same
+        // TEST_DATABASE_URL, so any two suites sharing `public` with
+        // dropSchema:true means whichever starts second drops the other's
+        // tables mid-run. Every integration suite here is now scoped to a
+        // private schema, which also stops a stray TEST_DATABASE_URL from
+        // dropping a real database's public schema.
         ds = new DataSource({
             type: 'postgres',
             url: TEST_DB,

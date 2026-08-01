@@ -49,20 +49,34 @@ Two ways, for two situations.
 Redis-backed override. Takes effect on the **next request**. No restart, no
 deploy, no 502s.
 
+**Changing the switch needs a real staff login, not the shared admin key.**
+`PARK_SUSPEND` is on `LEGACY_FORBIDDEN_PERMISSIONS` — a shared secret has no
+human behind it, and the whole point of this action is being attributable. Use a
+SUPER_ADMIN or OPERATIONS_ADMIN account. **Make sure at least one such account
+has a working password before launch day**; discovering this at 09:00 is the
+wrong time.
+
 ```bash
+API=https://api.kekeride.ng/api/v1
+
+TOKEN=$(curl -sX POST $API/staff/auth/login -H 'Content-Type: application/json' \
+  -d '{"email":"ops@…","password":"…"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["accessToken"])')
+
 # Off
-curl -sX POST https://api.kekeride.ng/api/v1/admin/park-dispatch/switch \
-  -H "x-admin-key: $ADMIN_API_KEY" -H 'Content-Type: application/json' \
+curl -sX POST $API/admin/park-dispatch/switch \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -d '{"disabled":true,"reason":"dispatchers cannot reach the tablet"}'
 
 # Back on
-curl -sX POST https://api.kekeride.ng/api/v1/admin/park-dispatch/switch \
-  -H "x-admin-key: $ADMIN_API_KEY" -H 'Content-Type: application/json' \
+curl -sX POST $API/admin/park-dispatch/switch \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -d '{"disabled":false}'
+```
 
-# What is the current state?
-curl -s https://api.kekeride.ng/api/v1/admin/park-dispatch/switch \
-  -H "x-admin-key: $ADMIN_API_KEY"
+Reading the state is less restricted — the shared key is fine:
+
+```bash
+curl -s $API/admin/park-dispatch/switch -H "x-admin-key: $ADMIN_API_KEY"
 ```
 
 A reason is **required** to disable and is written to the audit trail with
@@ -147,7 +161,18 @@ event.
       the park.
 - [ ] `STAFF_JWT_SECRET` is set (otherwise it is HMAC-derived from `JWT_SECRET`,
       which works but is worth doing properly).
-- [ ] `curl /api/v1/admin/park-dispatch/switch` reports `accepting: true`.
+- [ ] An operations account with `PARK_SUSPEND` exists and its password works —
+      the kill switch cannot be used without one.
+- [ ] Run the verification script; it must exit 0:
+
+      API=https://api.kekeride.ng/api/v1 ADMIN_KEY=… \
+        OPS_EMAIL=… OPS_PASSWORD=… \
+        DISPATCHER_EMAIL=… DISPATCHER_PASSWORD=… \
+        ./scripts/verify_park_dispatch.sh
+
+      It checks the switch, park readiness, the privilege boundaries and that
+      passenger numbers are masked, and it drills the kill switch off and back
+      on — leaving it on, and failing loudly if it cannot.
 - [ ] Open `/dispatcher` on the actual tablet, sign in, open a shift.
 
 ---

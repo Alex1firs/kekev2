@@ -83,6 +83,17 @@ services:
       retries: 3
     volumes:
       - uploads_data:/app/uploads
+      # The Park Dispatch PWA.
+      #
+      # It lives in apps/keke_dispatcher, a sibling of this service, so the
+      # Docker build context (apps/keke_backend) cannot see it and the image
+      # does not contain it — /dispatch would 404.
+      #
+      # Mounted read-only at /keke_dispatcher because that is exactly where
+      # src/index.ts already looks: __dirname is /app/dist, and its first
+      # candidate is ../../keke_dispatcher. No code change, and the same
+      # pattern nginx_gateway already uses for the admin dashboard.
+      - /opt/kekev2/apps/keke_dispatcher:/keke_dispatcher:ro
 
   api_staging:
     build: .
@@ -135,6 +146,17 @@ services:
       retries: 3
     volumes:
       - uploads_data:/app/uploads
+      # The Park Dispatch PWA.
+      #
+      # It lives in apps/keke_dispatcher, a sibling of this service, so the
+      # Docker build context (apps/keke_backend) cannot see it and the image
+      # does not contain it — /dispatch would 404.
+      #
+      # Mounted read-only at /keke_dispatcher because that is exactly where
+      # src/index.ts already looks: __dirname is /app/dist, and its first
+      # candidate is ../../keke_dispatcher. No code change, and the same
+      # pattern nginx_gateway already uses for the admin dashboard.
+      - /opt/kekev2/apps/keke_dispatcher:/keke_dispatcher:ro
 
   nginx_gateway:
     image: nginx:alpine

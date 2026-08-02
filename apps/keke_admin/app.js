@@ -437,8 +437,25 @@ async function adminFetch(endpoint, method = 'GET', body = null) {
         }
 
         if (!res.ok) {
-            showToast(data.error || 'Request failed', 'error');
-            throw new Error(data.error);
+            /*
+             * Show the server's own sentence.
+             *
+             * This read `data.error`, which the API has never returned: every
+             * failure body is `errBody(code, message)` — `{ code, message }`.
+             * So the fallback fired every single time and every error in this
+             * dashboard, whatever it was, read "Request failed".
+             *
+             * That is worse than useless when the server has already written
+             * the answer. Trying to issue a badge to a driver with no KYC photo
+             * returned a 400 saying exactly that, three times, and all anybody
+             * could see was "Request failed".
+             *
+             * `error` stays first in the chain so any older endpoint still
+             * using that shape keeps working.
+             */
+            const message = data.message || data.error || `Request failed (HTTP ${res.status})`;
+            showToast(message, 'error');
+            throw new Error(message);
         }
         return data;
     } catch (e) {
@@ -1113,7 +1130,8 @@ window.uploadDriverDoc = async function(userId, docType, input) {
         });
         if (!res.ok) {
             const data = await res.json().catch(() => ({}));
-            throw new Error(data.error || `HTTP ${res.status}`);
+            // `message` first: that is the field errBody actually sets.
+            throw new Error(data.message || data.error || `HTTP ${res.status}`);
         }
         showToast('Document replaced successfully', 'success');
     } catch (e) {

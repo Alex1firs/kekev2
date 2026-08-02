@@ -942,10 +942,26 @@ export class ParkDispatchService {
     /**
      * Escalate to a human.
      *
-     * Deliberately NOT a cancellation. The ride keeps searching and the existing
-     * stale-ride coordination continues to own it, exactly as
-     * `escalatedToSupportAt` does elsewhere in the platform. Escalation means
-     * "somebody look at this", never "this is over".
+     * Escalation means "somebody look at this", never "this is over" — so the
+     * event, the audit row and the admin broadcast are the point of it.
+     *
+     * ── Why the ride is released anyway ─────────────────────────────────
+     * It used to be held: the job resolved to ESCALATED and the ride was
+     * deliberately left `searching` on the reasoning that a human now owned it.
+     * Nothing was ever built for that human to act with. There is no endpoint,
+     * no screen and no sweeper that can resolve an escalated job, so the ride
+     * sat searching forever, no park was ever offered it again, and the
+     * passenger's app refused to let them book anything else — "you already
+     * have a ride in progress" — with no way out but reinstalling or waiting
+     * for somebody to edit the database. That happened on the first day of live
+     * testing.
+     *
+     * A passenger must never be held hostage to a support process. The ride is
+     * now released exactly as skip and reject release it: another park may take
+     * it, or it fails cleanly and the passenger is told and can rebook. The
+     * escalation is still recorded and still reaches operations — what changes
+     * is that the person waiting on a street corner is no longer the one paying
+     * for our lack of tooling.
      */
     static async escalate(actor: AuditActor, jobId: string, reason: string, ctx: { ipAddress?: string | null; correlationId?: string | null } = {}): Promise<void> {
         await this.resolve(actor, jobId, ParkJobStatus.ESCALATED, reason, DispatchEventType.PARK_ESCALATED,
@@ -998,11 +1014,14 @@ export class ParkDispatchService {
             ...ctx,
         });
 
-        // Skip and reject free the ride to try the next park (or to fail). An
-        // escalation deliberately does not — a human is looking at it.
-        if (status !== ParkJobStatus.ESCALATED) {
-            await this.releaseRide(job.rideId);
-        }
+        /*
+         * Every terminal outcome frees the ride, escalation included.
+         *
+         * Holding it for escalation stranded the passenger: nothing exists that
+         * can resolve an escalated job, so the ride searched forever and its
+         * owner could not book another. See the note on `escalate`.
+         */
+        await this.releaseRide(job.rideId);
     }
 
     /**

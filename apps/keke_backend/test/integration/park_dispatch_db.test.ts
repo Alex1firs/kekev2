@@ -649,14 +649,38 @@ describeDb('park dispatch fallback (database)', () => {
             expect(String((await ds.getRepository(Ride).findOneBy({ rideId: ride.rideId }))!.status)).toBe('failed');
         });
 
-        it('escalate does NOT fail the ride — it keeps searching', async () => {
-            // Escalation means "somebody look at this", never "this is over".
+        /*
+         * This test used to assert the opposite — that escalation left the ride
+         * searching, because "somebody is looking at it". Nothing was ever built
+         * for that somebody to look with: no endpoint, no screen, no sweeper can
+         * resolve an escalated job.
+         *
+         * On the first day of live testing a dispatcher escalated a request and
+         * the ride searched forever. The passenger's app then refused to let
+         * them book anything else — "you already have a ride in progress" — with
+         * no way out. The escalation is still recorded and still reaches
+         * operations; the passenger is simply no longer held hostage to it.
+         */
+        it('escalate records the escalation AND releases the ride', async () => {
             const { dispatcherActor, jobId, ride } = await claimed();
             await ParkDispatchService.escalate(dispatcherActor, jobId, 'passenger unreachable, needs support');
 
             expect((await ParkDispatchJobRepository.findById(jobId))!.status).toBe(ParkJobStatus.ESCALATED);
+
+            // Released like skip and reject: no park left to try, so it fails
+            // cleanly and the passenger is told rather than left waiting.
             const fresh = await ds.getRepository(Ride).findOneBy({ rideId: ride.rideId });
-            expect(String(fresh!.status)).toBe('searching');
+            expect(String(fresh!.status)).toBe('failed');
+        });
+
+        it('leaves no live job behind, so the passenger can book again', async () => {
+            const { dispatcherActor, jobId, ride } = await claimed();
+            await ParkDispatchService.escalate(dispatcherActor, jobId, 'needs support');
+
+            // The specific shape of the bug: an orphaned ride nothing owns.
+            const live = await ParkDispatchJobRepository.findLiveForRide(ride.rideId);
+            expect(live).toBeNull();
+            expect(jobId).toBeTruthy();
         });
 
         it('an already-resolved job cannot be resolved twice', async () => {

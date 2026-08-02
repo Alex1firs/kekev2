@@ -1004,9 +1004,15 @@ body.authenticated .admin-container { display: flex; }
     font-size: 0.84rem;
     color: var(--text-secondary);
 }
+/*
+ * `select` is included because the modals have always had one — the zone form's
+ * kind picker — and it rendered as a default light-grey control on a dark card.
+ */
 .stack input,
+.stack select,
 .stack textarea,
 .modal-body > label input,
+.modal-body > label select,
 .modal-body > label textarea {
     background: #171b22;
     border: 1px solid var(--border-color);

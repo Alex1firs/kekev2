@@ -1932,6 +1932,13 @@ function renderParkDetail(detail, roster, queue) {
             <div><span>Supervisor</span>${escapeHtml(p.supervisorName || 'not assigned')}</div>
         </div>
 
+        ${can('park:assign_dispatcher') ? `
+            <div class="action-row">
+                <button class="btn-secondary" onclick="openAssignSupervisorModal('${escapeHtml(p.parkId)}')">
+                    ${p.supervisorStaffId ? 'Change supervisor' : 'Assign supervisor'}
+                </button>
+            </div>` : ''}
+
         <h4>On duty now</h4>
         ${detail.onDuty.length ? `
             <div class="table-container compact">
@@ -2121,6 +2128,74 @@ function openCreateZoneModal(parkId) {
             closeStaffModal();
             openParkDetail(parkId);
         } catch { /* surfaced */ }
+    };
+}
+
+/**
+ * Nominate the supervisor a park is accountable to.
+ *
+ * ── Why this exists ─────────────────────────────────────────────────────
+ * `PUT /parks/:parkId/supervisor` has been there since parks were built, and
+ * nothing in this dashboard ever called it. The park detail page displayed the
+ * supervisor's name and offered no way to set one — so "no supervisor assigned"
+ * appeared as an activation blocker with no control anywhere that could clear
+ * it, and a park could be created but never opened.
+ *
+ * Only staff already holding PARK_SUPERVISOR are offered. The server enforces
+ * that too and rejects anyone else; listing everybody would just invite a
+ * rejection after the choice was made.
+ */
+async function openAssignSupervisorModal(parkId) {
+    let candidates = [];
+    try {
+        const data = await adminFetch('/staff?role=PARK_SUPERVISOR&status=active&pageSize=100');
+        candidates = data.items || [];
+    } catch { return; /* surfaced by adminFetch */ }
+
+    if (!candidates.length) {
+        /*
+         * A dead end without directions is what sent somebody looking for this
+         * control in the first place. Say where the missing thing is made.
+         */
+        staffModalShell('No eligible supervisor', `
+            <p>Nobody holds the <strong>PARK SUPERVISOR</strong> role yet, so there is
+               nobody this park can be made accountable to.</p>
+            <p class="section-note">
+                Go to <strong>Staff → New staff</strong>, create the person with the
+                <strong>PARK SUPERVISOR</strong> role ticked, and send them their
+                activation link. They appear here once they are active.
+            </p>
+            <button class="btn-primary full-width" onclick="closeStaffModal()">Close</button>`);
+        return;
+    }
+
+    staffModalShell('Assign supervisor', `
+        <form id="assign-supervisor-form" class="stack">
+            <label>Supervisor
+                <select id="as-staff">
+                    <option value="">— nobody —</option>
+                    ${candidates.map(s => `
+                        <option value="${escapeHtml(s.id)}">
+                            ${escapeHtml(s.firstName)} ${escapeHtml(s.lastName)} · ${escapeHtml(s.email)}
+                        </option>`).join('')}
+                </select>
+            </label>
+            <p class="section-note">
+                The person answerable for this park — the one escalated to when a
+                dispatcher cannot resolve something. Recorded in the audit log.
+            </p>
+            <button type="submit" class="btn-primary full-width">Save</button>
+        </form>`);
+
+    document.getElementById('assign-supervisor-form').onsubmit = async (e) => {
+        e.preventDefault();
+        const staffUserId = document.getElementById('as-staff').value || null;
+        try {
+            await adminFetch(`/parks/${parkId}/supervisor`, 'PUT', { staffUserId });
+            showToast(staffUserId ? 'Supervisor assigned' : 'Supervisor cleared', 'success');
+            closeStaffModal();
+            openParkDetail(parkId);
+        } catch { /* surfaced by adminFetch */ }
     };
 }
 

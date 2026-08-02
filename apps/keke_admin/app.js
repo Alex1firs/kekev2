@@ -159,6 +159,8 @@ function switchSection(id) {
     if (id === 'driver-dispatch-metrics') fetchDispatchMetrics();
     if (id === 'sos-alerts')    fetchSosAlerts();
     if (id === 'audit-log')     fetchAuditLog();
+    if (id === 'operations')    { fetchOperations(); startOperationsPolling(); }
+    else stopOperationsPolling();
     if (id === 'parks')         fetchParks();
     if (id === 'park-dispatch') fetchParkDispatch();
     if (id === 'badges')        fetchBadges();
@@ -1814,6 +1816,137 @@ function fmtDuration(seconds) {
     if (m < 60) return `${m}m`;
     return `${Math.floor(m / 60)}h ${m % 60}m`;
 }
+
+// ── Operations overview ────────────────────────────────────────────────────
+//
+// Every park, live, with the reason any of them cannot take work.
+//
+// The reasons come from the server — the same derivation the dispatcher's own
+// board uses — so the two screens cannot end up explaining one failure in two
+// different ways. This file only decides how they look.
+
+let opsTimer = null;
+
+async function fetchOperations() {
+    try {
+        const data = await adminFetch('/operations/overview');
+        renderOperations(data);
+    } catch { /* surfaced by adminFetch */ }
+}
+
+function renderOperations(data) {
+    const t = data.totals;
+
+    document.getElementById('ops-totals').innerHTML = `
+        ${opsTotal('Parks', t.parks)}
+        ${opsTotal('Cannot dispatch', t.parksBlocked, t.parksBlocked ? 'bad' : 'good')}
+        ${opsTotal('Dispatchers on shift', t.dispatchersOnShift, t.dispatchersOnShift ? '' : 'warn')}
+        ${opsTotal('Drivers present', t.driversPresent, t.driversPresent ? '' : 'warn')}
+        ${opsTotal('Requests waiting', t.waitingRequests)}
+        ${opsTotal('Active trips', t.activeTrips)}`;
+
+    /*
+     * A system-wide pause outranks anything per-park: with it on, every park
+     * would otherwise show its own "suspended" line and bury the one fact that
+     * explains all of them.
+     */
+    const banner = document.getElementById('ops-banner');
+    if (data.suspended || !data.parkDispatchEnabled) {
+        banner.innerHTML = `
+            <div class="ops-alert">
+                <strong>Park Dispatch is not accepting new requests.</strong>
+                ${escapeHtml(data.suspendedReason || 'Disabled in configuration.')}
+            </div>`;
+    } else {
+        banner.innerHTML = '';
+    }
+
+    // Broken parks first — this screen is opened when something is wrong.
+    const parks = [...data.parks].sort((a, b) =>
+        (a.canDispatch === b.canDispatch ? 0 : a.canDispatch ? 1 : -1));
+
+    document.getElementById('ops-parks').innerHTML = parks.length
+        ? parks.map(opsCard).join('')
+        : '<p class="section-note">No parks exist yet.</p>';
+
+    document.getElementById('ops-updated').textContent =
+        `Updated ${new Date(data.generatedAt).toLocaleTimeString()}`;
+}
+
+function opsTotal(label, value, tone = '') {
+    return `<div class="ops-total ${tone}"><span>${value}</span><label>${escapeHtml(label)}</label></div>`;
+}
+
+function opsCard(p) {
+    return `
+    <article class="ops-card ${p.canDispatch ? '' : 'ops-card-blocked'}">
+        <header>
+            <div>
+                <b>${escapeHtml(p.name)}</b>
+                <small>${escapeHtml(p.code)}${p.city ? ' · ' + escapeHtml(p.city) : ''}</small>
+            </div>
+            <span class="chip ${p.canDispatch ? 'chip-success' : 'chip-error'}">
+                ${p.canDispatch ? 'Dispatching' : 'Cannot dispatch'}
+            </span>
+        </header>
+
+        <div class="ops-metrics">
+            ${opsMetric('On shift', p.dispatchersOnShift, p.dispatchersOnShift ? '' : 'warn')}
+            ${opsMetric('Present', p.driversPresent, p.driversPresent ? '' : 'bad')}
+            ${/*
+               * Present and assignable are different numbers and the gap is the
+               * subtlest failure in the system: a request is sent to a park on
+               * presence alone, and the dispatcher then finds nobody they can
+               * actually assign. Showing both side by side is what makes that
+               * visible without reading anything.
+               */''}
+            ${opsMetric('Assignable', p.driversAssignable,
+                p.driversAssignable === 0 && p.driversPresent > 0 ? 'bad' : '')}
+            ${opsMetric('Waiting', p.waitingRequests, p.waitingRequests ? 'warn' : '')}
+            ${opsMetric('On trip', p.activeTrips)}
+            ${opsMetric('Roster', p.rosterActive)}
+        </div>
+
+        ${p.blockers.length ? `
+            <ul class="ops-blockers">
+                ${p.blockers.map((b) => `
+                    <li class="ops-${escapeHtml(b.severity)}">${escapeHtml(b.message)}</li>`).join('')}
+            </ul>` : ''}
+
+        ${p.dispatcherNames.length
+            ? `<p class="section-note">On duty: ${p.dispatcherNames.map(escapeHtml).join(', ')}</p>`
+            : ''}
+
+        <button class="btn-secondary" onclick="openParkDetail('${escapeHtml(p.parkId)}')">Open park</button>
+    </article>`;
+}
+
+function opsMetric(label, value, tone = '') {
+    return `<div class="ops-metric ${tone}"><span>${value}</span><label>${escapeHtml(label)}</label></div>`;
+}
+
+/**
+ * Poll only while the section is on screen.
+ *
+ * A timer left running behind another tab is a request every fifteen seconds
+ * forever, and this endpoint touches every park.
+ */
+function startOperationsPolling() {
+    stopOperationsPolling();
+    if (!document.getElementById('ops-auto')?.checked) return;
+    opsTimer = setInterval(() => {
+        if (document.hidden) return;
+        if (document.getElementById('operations')?.classList.contains('hidden')) return;
+        fetchOperations();
+    }, 15000);
+}
+
+function stopOperationsPolling() {
+    if (opsTimer) { clearInterval(opsTimer); opsTimer = null; }
+}
+
+document.getElementById('ops-refresh')?.addEventListener('click', fetchOperations);
+document.getElementById('ops-auto')?.addEventListener('change', startOperationsPolling);
 
 // ── Park list ──────────────────────────────────────────────────────────────
 

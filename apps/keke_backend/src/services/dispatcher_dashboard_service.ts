@@ -18,6 +18,7 @@ import { ParkRepository, ParkCounts } from '../repositories/park_repository';
 import { ParkDispatchJobRepository } from '../repositories/park_dispatch_job_repository';
 import { DispatcherShiftRepository } from '../repositories/dispatcher_shift_repository';
 import { ParkDispatchService, QueueCard } from './park_dispatch_service';
+import { OperationsOverviewService, ParkOverviewRow } from './operations_overview_service';
 import { DriverRecommendationService, RecommendedDriver } from './driver_recommendation_service';
 import { DriverPresenceService } from './driver_presence_service';
 import { DispatcherShiftService, ShiftDto } from './dispatcher_shift_service';
@@ -63,6 +64,11 @@ export interface DispatcherDashboard {
     myShift: ShiftDto | null;
     onDuty: ShiftDto[];
     parkHealth: ParkHealth;
+    /**
+     * Why this park cannot be sent a ride, when it cannot. Null only if the
+     * park vanished between the request and this query.
+     */
+    readiness: ParkOverviewRow | null;
     /** Stated explicitly so no client invents a lifecycle capability. */
     capabilities: {
         canClaim: boolean;
@@ -157,6 +163,19 @@ export class DispatcherDashboardService {
             myShift,
             onDuty,
             parkHealth: await this.parkHealth(park),
+            /**
+             * Why this park cannot currently be sent a ride, if it cannot.
+             *
+             * An empty queue has two very different meanings — nobody has asked
+             * for a ride, or nothing can reach us — and they looked identical
+             * on the board. The dispatcher who watched an empty screen for
+             * twenty minutes because no driver had been marked present is the
+             * reason this is here.
+             *
+             * Shares its derivation with the operations overview so both
+             * screens say the same thing in the same words.
+             */
+            readiness: await OperationsOverviewService.forPark(parkId),
             capabilities: {
                 canClaim: myShift != null,
                 canAssign: myShift != null,

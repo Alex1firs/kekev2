@@ -12,6 +12,7 @@
  */
 import { Router, Response } from 'express';
 import { ParkService } from '../services/park_service';
+import { OperationsOverviewService } from '../services/operations_overview_service';
 import { ParkRosterService } from '../services/park_roster_service';
 import { DispatcherShiftService } from '../services/dispatcher_shift_service';
 import { DriverPresenceService } from '../services/driver_presence_service';
@@ -50,6 +51,28 @@ function fail(res: Response, err: any, fallback: string) {
     console.error('[PARK_ADMIN]', err?.message);
     return res.status(500).json(errBody(ErrorCode.INTERNAL_ERROR, fallback));
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Operations overview
+// ═══════════════════════════════════════════════════════════════════════
+
+/**
+ * GET /admin/operations/overview
+ *
+ * Every park, what it is doing, and — where it cannot dispatch — the reason.
+ *
+ * Deliberately NOT park-scoped: this is the screen an operations admin opens to
+ * find the park that is failing, and a list filtered to parks they were already
+ * thinking about would defeat the purpose. It is read-only and exposes no
+ * passenger or driver identity, only counts and reasons.
+ */
+router.get('/operations/overview', requireStaffPermission(StaffPermission.PARK_VIEW_METRICS), async (_req: StaffRequest, res: Response) => {
+    try {
+        return res.json(await OperationsOverviewService.build());
+    } catch (err: any) {
+        return fail(res, err, "We couldn't load the operations overview.");
+    }
+});
 
 // ═══════════════════════════════════════════════════════════════════════
 //  Parks

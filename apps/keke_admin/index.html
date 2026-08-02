@@ -118,6 +118,13 @@
                 <li data-section="sos-alerts" class="danger-nav">
                     <i class="fas fa-exclamation-triangle" style="color: #ff4d4d;"></i> <span style="color: #ff4d4d;">SOS Alerts</span>
                 </li>
+                <!--
+                  Above Parks on purpose. This is the screen you open when
+                  something is wrong and you do not yet know which park.
+                -->
+                <li data-section="operations" data-requires-permission="park:view_metrics">
+                    <i class="fas fa-tower-broadcast"></i> <span>Operations</span>
+                </li>
                 <li data-section="parks" data-requires-permission="park:read">
                     <i class="fas fa-warehouse"></i> <span>Parks</span>
                 </li>
@@ -524,6 +531,29 @@
 
                 <!-- Audit Log Section -->
                 <!-- Parks -->
+                <!--
+                  Every park at once, and why any of them cannot dispatch.
+
+                  Built after a park sat active, staffed and rostered while
+                  every ride failed, with the reason recorded only in the
+                  dispatch trace — one ride at a time, in a table nobody reads.
+                -->
+                <section id="operations" class="content-section hidden">
+                    <div class="ops-head">
+                        <div class="ops-totals" id="ops-totals"></div>
+                        <div class="ops-controls">
+                            <label class="check">
+                                <input type="checkbox" id="ops-auto" checked>
+                                Refresh every 15s
+                            </label>
+                            <button id="ops-refresh" class="btn-secondary">Refresh now</button>
+                            <span class="section-note" id="ops-updated"></span>
+                        </div>
+                    </div>
+                    <div id="ops-banner"></div>
+                    <div id="ops-parks" class="ops-grid"></div>
+                </section>
+
                 <section id="parks" class="content-section hidden">
                     <div class="staff-toolbar">
                         <input type="search" id="park-search" placeholder="Search name, code or city">

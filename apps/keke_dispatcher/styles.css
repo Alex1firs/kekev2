@@ -741,3 +741,54 @@ kbd {
     color: #ffc978;
     font-weight: 700;
 }
+
+/* ── Park readiness ─────────────────────────────────────────────────────
+ *
+ * Why nothing can arrive. Sits above the queue rather than inside the empty
+ * state, because it is equally true when one stale request is still on the
+ * board and the empty state is therefore not shown.
+ */
+.readiness {
+    border-radius: 12px;
+    padding: 12px 14px;
+    margin-bottom: 12px;
+    border: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.readiness strong { font-size: 0.95rem; }
+.readiness ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.readiness li { font-size: 0.86rem; line-height: 1.45; }
+.readiness small { color: var(--text-dim); font-size: 0.8rem; }
+
+.readiness-blocked {
+    background: rgba(255, 106, 106, 0.09);
+    border-color: rgba(255, 106, 106, 0.42);
+}
+.readiness-blocked strong { color: #ff9a9a; }
+
+.readiness-warn {
+    background: rgba(255, 201, 120, 0.09);
+    border-color: rgba(255, 201, 120, 0.42);
+}
+.readiness-warn strong { color: #ffc978; }
+
+/* A warning inside an otherwise blocking list still reads as secondary. */
+.readiness-warning { color: var(--text-dim); }
+
+/* Why a rostered driver cannot be assigned, shown on their arrivals row. */
+.arrival-problems {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+.chip-problem {
+    font-size: 0.75rem;
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: rgba(255, 106, 106, 0.12);
+    border: 1px solid rgba(255, 106, 106, 0.34);
+    color: #ff9a9a;
+}

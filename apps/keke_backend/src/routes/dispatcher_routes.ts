@@ -483,14 +483,29 @@ router.get('/dashboard', async (req: StaffRequest, res: Response) => {
     }
 });
 
-/** GET /dispatcher/roster — the full roster for the caller's park. */
+/**
+ * GET /dispatcher/roster — the full roster for the caller's park.
+ *
+ * Each entry carries why it cannot be assigned, if it cannot. Without that a
+ * dispatcher marks somebody present, watches them stay unassignable, and has
+ * nothing on screen explaining that the missing thing is a badge — which is a
+ * supervisor's job, not theirs, and cannot be guessed from a roster row.
+ */
 router.get('/roster', async (req: StaffRequest, res: Response) => {
     try {
         const shift = await requireOpenShift(req);
         const roster = await ParkRosterService.view(shift.parkId, {
             search: (req.query.search as string) || undefined,
         });
-        return res.json({ parkId: shift.parkId, roster, total: roster.length });
+
+        // Annotated with the same rules the assignment path applies, so the
+        // sheet cannot promise somebody the board will then refuse.
+        const annotated = roster.map((entry) => {
+            const problems = ParkRosterService.assignabilityProblems(entry);
+            return { ...entry, problems, assignable: problems.length === 0 };
+        });
+
+        return res.json({ parkId: shift.parkId, roster: annotated, total: annotated.length });
     } catch (err: any) {
         return fail(res, err, "We couldn't load the roster.");
     }

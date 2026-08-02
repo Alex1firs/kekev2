@@ -20,7 +20,7 @@
     <meta name="mobile-web-app-capable" content="yes">
 
     <title>KekeRide Park Dispatch</title>
-    <link rel="stylesheet" href="styles.css?v=5.3">
+    <link rel="stylesheet" href="styles.css?v=5.4">
 </head>
 <body class="booting">
 
@@ -198,6 +198,15 @@
                 <h2>Incoming requests <span id="queue-count" class="pill">0</span></h2>
                 <input type="search" id="queue-search" class="search" placeholder="Filter by pickup, destination or name">
             </div>
+            <!--
+              Why nothing can arrive, when that is the case.
+
+              An empty queue used to mean either "nobody has asked for a ride"
+              or "no ride can reach this park", and the board showed the same
+              thing for both. This says which.
+            -->
+            <div id="readiness" class="readiness hidden" role="status"></div>
+
             <div id="queue" class="queue" role="list"></div>
             <div id="queue-empty" class="empty">
                 <div class="empty-mark">◆</div>
@@ -331,6 +340,6 @@
 <div id="toasts" class="toasts" aria-live="polite"></div>
 
 <script src="/socket.io/socket.io.js"></script>
-<script src="app.js?v=5.3"></script>
+<script src="app.js?v=5.4"></script>
 </body>
 </html>

@@ -27,6 +27,7 @@ import { AppDataSource } from '../config/data_source';
 import { Ride } from '../models/Ride';
 import { DriverProfile } from '../models/DriverProfile';
 import { redis } from '../config/redis';
+import { ParkAutoPresenceService } from '../services/park_auto_presence_service';
 import { WalletService, DEBT_CASH_BLOCK, DEBT_HARD_BLOCK } from '../services/wallet_service';
 import { In } from 'typeorm';
 import { SosAlert, SosAlertStatus } from '../models/SosAlert';
@@ -474,6 +475,18 @@ export class SocketHandler {
                 }
 
                 await DispatchService.updateDriverLocation(data.driverId, data.lat, data.lng);
+
+                /*
+                 * Park presence, from the position the phone just reported.
+                 *
+                 * Deliberately after the dispatch update and deliberately not
+                 * awaited into anything that can fail this handler: a driver's
+                 * location reaching their passenger matters more than presence
+                 * bookkeeping, and this must not be able to delay or break it.
+                 * The service swallows its own errors and only ever touches
+                 * smartphone drivers whose presence no human has set.
+                 */
+                void ParkAutoPresenceService.onHeartbeat(data.driverId, data.lat, data.lng);
 
                 let activeRideId = this.driverRideMap.get(data.driverId);
 

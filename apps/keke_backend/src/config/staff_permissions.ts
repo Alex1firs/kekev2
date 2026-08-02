@@ -215,7 +215,14 @@ const ROLE_MATRIX: Record<StaffRole, StaffPermissionType[]> = {
 
     /**
      * Runs ONE park. Supervises dispatchers, approves cashier settlements,
-     * handles incidents. Cannot create parks or issue badges.
+     * handles incidents. Cannot create parks.
+     *
+     * Issues badges. A badge is the physical card a driver carries and it is
+     * handed over at the park, by the person standing there — routing that
+     * through an operations admin in another city meant a driver who had been
+     * rostered, approved and marked present still could not be given work, and
+     * nobody on site could fix it. Revocation sits with the same person for the
+     * same reason: a lost card is reported at the park.
      */
     [StaffRole.PARK_SUPERVISOR]: [
         StaffPermission.PARK_READ,
@@ -228,7 +235,10 @@ const ROLE_MATRIX: Record<StaffRole, StaffPermissionType[]> = {
         StaffPermission.SHIFT_CLOSE_ANY,
         StaffPermission.PRESENCE_READ,
         StaffPermission.PRESENCE_WRITE,
+        StaffPermission.BADGE_ISSUE,
         StaffPermission.BADGE_READ,
+        StaffPermission.BADGE_REVOKE,
+        StaffPermission.BADGE_REPLACE,
         StaffPermission.DISPATCH_CLAIM,
         StaffPermission.DISPATCH_ASSIGN_DRIVER,
         StaffPermission.DISPATCH_RELEASE,

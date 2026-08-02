@@ -1242,3 +1242,75 @@ body.authenticated .admin-container { display: flex; }
 
 /* Park detail is reached by clicking a card, not from the sidebar. */
 .nav-links li.hidden-nav { display: none; }
+
+/* ── Operations overview ────────────────────────────────────────────────
+ *
+ * Every park at once. Read while something is going wrong, so a park that
+ * cannot dispatch has to be identifiable without reading any words: it sorts
+ * first, it is outlined in red, and its failing number is the coloured one.
+ */
+.ops-head {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 18px;
+}
+.ops-totals { display: flex; flex-wrap: wrap; gap: 10px; }
+.ops-total {
+    background: var(--card-bg, #171b22);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 10px 16px;
+    min-width: 110px;
+}
+.ops-total span { display: block; font-size: 1.5rem; font-weight: 800; }
+.ops-total label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary); }
+.ops-total.bad span  { color: #fb7185; }
+.ops-total.good span { color: #34d399; }
+.ops-total.warn span { color: #e6a15c; }
+
+.ops-controls { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+
+.ops-alert {
+    background: rgba(244, 63, 94, 0.1);
+    border: 1px solid rgba(244, 63, 94, 0.4);
+    border-radius: 12px;
+    padding: 14px 16px;
+    margin-bottom: 18px;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.ops-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 16px;
+}
+
+.ops-card {
+    background: var(--card-bg, #171b22);
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.ops-card-blocked { border-color: rgba(244, 63, 94, 0.45); }
+.ops-card header { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+.ops-card header b { display: block; font-size: 1.02rem; }
+.ops-card header small { color: var(--text-secondary); font-size: 0.8rem; }
+
+.ops-metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.ops-metric span { display: block; font-size: 1.2rem; font-weight: 700; }
+.ops-metric label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary); }
+.ops-metric.bad span  { color: #fb7185; }
+.ops-metric.warn span { color: #e6a15c; }
+
+.ops-blockers { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 5px; }
+.ops-blockers li { font-size: 0.84rem; line-height: 1.45; }
+.ops-blocking { color: #fb7185; }
+.ops-warning  { color: #e6a15c; }

@@ -1250,6 +1250,7 @@ async function refreshDashboard(initial = false) {
         S.park = d.park;
         S.counters = d.counters;
         S.caps = d.capabilities || null;
+        S.readiness = d.readiness || null;
         S.drivers = d.drivers || [];
         S.shift = d.myShift || S.shift;
         S.lastPayloadAt = Date.now();
@@ -1335,6 +1336,7 @@ function startTicker() {
 
 function render() {
     renderPaused();
+    renderReadiness();
     renderPendingBanner();
     renderHeader();
     renderCounters();
@@ -1355,6 +1357,51 @@ function renderPaused() {
     if (paused) {
         $('paused-reason').textContent = S.caps.pausedReason || 'Paused by operations';
     }
+}
+
+/**
+ * Why no ride can reach this park, when none can.
+ *
+ * ── Why this is worth the space ─────────────────────────────────────────
+ * "No requests waiting" was shown whether the town was quiet or the park had
+ * been unreachable all morning. On the first production park it was the
+ * latter — every ride was being refused because not one driver had been marked
+ * present — and the only place that was written down was the dispatch trace,
+ * one ride at a time, in a table nobody watches.
+ *
+ * The wording comes from the server, so this board and the operations overview
+ * cannot drift into explaining the same failure two different ways.
+ *
+ * The kill-switch banner is separate and sits above this one; a paused system
+ * is deliberate and reads differently from a park that cannot take work.
+ */
+function renderReadiness() {
+    const el = $('readiness');
+    const r = S.readiness;
+
+    // Nothing to say when the park is fine. Blockers already covered by the
+    // pause banner are dropped rather than said twice.
+    const blockers = (r?.blockers || []).filter((b) => b.code !== 'dispatch_suspended');
+    if (!r || blockers.length === 0) {
+        el.classList.add('hidden');
+        el.innerHTML = '';
+        return;
+    }
+
+    const blocking = blockers.filter((b) => b.severity === 'blocking');
+    const heading = blocking.length
+        ? 'No ride can reach this park right now.'
+        : 'This park can take rides, with a warning.';
+
+    el.className = `readiness ${blocking.length ? 'readiness-blocked' : 'readiness-warn'}`;
+    el.classList.remove('hidden');
+    el.innerHTML = `
+        <strong>${esc(heading)}</strong>
+        <ul>${blockers.map((b) => `
+            <li class="readiness-${esc(b.severity)}">${esc(b.message)}</li>`).join('')}</ul>
+        ${r.driversPresent > 0 && r.driversAssignable === 0
+            ? '<small>Open <b>Who’s here</b> to see each driver’s problem.</small>'
+            : ''}`;
 }
 
 function renderHeader() {
@@ -1811,6 +1858,17 @@ function renderArrivals() {
                 </small>
             </div>
             <div class="arrival-state chip-presence chip-${esc(state)}">${esc(PRESENCE_LABEL[state] || state)}</div>
+            ${/*
+               * Why this driver cannot take a ride even once they are present.
+               * A missing badge is the common one and it is not a dispatcher's
+               * to fix, so naming it here is the difference between "ask the
+               * supervisor for a badge" and staring at a driver who is standing
+               * in front of you and still cannot be given work.
+               */''}
+            ${(d.problems || []).length ? `
+                <div class="arrival-problems">
+                    ${d.problems.map((p) => `<span class="chip-problem">${esc(p.message)}</span>`).join('')}
+                </div>` : ''}
             <div class="arrival-actions">
                 ${onTrip
                     ? '<small>On a trip — changed by the ride, not here.</small>'

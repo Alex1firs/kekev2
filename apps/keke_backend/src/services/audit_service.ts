@@ -111,6 +111,12 @@ export interface AuditInput {
     deviceId?: string | null;
     reason?: string | null;
     metadata?: Record<string, unknown> | null;
+    /**
+     * What changed. Optional because many audited actions create or destroy
+     * rather than change — see the note on StaffAuditEvent.
+     */
+    previousValue?: string | null;
+    newValue?: string | null;
     ipAddress?: string | null;
     userAgent?: string | null;
     correlationId?: string | null;
@@ -201,6 +207,13 @@ export class AuditService {
             deviceId: input.deviceId ?? null,
             reason: input.reason?.trim() ? input.reason.trim().slice(0, 500) : null,
             metadata: this.prepareMetadata(input.metadata),
+            /*
+             * Bounded, because these are read side by side in a table. A value
+             * long enough to need more than this is not a value — it is a
+             * document, and belongs in metadata where it can be redacted.
+             */
+            previousValue: input.previousValue != null ? String(input.previousValue).slice(0, 500) : null,
+            newValue: input.newValue != null ? String(input.newValue).slice(0, 500) : null,
             ipAddress: input.ipAddress ?? null,
             userAgent: input.userAgent ? input.userAgent.slice(0, 300) : null,
             correlationId: input.correlationId ?? null,

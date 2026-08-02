@@ -90,6 +90,24 @@ export class StaffAuditEvent {
     @Column({ type: "jsonb", nullable: true })
     metadata!: Record<string, unknown> | null;
 
+    /**
+     * What the thing was before this action, and what it became.
+     *
+     * Text rather than a typed structure: what gets compared here is a presence
+     * state, a staff id, a badge status, a device capability — different shapes
+     * whose only common requirement is that a person can read them side by
+     * side while reconstructing what happened at a park.
+     *
+     * Null is meaningful. Plenty of audited actions create or destroy rather
+     * than change, and an invented empty "previous value" for a badge that did
+     * not exist reads as a fact when it is not one.
+     */
+    @Column({ type: "text", nullable: true })
+    previousValue!: string | null;
+
+    @Column({ type: "text", nullable: true })
+    newValue!: string | null;
+
     // ── Request provenance ──────────────────────────────────────────────
 
     @Column({ type: "varchar", length: 64, nullable: true })

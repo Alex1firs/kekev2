@@ -1826,11 +1826,18 @@ function fmtDuration(seconds) {
 // different ways. This file only decides how they look.
 
 let opsTimer = null;
+let opsFeedSince = null;
+/** Ids already rendered, so millisecond collisions cannot show twice. */
+let opsFeedSeen = new Set();
+let opsFeedEvents = [];
 
 async function fetchOperations() {
     try {
-        const data = await adminFetch('/operations/overview');
-        renderOperations(data);
+        const [centre] = await Promise.all([
+            adminFetch('/operations/centre'),
+            fetchOperationsFeed(),
+        ]);
+        renderOperations(centre);
     } catch { /* surfaced by adminFetch */ }
 }
 
@@ -1839,11 +1846,13 @@ function renderOperations(data) {
 
     document.getElementById('ops-totals').innerHTML = `
         ${opsTotal('Parks', t.parks)}
-        ${opsTotal('Cannot dispatch', t.parksBlocked, t.parksBlocked ? 'bad' : 'good')}
-        ${opsTotal('Dispatchers on shift', t.dispatchersOnShift, t.dispatchersOnShift ? '' : 'warn')}
+        ${opsTotal('Red', t.red, t.red ? 'bad' : '')}
+        ${opsTotal('Amber', t.amber, t.amber ? 'warn' : '')}
+        ${opsTotal('Green', t.green, 'good')}
+        ${opsTotal('Dispatchers', t.dispatchersOnShift, t.dispatchersOnShift ? '' : 'warn')}
         ${opsTotal('Drivers present', t.driversPresent, t.driversPresent ? '' : 'warn')}
-        ${opsTotal('Requests waiting', t.waitingRequests)}
-        ${opsTotal('Active trips', t.activeTrips)}`;
+        ${opsTotal('Active requests', t.activeRequests)}
+        ${opsTotal('On trip', t.driversOnTrip)}`;
 
     /*
      * A system-wide pause outranks anything per-park: with it on, every park
@@ -1851,22 +1860,15 @@ function renderOperations(data) {
      * explains all of them.
      */
     const banner = document.getElementById('ops-banner');
-    if (data.suspended || !data.parkDispatchEnabled) {
-        banner.innerHTML = `
-            <div class="ops-alert">
-                <strong>Park Dispatch is not accepting new requests.</strong>
-                ${escapeHtml(data.suspendedReason || 'Disabled in configuration.')}
-            </div>`;
-    } else {
-        banner.innerHTML = '';
-    }
+    banner.innerHTML = (data.suspended || !data.parkDispatchEnabled)
+        ? `<div class="ops-alert">
+               <strong>Park Dispatch is not accepting new requests.</strong>
+               ${escapeHtml(data.suspendedReason || 'Disabled in configuration.')}
+           </div>`
+        : '';
 
-    // Broken parks first — this screen is opened when something is wrong.
-    const parks = [...data.parks].sort((a, b) =>
-        (a.canDispatch === b.canDispatch ? 0 : a.canDispatch ? 1 : -1));
-
-    document.getElementById('ops-parks').innerHTML = parks.length
-        ? parks.map(opsCard).join('')
+    document.getElementById('ops-parks').innerHTML = data.parks.length
+        ? data.parks.map(opsCard).join('')
         : '<p class="section-note">No parks exist yet.</p>';
 
     document.getElementById('ops-updated').textContent =
@@ -1877,53 +1879,180 @@ function opsTotal(label, value, tone = '') {
     return `<div class="ops-total ${tone}"><span>${value}</span><label>${escapeHtml(label)}</label></div>`;
 }
 
+const OPS_STATUS_LABEL = { open: 'Open', closed: 'Closed', offline: 'Offline' };
+
 function opsCard(p) {
+    const dispatchers = p.dispatchersOnShift.length
+        ? p.dispatchersOnShift.map((d) =>
+            `${escapeHtml(d.name || d.staffUserId)} (${d.shiftMinutes}m` +
+            `${d.lastActivityMinutes != null ? `, idle ${d.lastActivityMinutes}m` : ''})`).join(', ')
+        : 'nobody';
+
     return `
-    <article class="ops-card ${p.canDispatch ? '' : 'ops-card-blocked'}">
+    <article class="ops-card ops-health-${escapeHtml(p.health)}">
         <header>
             <div>
                 <b>${escapeHtml(p.name)}</b>
                 <small>${escapeHtml(p.code)}${p.city ? ' · ' + escapeHtml(p.city) : ''}</small>
             </div>
-            <span class="chip ${p.canDispatch ? 'chip-success' : 'chip-error'}">
-                ${p.canDispatch ? 'Dispatching' : 'Cannot dispatch'}
-            </span>
+            <div class="ops-card-status">
+                <span class="ops-dot ops-dot-${escapeHtml(p.health)}" title="${escapeHtml(p.health)}"></span>
+                <span class="chip">${escapeHtml(OPS_STATUS_LABEL[p.operationalStatus] || p.operationalStatus)}</span>
+            </div>
         </header>
 
         <div class="ops-metrics">
-            ${opsMetric('On shift', p.dispatchersOnShift, p.dispatchersOnShift ? '' : 'warn')}
+            ${opsMetric('Online', p.driversOnline)}
+            ${opsMetric('Waiting', p.driversWaiting)}
+            ${opsMetric('On trip', p.driversOnTrip)}
             ${opsMetric('Present', p.driversPresent, p.driversPresent ? '' : 'bad')}
             ${/*
                * Present and assignable are different numbers and the gap is the
-               * subtlest failure in the system: a request is sent to a park on
-               * presence alone, and the dispatcher then finds nobody they can
-               * actually assign. Showing both side by side is what makes that
-               * visible without reading anything.
+               * subtlest failure here: a request is sent to a park on presence
+               * alone, and the dispatcher then finds nobody they can assign.
                */''}
             ${opsMetric('Assignable', p.driversAssignable,
                 p.driversAssignable === 0 && p.driversPresent > 0 ? 'bad' : '')}
-            ${opsMetric('Waiting', p.waitingRequests, p.waitingRequests ? 'warn' : '')}
-            ${opsMetric('On trip', p.activeTrips)}
-            ${opsMetric('Roster', p.rosterActive)}
+            ${opsMetric('Queue', p.queueLength, p.queueLength ? 'warn' : '')}
+            ${opsMetric('Smartphone', p.smartphoneDrivers)}
+            ${opsMetric('Feature phone', p.featurePhoneDrivers)}
+            ${opsMetric('GPS stale', p.gpsStale, p.gpsStale ? 'warn' : '')}
         </div>
 
-        ${p.blockers.length ? `
+        <div class="ops-facts">
+            <div><span>Supervisor</span>${escapeHtml(p.supervisorName || 'not assigned')}</div>
+            <div><span>On shift</span>${dispatchers}</div>
+            <div><span>Dispatch time</span>${p.avgDispatchSeconds != null ? p.avgDispatchSeconds + 's' : '—'}</div>
+            <div><span>Success / fail</span>${
+                p.successfulDispatchPct != null
+                    ? `${p.successfulDispatchPct}% / ${p.failedDispatchPct}%`
+                    : '—'}</div>
+            <div><span>Last ride</span>${p.lastRideDispatchedAt ? timeAgo(p.lastRideDispatchedAt) : 'none today'}</div>
+            <div><span>Last activity</span>${p.lastDispatcherActivityAt ? timeAgo(p.lastDispatcherActivityAt) : '—'}</div>
+            <div><span>Push health</span>${
+                p.pushFailureRatePct == null
+                    ? 'no alerts sent'
+                    : `${100 - p.pushFailureRatePct}% delivered (${p.pushFailedToday} failed)`}</div>
+        </div>
+
+        ${p.alerts.length ? `
             <ul class="ops-blockers">
-                ${p.blockers.map((b) => `
-                    <li class="ops-${escapeHtml(b.severity)}">${escapeHtml(b.message)}</li>`).join('')}
-            </ul>` : ''}
+                ${p.alerts.map((a) => `
+                    <li class="ops-${escapeHtml(a.severity === 'red' ? 'blocking' : 'warning')}">
+                        <b>${escapeHtml(a.message)}</b><br><small>${escapeHtml(a.action)}</small>
+                    </li>`).join('')}
+            </ul>` : '<p class="section-note">No alerts.</p>'}
 
-        ${p.dispatcherNames.length
-            ? `<p class="section-note">On duty: ${p.dispatcherNames.map(escapeHtml).join(', ')}</p>`
-            : ''}
-
-        <button class="btn-secondary" onclick="openParkDetail('${escapeHtml(p.parkId)}')">Open park</button>
+        <button class="btn-secondary" onclick="openParkOps('${escapeHtml(p.parkId)}')">Open park</button>
     </article>`;
 }
 
 function opsMetric(label, value, tone = '') {
     return `<div class="ops-metric ${tone}"><span>${value}</span><label>${escapeHtml(label)}</label></div>`;
 }
+
+/** Short relative time. Operations reads "4m ago", never an ISO string. */
+function timeAgo(iso) {
+    const secs = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
+    if (secs < 60) return `${secs}s ago`;
+    if (secs < 3600) return `${Math.round(secs / 60)}m ago`;
+    if (secs < 86400) return `${Math.round(secs / 3600)}h ago`;
+    return new Date(iso).toLocaleDateString();
+}
+
+// ── Live event feed ────────────────────────────────────────────────────────
+
+const FEED_LABEL = {
+    ride_requested: 'Ride requested',
+    dispatcher_notified: 'Dispatcher notified',
+    driver_selected: 'Driver selected',
+    driver_accepted: 'Driver accepted',
+    driver_rejected: 'Driver rejected',
+    passenger_cancelled: 'Passenger cancelled',
+    driver_cancelled: 'Driver cancelled',
+    timeout: 'Timed out',
+    assignment_failed: 'Assignment failed',
+};
+
+async function fetchOperationsFeed() {
+    const kinds = document.getElementById('ops-feed-filter')?.value || '';
+    const params = new URLSearchParams();
+    if (kinds) params.set('kinds', kinds);
+    if (opsFeedSince) params.set('since', opsFeedSince);
+
+    try {
+        const data = await adminFetch(`/operations/events?${params.toString()}`);
+
+        /*
+         * Events arrive newest-first. Prepend only ones not already shown:
+         * the cursor is a timestamp and two events can share a millisecond, so
+         * the id is what actually guarantees each appears once.
+         */
+        const fresh = (data.events || []).filter((e) => !opsFeedSeen.has(e.id));
+        fresh.forEach((e) => opsFeedSeen.add(e.id));
+        opsFeedEvents = [...fresh, ...opsFeedEvents].slice(0, 200);
+
+        if (data.latestAt) opsFeedSince = data.latestAt;
+        renderOperationsFeed();
+    } catch { /* surfaced by adminFetch */ }
+}
+
+function renderOperationsFeed() {
+    const el = document.getElementById('ops-feed');
+    if (!el) return;
+
+    el.innerHTML = opsFeedEvents.length
+        ? opsFeedEvents.map((e) => `
+            <div class="feed-row feed-${escapeHtml(e.severity)}">
+                <div class="feed-when">${new Date(e.at).toLocaleTimeString()}</div>
+                <div class="feed-body">
+                    <b>${escapeHtml(FEED_LABEL[e.kind] || e.kind)}</b>
+                    <span>${escapeHtml(e.summary)}</span>
+                    ${/*
+                       * Ids are the point of the feed: operations must be able
+                       * to quote a ride to support, or search the trace, without
+                       * anyone opening a backend log.
+                       */''}
+                    <small>
+                        ${e.parkName ? escapeHtml(e.parkName) + ' · ' : ''}
+                        ${e.rideId ? 'ride ' + escapeHtml(e.rideId) : ''}
+                        ${e.driverId ? ' · driver ' + escapeHtml(e.driverId.slice(0, 8)) : ''}
+                    </small>
+                </div>
+            </div>`).join('')
+        : '<p class="section-note">Nothing yet. Events appear here as they happen.</p>';
+}
+
+/**
+ * Poll only while the section is on screen.
+ *
+ * A timer left running behind another tab is a request every fifteen seconds
+ * forever, and these endpoints touch every park.
+ */
+function startOperationsPolling() {
+    stopOperationsPolling();
+    if (!document.getElementById('ops-auto')?.checked) return;
+    opsTimer = setInterval(() => {
+        if (document.hidden) return;
+        if (document.getElementById('operations')?.classList.contains('hidden')) return;
+        fetchOperations();
+    }, 15000);
+}
+
+function stopOperationsPolling() {
+    if (opsTimer) { clearInterval(opsTimer); opsTimer = null; }
+}
+
+document.getElementById('ops-refresh')?.addEventListener('click', fetchOperations);
+document.getElementById('ops-auto')?.addEventListener('change', startOperationsPolling);
+document.getElementById('ops-feed-filter')?.addEventListener('change', () => {
+    // A changed filter means a different question: start the feed over rather
+    // than mixing two answers in one list.
+    opsFeedSince = null;
+    opsFeedSeen = new Set();
+    opsFeedEvents = [];
+    fetchOperationsFeed();
+});
 
 /**
  * Poll only while the section is on screen.
@@ -1947,6 +2076,216 @@ function stopOperationsPolling() {
 
 document.getElementById('ops-refresh')?.addEventListener('click', fetchOperations);
 document.getElementById('ops-auto')?.addEventListener('change', startOperationsPolling);
+
+// ── Park operations detail ─────────────────────────────────────────────────
+//
+// One park: its drivers on a map, their badge/device/heartbeat state, the live
+// queue and today's waits.
+//
+// The map is drawn as inline SVG rather than a tile layer. A tile provider is
+// an external host, and this dashboard is served with a strict content policy;
+// it would also be a blank grey square on a park's connection. What operations
+// actually needs is relative position — who is inside the park, who is drifting
+// away — and that needs no basemap.
+
+let parkOpsId = null;
+let parkOpsTimer = null;
+
+async function openParkOps(parkId) {
+    parkOpsId = parkId;
+    switchSection('park-ops');
+    await loadParkOps();
+
+    clearInterval(parkOpsTimer);
+    parkOpsTimer = setInterval(() => {
+        if (document.hidden) return;
+        if (document.getElementById('park-ops')?.classList.contains('hidden')) {
+            clearInterval(parkOpsTimer);
+            return;
+        }
+        loadParkOps();
+    }, 15000);
+}
+
+async function loadParkOps() {
+    if (!parkOpsId) return;
+    try {
+        const d = await adminFetch(`/operations/parks/${parkOpsId}`);
+        renderParkOps(d);
+        document.getElementById('park-ops-updated').textContent =
+            `Updated ${new Date().toLocaleTimeString()}`;
+    } catch { /* surfaced by adminFetch */ }
+}
+
+function renderParkOps(d) {
+    const s = d.summary;
+
+    document.getElementById('park-ops-body').innerHTML = `
+        <div class="ops-detail-head">
+            <div>
+                <h2>${escapeHtml(d.park.name)}
+                    <span class="ops-dot ops-dot-${escapeHtml(s.health)}"></span>
+                </h2>
+                <p class="section-note">
+                    ${escapeHtml(d.park.code)} ·
+                    ${escapeHtml(OPS_STATUS_LABEL[s.operationalStatus] || s.operationalStatus)} ·
+                    ${d.park.opensAt ? escapeHtml(d.park.opensAt) + '–' + escapeHtml(d.park.closesAt || '') : 'always open'} ·
+                    supervisor ${escapeHtml(s.supervisorName || 'not assigned')}
+                </p>
+            </div>
+        </div>
+
+        <div class="ops-totals">
+            ${opsTotal('Completed today', d.completedRidesToday)}
+            ${opsTotal('Avg wait', d.avgWaitSeconds != null ? d.avgWaitSeconds + 's' : '—')}
+            ${opsTotal('Avg pickup', d.avgPickupSeconds != null ? d.avgPickupSeconds + 's' : '—')}
+            ${opsTotal('Queue', d.queue.length, d.queue.length ? 'warn' : '')}
+            ${opsTotal('Assignable', s.driversAssignable, s.driversAssignable ? 'good' : 'bad')}
+            ${opsTotal('On trip', s.driversOnTrip)}
+        </div>
+
+        ${s.alerts.length ? `
+            <ul class="ops-blockers ops-detail-alerts">
+                ${s.alerts.map((a) => `
+                    <li class="ops-${escapeHtml(a.severity === 'red' ? 'blocking' : 'warning')}">
+                        <b>${escapeHtml(a.message)}</b><br><small>${escapeHtml(a.action)}</small>
+                    </li>`).join('')}
+            </ul>` : ''}
+
+        <div class="ops-detail-grid">
+            <div class="ops-panel">
+                <h3>Map</h3>
+                ${parkOpsMap(d)}
+                <p class="section-note">
+                    Inner ring: the park itself (${d.park.operatingRadiusM} m).
+                    Outer ring: the area it serves (${d.park.serviceRadiusKm} km).
+                    Drivers with no recent position are listed below but cannot be placed.
+                </p>
+            </div>
+
+            <div class="ops-panel">
+                <h3>Current queue <span class="pill">${d.queue.length}</span></h3>
+                ${d.queue.length ? `
+                    <div class="table-container compact">
+                        <table>
+                            <thead><tr><th>Passenger</th><th>Pickup</th><th>Waiting</th><th>Status</th></tr></thead>
+                            <tbody>${d.queue.map((c) => `
+                                <tr>
+                                    <td>${escapeHtml(c.passengerName || '—')}</td>
+                                    <td>${escapeHtml(c.pickupAddress || '—')}</td>
+                                    <td>${c.waitingSeconds != null ? c.waitingSeconds + 's' : '—'}</td>
+                                    <td>${escapeHtml(String(c.status || ''))}</td>
+                                </tr>`).join('')}</tbody>
+                        </table>
+                    </div>` : '<p class="section-note">Nothing waiting.</p>'}
+            </div>
+        </div>
+
+        <div class="ops-panel">
+            <h3>Drivers <span class="pill">${d.drivers.length}</span></h3>
+            <div class="table-container compact">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Driver</th><th>Presence</th><th>Device</th>
+                            <th>Badge</th><th>Last heartbeat</th><th>Distance</th><th>Can be assigned</th>
+                        </tr>
+                    </thead>
+                    <tbody>${d.drivers.map(parkOpsDriverRow).join('')}</tbody>
+                </table>
+            </div>
+        </div>`;
+}
+
+function parkOpsDriverRow(dr) {
+    return `
+    <tr>
+        <td>
+            <b>${escapeHtml(dr.name)}</b><br>
+            <small>${escapeHtml(dr.unitNumber || dr.vehiclePlate || '')}</small>
+        </td>
+        <td>${presenceChip(dr.presenceState || 'offline')}</td>
+        <td>${dr.deviceCapability === 'feature_phone'
+                ? '<span class="chip chip-warn">feature phone</span>'
+                : '<span class="chip chip-info">smartphone</span>'}</td>
+        <td>${dr.badgeSerial
+                ? `${escapeHtml(dr.badgeSerial)} <small>${escapeHtml(dr.badgeStatus || '')}</small>`
+                : '<span class="chip chip-error">no badge</span>'}</td>
+        <td>${dr.lastHeartbeatAt
+                ? `${timeAgo(dr.lastHeartbeatAt)}${dr.gpsStale ? ' <span class="chip chip-warn">stale</span>' : ''}`
+                : '<span class="chip chip-muted">never</span>'}</td>
+        <td>${dr.distanceM != null ? dr.distanceM + ' m' : '—'}</td>
+        <td>${dr.assignable
+                ? '<span class="chip chip-success">yes</span>'
+                : `<span class="chip chip-error">no</span><br><small>${
+                    escapeHtml(dr.problems.map((p) => p.message).join('; '))}</small>`}</td>
+    </tr>`;
+}
+
+/**
+ * A park-centred plot of driver positions.
+ *
+ * Latitude and longitude are projected flat around the park centre, which is
+ * wrong over a continent and exact enough over the few kilometres a park
+ * serves. Longitude is scaled by cos(latitude) so the rings stay circular
+ * instead of stretching east-west.
+ */
+function parkOpsMap(d) {
+    const SIZE = 320;
+    const placed = d.drivers.filter((x) => x.lat != null && x.lng != null);
+
+    // Scale to whichever is larger: the service radius, or the furthest driver.
+    const spanM = Math.max(
+        d.park.serviceRadiusKm * 1000,
+        ...placed.map((x) => x.distanceM || 0),
+        500,
+    ) * 1.1;
+
+    const mPerDegLat = 111320;
+    const mPerDegLng = 111320 * Math.cos(d.park.lat * Math.PI / 180);
+    const toXY = (lat, lng) => {
+        const dx = (lng - d.park.lng) * mPerDegLng;
+        const dy = (lat - d.park.lat) * mPerDegLat;
+        return {
+            x: SIZE / 2 + (dx / spanM) * (SIZE / 2),
+            // SVG y grows downward; north must be up.
+            y: SIZE / 2 - (dy / spanM) * (SIZE / 2),
+        };
+    };
+
+    const ring = (metres, cls) =>
+        `<circle cx="${SIZE / 2}" cy="${SIZE / 2}" r="${(metres / spanM) * (SIZE / 2)}" class="${cls}"/>`;
+
+    const dots = placed.map((x) => {
+        const { x: cx, y: cy } = toXY(x.lat, x.lng);
+        const tone = x.assignable ? 'ok' : x.gpsStale ? 'stale' : 'blocked';
+        return `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="5" class="map-driver map-${tone}">
+                    <title>${escapeHtml(x.name)} — ${escapeHtml(x.presenceState || 'offline')}${
+                        x.distanceM != null ? `, ${x.distanceM} m` : ''}</title>
+                </circle>`;
+    }).join('');
+
+    return `
+    <svg viewBox="0 0 ${SIZE} ${SIZE}" class="ops-map" role="img"
+         aria-label="Driver positions around ${escapeHtml(d.park.name)}">
+        ${ring(d.park.serviceRadiusKm * 1000, 'map-ring-service')}
+        ${ring(d.park.operatingRadiusM, 'map-ring-park')}
+        <circle cx="${SIZE / 2}" cy="${SIZE / 2}" r="4" class="map-centre"/>
+        ${dots}
+    </svg>
+    <div class="map-key">
+        <span><i class="map-swatch map-ok"></i> can be assigned</span>
+        <span><i class="map-swatch map-blocked"></i> blocked</span>
+        <span><i class="map-swatch map-stale"></i> position stale</span>
+        <span>${d.drivers.length - placed.length} not placed</span>
+    </div>`;
+}
+
+document.getElementById('park-ops-back')?.addEventListener('click', () => {
+    clearInterval(parkOpsTimer);
+    switchSection('operations');
+    fetchOperations();
+});
 
 // ── Park list ──────────────────────────────────────────────────────────────
 

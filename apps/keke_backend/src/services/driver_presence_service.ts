@@ -252,6 +252,8 @@ export class DriverPresenceService {
                 rideId: current.rideId,
                 reason: input.reason?.trim() || null,
                 metadata: { from, to, forced: !legal, source: input.source, durationSec },
+                previousValue: from,
+                newValue: to,
                 ipAddress: ctx.ipAddress ?? null,
                 correlationId: ctx.correlationId ?? null,
             });

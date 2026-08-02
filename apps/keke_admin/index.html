@@ -551,7 +551,47 @@
                         </div>
                     </div>
                     <div id="ops-banner"></div>
-                    <div id="ops-parks" class="ops-grid"></div>
+
+                    <div class="ops-layout">
+                        <div id="ops-parks" class="ops-grid"></div>
+
+                        <!--
+                          The live feed. Beside the parks rather than on its own
+                          page: the question "what is happening at this park" and
+                          "what just happened" are asked in the same breath.
+                        -->
+                        <aside class="ops-feed">
+                            <div class="ops-feed-head">
+                                <h3>Live events</h3>
+                                <select id="ops-feed-filter">
+                                    <option value="">Everything</option>
+                                    <option value="assignment_failed,timeout,driver_rejected">Problems only</option>
+                                    <option value="ride_requested">Ride requested</option>
+                                    <option value="dispatcher_notified">Dispatcher notified</option>
+                                    <option value="driver_selected">Driver selected</option>
+                                    <option value="driver_accepted">Driver accepted</option>
+                                    <option value="driver_rejected">Driver rejected</option>
+                                    <option value="passenger_cancelled,driver_cancelled">Cancellations</option>
+                                </select>
+                            </div>
+                            <div id="ops-feed" class="ops-feed-list"></div>
+                        </aside>
+                    </div>
+                </section>
+
+                <!--
+                  One park in operational detail. Reached by clicking a park in
+                  the centre above; kept out of the sidebar because it is
+                  meaningless without a park chosen.
+                -->
+                <section id="park-ops" class="content-section hidden">
+                    <div class="ops-head">
+                        <button id="park-ops-back" class="btn-secondary">← Operations centre</button>
+                        <div class="ops-controls">
+                            <span class="section-note" id="park-ops-updated"></span>
+                        </div>
+                    </div>
+                    <div id="park-ops-body"></div>
                 </section>
 
                 <section id="parks" class="content-section hidden">

@@ -185,6 +185,9 @@ export class BadgeService {
             driverId: input.driverId,
             parkId: badge.parkId,
             metadata: { badgeSerial: badge.badgeSerial, keyVersion: badge.keyVersion },
+            // Issuing creates: there was no badge before this.
+            previousValue: null,
+            newValue: badge.status,
             ...ctx,
         });
 
@@ -295,6 +298,10 @@ export class BadgeService {
             return this.toDto(badge);
         }
 
+        // Captured before the overwrite, so the trail says what it was revoked
+        // FROM — an active badge and a pending one are different incidents.
+        const previousStatus = badge.status;
+
         badge.status = status;
         badge.revokedAt = new Date();
         badge.revokedByStaffId = actor.staffUserId;
@@ -310,6 +317,8 @@ export class BadgeService {
             parkId: badge.parkId,
             reason: reason.trim(),
             metadata: { newStatus: status },
+            previousValue: previousStatus,
+            newValue: status,
             ...ctx,
         });
         return this.toDto(saved);

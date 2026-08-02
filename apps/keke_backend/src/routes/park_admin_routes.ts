@@ -13,6 +13,9 @@
 import { Router, Response } from 'express';
 import { ParkService } from '../services/park_service';
 import { OperationsOverviewService } from '../services/operations_overview_service';
+import { ParkOperationsCentreService } from '../services/park_operations_centre_service';
+import { OperationsEventFeedService } from '../services/operations_event_feed_service';
+import { ParkDetailOpsService } from '../services/park_detail_ops_service';
 import { ParkRosterService } from '../services/park_roster_service';
 import { DispatcherShiftService } from '../services/dispatcher_shift_service';
 import { DriverPresenceService } from '../services/driver_presence_service';
@@ -71,6 +74,64 @@ router.get('/operations/overview', requireStaffPermission(StaffPermission.PARK_V
         return res.json(await OperationsOverviewService.build());
     } catch (err: any) {
         return fail(res, err, "We couldn't load the operations overview.");
+    }
+});
+
+/**
+ * GET /admin/operations/centre
+ *
+ * The command centre: every park's live state, health colour and alerts.
+ * Heavier than the overview above and read by a handful of people on one
+ * screen, which is why it is a separate endpoint rather than more fields on a
+ * payload every dispatcher board fetches.
+ */
+router.get('/operations/centre', requireStaffPermission(StaffPermission.PARK_VIEW_METRICS), async (_req: StaffRequest, res: Response) => {
+    try {
+        return res.json(await ParkOperationsCentreService.build());
+    } catch (err: any) {
+        return fail(res, err, "We couldn't load the operations centre.");
+    }
+});
+
+/**
+ * GET /admin/operations/events
+ *
+ * The live event feed. Poll with `since` (an ISO timestamp from the previous
+ * response's `latestAt`) and de-duplicate on each event's `id`.
+ */
+router.get('/operations/events', requireStaffPermission(StaffPermission.PARK_VIEW_METRICS), async (req: StaffRequest, res: Response) => {
+    try {
+        const kinds = typeof req.query.kinds === 'string' && req.query.kinds.trim()
+            ? req.query.kinds.split(',').map((k) => k.trim()).filter(Boolean)
+            : undefined;
+
+        return res.json(await OperationsEventFeedService.list({
+            parkId: (req.query.parkId as string) || null,
+            since: (req.query.since as string) || null,
+            kinds: kinds as any,
+            limit: req.query.limit ? Number(req.query.limit) : undefined,
+        }));
+    } catch (err: any) {
+        return fail(res, err, "We couldn't load the event feed.");
+    }
+});
+
+/**
+ * GET /admin/operations/parks/:parkId
+ *
+ * One park in operational detail: drivers placed on the map with their badge,
+ * device and heartbeat state, the live queue, and today's waits.
+ *
+ * Park-scoped, unlike the two above: a supervisor may open their own park's
+ * detail, and this one names individual drivers.
+ */
+router.get('/operations/parks/:parkId', requireStaffPermission(StaffPermission.PARK_VIEW_METRICS), requireParkScope(), async (req: StaffRequest, res: Response) => {
+    try {
+        const detail = await ParkDetailOpsService.build(String(req.params.parkId));
+        if (!detail) return res.status(404).json(errBody(ErrorCode.NOT_FOUND, 'Park not found.'));
+        return res.json(detail);
+    } catch (err: any) {
+        return fail(res, err, "We couldn't load this park's operations view.");
     }
 });
 

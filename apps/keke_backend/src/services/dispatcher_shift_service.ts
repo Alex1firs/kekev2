@@ -184,6 +184,9 @@ export class DispatcherShiftService {
             resourceType: 'DISPATCHER_SHIFT',
             resourceId: shift.shiftId,
             parkId: park.parkId,
+            // Opening creates a shift; there was no prior state to record.
+            previousValue: null,
+            newValue: 'open',
             deviceId: input.deviceId ?? null,
             metadata: {
                 startDistanceM: distanceM == null ? null : Math.round(distanceM),
@@ -310,6 +313,8 @@ export class DispatcherShiftService {
             resourceType: 'DISPATCHER_SHIFT',
             resourceId: shift.shiftId,
             parkId: shift.parkId,
+            previousValue: 'open',
+            newValue: 'closed',
             metadata: {
                 durationMinutes: Math.round((Date.now() - new Date(shift.startedAt).getTime()) / 60_000),
                 // Recorded so a shift handed over with work outstanding is
@@ -370,6 +375,8 @@ export class DispatcherShiftService {
             actor,
             action: ShiftAuditAction.SHIFT_FORCE_CLOSED,
             resourceType: 'DISPATCHER_SHIFT',
+            previousValue: 'open',
+            newValue: 'force_closed',
             resourceId: shiftId,
             parkId: shift.parkId,
             reason: reason.trim(),

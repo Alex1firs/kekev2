@@ -325,6 +325,10 @@ export class ParkService {
             }
         }
 
+        // Read before the overwrite: without it the trail records who took
+        // over and loses every trace of who was displaced.
+        const previousSupervisor = park.supervisorStaffId;
+
         park.supervisorStaffId = staffUserId;
         const saved = await ParkRepository.save(park);
 
@@ -335,6 +339,8 @@ export class ParkService {
             resourceId: parkId,
             parkId,
             metadata: { supervisorStaffId: staffUserId },
+            previousValue: previousSupervisor,
+            newValue: staffUserId,
             ...ctx,
         });
         return this.toDto(saved, { supervisorName: await this.supervisorName(staffUserId) });

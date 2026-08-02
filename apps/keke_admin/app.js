@@ -1489,30 +1489,79 @@ function openCreateStaffModal() {
                 phone:     document.getElementById('cs-phone').value.trim(),
                 roles,
             });
-            showSetupTokenModal(result.staff, result.setupToken, result.setupTokenExpiresAt);
+            showSetupTokenModal(result);
             fetchStaffList();
         } catch { /* surfaced by adminFetch */ }
     };
 }
 
 /**
- * The setup token is displayed exactly once — the server keeps only its hash.
- * Making that explicit here stops somebody closing the dialog expecting to find
- * it again later.
+ * Copy the contents of an element, whether it holds them in `value` or as text.
+ *
+ * Clipboard access can be refused — an insecure origin, or a browser that wants
+ * a fresher user gesture than it thinks it got. Say so instead of failing
+ * silently, because the thing on screen is shown once and somebody who believes
+ * they copied it will close the dialog.
  */
-function showSetupTokenModal(staff, token, expiresAt) {
+function copyFrom(id, message) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const text = el.value !== undefined ? el.value : el.innerText;
+    navigator.clipboard.writeText(text)
+        .then(() => showToast(message, 'success'))
+        .catch(() => showToast('Could not copy — select the text and copy it by hand', 'error'));
+}
+
+/**
+ * Shown once, after an account is created or its credentials are reset.
+ *
+ * ── Why a link and not the bare token ───────────────────────────────────
+ * The server returns both. An earlier version of this dialog showed only the
+ * token, which left whoever created the account holding a random string and no
+ * way to tell the recipient what to do with it — there was no page to type it
+ * into until `activate.html` existed. The link is that page, already addressed.
+ *
+ * The ready-to-send message is visible rather than hidden behind the button so
+ * that whoever is about to paste it into WhatsApp can read what they are
+ * sending first.
+ */
+function showSetupTokenModal(result) {
+    const staff = result.staff;
+    const link = result.activationLink || '';
+    const message = `${result.activationInstructions || ''}\n\n${link}`;
+
     staffModalShell('Account created', `
-        <p>Account for <strong>${escapeHtml(staff.firstName)} ${escapeHtml(staff.lastName)}</strong> is ready.</p>
-        <p class="section-note">
-            Deliver this setup token over a trusted channel. It is shown
-            <strong>once</strong> — it cannot be retrieved again, only reissued.
+        <p>
+            <strong>${escapeHtml(staff.firstName)} ${escapeHtml(staff.lastName)}</strong>
+            now has an account, in <strong>INVITED</strong> state.
+            No password has been set — and you will not be setting one.
         </p>
-        <pre class="token-box" id="setup-token-box">${escapeHtml(token)}</pre>
-        <p class="section-note">Expires ${new Date(expiresAt).toLocaleString()}</p>
-        <button class="btn-secondary" onclick="navigator.clipboard.writeText(document.getElementById('setup-token-box').innerText).then(()=>showToast('Copied','success'))">
-            Copy token
-        </button>
-        <button class="btn-primary" onclick="closeStaffModal()">Done</button>`);
+
+        <p class="section-note">
+            Send this link to ${escapeHtml(staff.email)}. They open it once and choose
+            their own password. Nobody else ever learns it, including you.
+            It is shown <strong>once</strong>; if it is lost, reissue it from this
+            person's page rather than trying to recover it.
+        </p>
+
+        <pre class="token-box" id="setup-link-box">${escapeHtml(link)}</pre>
+        <p class="section-note">Expires ${new Date(result.setupTokenExpiresAt).toLocaleString()}</p>
+
+        <label>Message to send
+            <textarea id="setup-message-box" rows="4" readonly>${escapeHtml(message)}</textarea>
+        </label>
+
+        <div class="modal-actions">
+            <button class="btn-primary" onclick="copyFrom('setup-link-box','Link copied')">Copy link</button>
+            <button class="btn-secondary" onclick="copyFrom('setup-message-box','Message copied')">Copy whole message</button>
+        </div>
+
+        <details class="section-note">
+            <summary>Raw token — only if you are building the URL yourself</summary>
+            <pre class="token-box" id="setup-token-box">${escapeHtml(result.setupToken)}</pre>
+        </details>
+
+        <button class="btn-primary full-width" onclick="closeStaffModal()">Done</button>`);
 }
 
 async function openStaffDetail(id) {
@@ -1606,7 +1655,7 @@ async function staffAction(id, action, title) {
     try {
         const result = await adminFetch(`/staff/${id}/${action}`, 'POST', { reason: reason.trim() });
         if (result.setupToken) {
-            showSetupTokenModal(result.staff, result.setupToken, result.setupTokenExpiresAt);
+            showSetupTokenModal(result);
         } else {
             showToast('Done', 'success');
             closeStaffModal();

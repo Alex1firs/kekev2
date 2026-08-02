@@ -72,7 +72,13 @@ services:
       # links — it cannot be derived from the request, because an operations
       # admin may create an account from a different host than the dispatcher
       # who has to open the link.
-      DISPATCH_PUBLIC_URL: ${DISPATCH_PUBLIC_URL}
+      #
+      # Per-environment, and NOT a bare ${DISPATCH_PUBLIC_URL}: both api_prod
+      # and api_staging read the one shared .env, so a single variable meant
+      # production minted activation links pointing at staging. Those links are
+      # single-use — spending one on the wrong environment burns it against an
+      # account that does not exist there, and the person is simply stuck.
+      DISPATCH_PUBLIC_URL: ${DISPATCH_PUBLIC_URL_PROD:-https://api.kekeride.ng/dispatch}
     depends_on:
       postgres_shared:
         condition: service_healthy
@@ -143,7 +149,9 @@ services:
       # links — it cannot be derived from the request, because an operations
       # admin may create an account from a different host than the dispatcher
       # who has to open the link.
-      DISPATCH_PUBLIC_URL: ${DISPATCH_PUBLIC_URL}
+      # Per-environment — see the note on api_prod. Staging must never mint a
+      # link into production, or the reverse.
+      DISPATCH_PUBLIC_URL: ${DISPATCH_PUBLIC_URL_STAGING:-https://staging.kekeride.ng/dispatch}
     depends_on:
       postgres_shared:
         condition: service_healthy

@@ -31,7 +31,7 @@ import { StaffRole } from '../src/config/staff_permissions';
 import { StaffAuthService } from '../src/services/staff_auth_service';
 import { loadParkDispatchConfig } from '../src/config/park_dispatch_config';
 import { ParkDispatchSwitch } from '../src/services/park_dispatch_switch';
-import { activationLink, activationInstructions } from '../src/utils/activation_link';
+import { activationLink, activationInstructions, dispatchBaseUrl } from '../src/utils/activation_link';
 import { DeepPartial, Repository } from 'typeorm';
 
 /**
@@ -43,6 +43,24 @@ function mk<T extends object>(repo: Repository<T>, data: Record<string, unknown>
 }
 
 const APPLY = process.argv.includes('--apply');
+
+/**
+ * Create only the super admin, and no park.
+ *
+ * ── Why this mode exists ────────────────────────────────────────────────
+ * The full run wants four people and a set of coordinates before it will do
+ * anything, which assumes you have hired the whole team and stood in the park
+ * with a phone before you can log in once. In practice the first account comes
+ * first, and everything else follows from it: SUPER_ADMIN is the only role
+ * holding staff:create, and OPERATIONS_ADMIN — which it can grant — creates
+ * parks through the dashboard.
+ *
+ * Preferring that route is not merely convenient. An account created here is
+ * attributed to 'BOOTSTRAP'; one created through the dashboard is attributed to
+ * the named human who created it, with a reason, in the audit log. This script
+ * is the smallest possible exception to that, not a shortcut around it.
+ */
+const SUPER_ADMIN_ONLY = process.argv.includes('--super-admin-only');
 
 /**
  * Everything this script needs, from the environment. Nothing here is a
@@ -103,16 +121,22 @@ function requireConfig(): void {
     const missing = [
         ['BOOTSTRAP_SUPERADMIN_EMAIL', CFG.superAdminEmail],
         ['BOOTSTRAP_SUPERADMIN_PHONE', CFG.superAdminPhone],
-        ['BOOTSTRAP_OPS_EMAIL', CFG.opsEmail],
-        ['BOOTSTRAP_OPS_PHONE', CFG.opsPhone],
-        ['BOOTSTRAP_SUPERVISOR_EMAIL', CFG.supervisorEmail],
-        ['BOOTSTRAP_SUPERVISOR_PHONE', CFG.supervisorPhone],
-        ['BOOTSTRAP_DISPATCHER_EMAIL', CFG.dispatcherEmail],
-        ['BOOTSTRAP_DISPATCHER_PHONE', CFG.dispatcherPhone],
+        ...(SUPER_ADMIN_ONLY ? [] : [
+            ['BOOTSTRAP_OPS_EMAIL', CFG.opsEmail],
+            ['BOOTSTRAP_OPS_PHONE', CFG.opsPhone],
+            ['BOOTSTRAP_SUPERVISOR_EMAIL', CFG.supervisorEmail],
+            ['BOOTSTRAP_SUPERVISOR_PHONE', CFG.supervisorPhone],
+            ['BOOTSTRAP_DISPATCHER_EMAIL', CFG.dispatcherEmail],
+            ['BOOTSTRAP_DISPATCHER_PHONE', CFG.dispatcherPhone],
+        ]),
     ].filter(([, v]) => !v).map(([k]) => k);
 
     if (missing.length) throw new Error(`Set these first: ${missing.join(', ')}`);
-    if (!Number.isFinite(CFG.parkLat) || !Number.isFinite(CFG.parkLng)) {
+
+    // No park is created in super-admin-only mode, so there is nothing for
+    // coordinates to belong to. The park is made later, through the dashboard,
+    // by someone standing in it.
+    if (!SUPER_ADMIN_ONLY && (!Number.isFinite(CFG.parkLat) || !Number.isFinite(CFG.parkLng))) {
         throw new Error('BOOTSTRAP_PARK_LAT and BOOTSTRAP_PARK_LNG are required — '
             + 'a park with no coordinates can never be selected for a pickup.');
     }
@@ -271,23 +295,79 @@ async function report(park: Park | null): Promise<void> {
     }
 }
 
+/**
+ * Readiness for the super-admin-only run.
+ *
+ * Deliberately does not complain about the absent park or empty roster: in this
+ * mode those are the next steps, not defects. What it does check is the things
+ * that would make the one account it just created unusable.
+ */
+async function reportSuperAdminOnly(): Promise<void> {
+    console.log('\n\x1b[1mReadiness\x1b[0m');
+
+    /*
+     * The activation link is built from DISPATCH_PUBLIC_URL, falling back to
+     * PUBLIC_API_URL. With neither set it comes out as '/dispatch/activate.html',
+     * which is a valid path and a useless thing to send someone — it resolves
+     * against whatever host they happen to be on. Catch it here, where the link
+     * is about to be printed, rather than after it has been pasted into WhatsApp.
+     */
+    const base = dispatchBaseUrl();
+    if (!base.startsWith('http')) {
+        bad(`activation links would be relative ('${base}') and unusable off this host — `
+            + 'set DISPATCH_PUBLIC_URL (e.g. https://api.kekeride.ng/dispatch) and re-run');
+    } else {
+        ok(`activation links point at ${base}`);
+    }
+
+    if (!process.env.STAFF_JWT_SECRET) {
+        todo('STAFF_JWT_SECRET is unset — staff tokens are signed with a key derived from '
+            + 'JWT_SECRET; workable, but set it properly');
+    } else {
+        ok('STAFF_JWT_SECRET is set');
+    }
+
+    const cfg = loadParkDispatchConfig();
+    if (cfg.enabled) ok('PARK_DISPATCH_ENABLED is true'); else todo('PARK_DISPATCH_ENABLED is false');
+
+    const sw = await ParkDispatchSwitch.state();
+    if (sw.disabled) todo(`suspended at runtime: ${sw.reason ?? 'no reason recorded'}`);
+    else ok('not suspended');
+
+    console.log('\n\x1b[1mNext, in the dashboard — not in this script\x1b[0m');
+    console.log('   1. Open the activation link below and set a password.');
+    console.log('   2. Sign in at the operations dashboard as a staff account.');
+    console.log('   3. Staff → New staff → create the Operations Admin and Dispatcher.');
+    console.log('      Each one gets their own activation link, attributed to you.');
+    console.log('   4. Parks → New park, with coordinates read standing in the park.');
+    console.log('   5. Roster the drivers, then activate the park.');
+}
+
 async function main() {
     requireConfig();
     await AppDataSource.initialize();
 
-    console.log(`\n\x1b[1mKekeRide Park Dispatch — ${APPLY ? 'applying' : 'checking (nothing will change)'}\x1b[0m\n`);
+    const mode = SUPER_ADMIN_ONLY ? ' (super admin only)' : '';
+    console.log(`\n\x1b[1mKekeRide Park Dispatch — ${APPLY ? 'applying' : 'checking (nothing will change)'}${mode}\x1b[0m\n`);
 
-    const park = await ensurePark();
+    const park = SUPER_ADMIN_ONLY ? null : await ensurePark();
 
     await ensureStaff(CFG.superAdminEmail!, CFG.superAdminPhone!, CFG.superAdminName,
         StaffRole.SUPER_ADMIN, null);
-    await ensureStaff(CFG.opsEmail!, CFG.opsPhone!, CFG.opsName, StaffRole.OPERATIONS_ADMIN, null);
-    await ensureStaff(CFG.supervisorEmail!, CFG.supervisorPhone!, CFG.supervisorName,
-        StaffRole.PARK_SUPERVISOR, park?.parkId ?? null);
-    await ensureStaff(CFG.dispatcherEmail!, CFG.dispatcherPhone!, CFG.dispatcherName,
-        StaffRole.PARK_DISPATCHER, park?.parkId ?? null);
 
-    await report(park);
+    if (!SUPER_ADMIN_ONLY) {
+        await ensureStaff(CFG.opsEmail!, CFG.opsPhone!, CFG.opsName, StaffRole.OPERATIONS_ADMIN, null);
+        await ensureStaff(CFG.supervisorEmail!, CFG.supervisorPhone!, CFG.supervisorName,
+            StaffRole.PARK_SUPERVISOR, park?.parkId ?? null);
+        await ensureStaff(CFG.dispatcherEmail!, CFG.dispatcherPhone!, CFG.dispatcherName,
+            StaffRole.PARK_DISPATCHER, park?.parkId ?? null);
+    }
+
+    if (SUPER_ADMIN_ONLY) {
+        await reportSuperAdminOnly();
+    } else {
+        await report(park);
+    }
 
     if (handover.length) {
         console.log('\n\x1b[1mHand these over in person or by phone — they are shown once\x1b[0m');

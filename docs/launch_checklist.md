@@ -252,7 +252,42 @@ docker compose run --rm --no-deps \
 ```
 
 `--check` changes nothing. Re-run with `--apply` when the output looks right; it
-prints one-time setup tokens, once, to hand over in person.
+prints one-time activation links, once, to hand over in person.
+
+### The shorter path — `--super-admin-only`
+
+The command above wants four people and a set of coordinates before it will do
+anything, which assumes the whole team is hired and somebody has already stood
+in the park with a phone. Usually only the first account exists:
+
+```bash
+docker compose run --rm --no-deps \
+  -v /opt/kekev2/apps/keke_backend/scripts:/app/scripts:ro \
+  -v /opt/kekev2/apps/keke_backend/src:/app/src:ro \
+  -v /opt/kekev2/apps/keke_backend/tsconfig.json:/app/tsconfig.json:ro \
+  -e BOOTSTRAP_SUPERADMIN_EMAIL=… -e BOOTSTRAP_SUPERADMIN_PHONE=… \
+  -e "BOOTSTRAP_SUPERADMIN_NAME=…" \
+  api_prod npx ts-node scripts/bootstrap_production.ts --super-admin-only --apply
+```
+
+Everything else is then made from the dashboard: SUPER_ADMIN is the only role
+holding `staff:create`, and the OPERATIONS_ADMIN it grants creates parks.
+
+**Prefer that route.** An account created by this script is attributed to
+`BOOTSTRAP`; one created through the dashboard is attributed to the named human
+who created it, with a reason, in the audit log.
+
+> **`DISPATCH_PUBLIC_URL` is per-environment.** Both `api_prod` and
+> `api_staging` read the one shared `.env`, so a bare `${DISPATCH_PUBLIC_URL}`
+> could only ever be right for one of them — production spent a period minting
+> activation links that pointed at staging, where the account does not exist.
+> Each service now carries its own default; override with
+> `DISPATCH_PUBLIC_URL_PROD` / `DISPATCH_PUBLIC_URL_STAGING`, never the bare
+> name. `--super-admin-only` refuses to run if links would come out relative.
+
+**Done on production 2026-08-02:** SUPER_ADMIN `corrosivedon@gmail.com`
+(Alexander Nwabufoh), invited. No park yet — it is created from the dashboard,
+with coordinates read standing in it.
 
 ### Dedicated subdomain (optional, not on the critical path)
 

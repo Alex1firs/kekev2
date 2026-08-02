@@ -1231,6 +1231,18 @@ function setConnection(up) {
 
 let refreshInFlight = false;
 async function refreshDashboard(initial = false) {
+    /*
+     * Nothing to refresh before somebody has signed in.
+     *
+     * Without this the poll below ran on the LOGIN screen, sent a request with
+     * an empty bearer token, got 401, and took the 401 branch — which clears
+     * the session and reloads. Every seven seconds, forever. Anyone typing
+     * their password watched the field empty itself mid-word, and the browser
+     * re-autofilled a saved credential over the top on each reload, which made
+     * it look like the password manager was at fault.
+     */
+    if (!S.accessToken) return;
+
     if (refreshInFlight) return;
     refreshInFlight = true;
     try {
@@ -1265,7 +1277,23 @@ async function refreshDashboard(initial = false) {
         render();
         renderNetwork();
     } catch (err) {
-        if (err.status === 401) { sessionStorage.clear(); location.reload(); return; }
+        /*
+         * The session is genuinely gone: the one transparent refresh in api()
+         * has already been tried and failed. Land on the login screen without
+         * reloading — a reload here is what turned a dead session into a loop,
+         * and it discards anything already typed.
+         */
+        if (err.status === 401) {
+            sessionStorage.clear();
+            S.accessToken = '';
+            S.refreshToken = '';
+            $('workspace').classList.add('hidden');
+            $('shift-gate').classList.add('hidden');
+            $('login').classList.remove('hidden');
+            $('login-error').textContent = 'Your session ended. Sign in again.';
+            $('login-error').classList.remove('hidden');
+            return;
+        }
         if (err.status === 409) { showShiftGate(); return; }
         S.failedRefreshes += 1;
         setConnection(false);
@@ -1282,7 +1310,13 @@ async function refreshDashboard(initial = false) {
  * connection that has not yet reconnected cannot leave a dispatcher staring at
  * a board that stopped changing.
  */
-setInterval(() => { if (!document.hidden) refreshDashboard(); }, 7000);
+setInterval(() => {
+    if (document.hidden) return;
+    // Only while the board is actually on screen. Polling behind the login or
+    // shift-gate screens achieves nothing and used to reload the page.
+    if ($('workspace').classList.contains('hidden')) return;
+    refreshDashboard();
+}, 7000);
 
 /** Countdowns tick locally so the board feels alive between pushes. */
 function startTicker() {

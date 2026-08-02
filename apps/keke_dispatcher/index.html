@@ -20,7 +20,7 @@
     <meta name="mobile-web-app-capable" content="yes">
 
     <title>KekeRide Park Dispatch</title>
-    <link rel="stylesheet" href="styles.css?v=5.0">
+    <link rel="stylesheet" href="styles.css?v=5.2">
 </head>
 <body class="booting">
 
@@ -103,7 +103,7 @@
           Stated before the shift starts, not buried in training. Web Push is
           not enabled, so a closed app cannot be woken by anything.
         -->
-        <p class="shift-keep-open">
+        <p class="shift-keep-open" id="shift-keep-open">
             <strong>Keep this app open for your whole shift.</strong>
             If you close it, you will not be told when a passenger is waiting —
             no sound, no notification, nothing. Leave it on this screen and keep
@@ -211,6 +211,15 @@
             <div class="panel-head">
                 <h2>Park drivers <span id="driver-count" class="pill">0</span></h2>
                 <input type="search" id="driver-search" class="search" placeholder="Filter by name, unit or plate">
+                <!--
+                  This panel lists only drivers who can be assigned right now,
+                  which means a driver who has not been marked present does not
+                  appear anywhere in this app. Somebody has to record that they
+                  arrived, and until this button existed there was nowhere to do
+                  it — so no park ever had an assignable driver, and no request
+                  ever reached one.
+                -->
+                <button id="btn-arrivals" class="btn btn-small">Who's here</button>
             </div>
             <div id="selected-banner" class="selected-banner hidden"></div>
             <div id="drivers" class="drivers" role="list"></div>
@@ -294,9 +303,34 @@
     </div>
 </div>
 
+<!--
+  Arrivals.
+
+  The whole roster, not just who can be assigned — a driver is invisible to
+  dispatch until somebody records that they turned up, and for a feature-phone
+  driver there is no other way it can ever happen. "At park" means present;
+  "Waiting" means present and next in line for work.
+-->
+<div id="arrivals" class="sheet-scrim hidden" role="dialog" aria-modal="true" aria-labelledby="arrivals-title">
+    <div class="sheet sheet-wide">
+        <h3 id="arrivals-title" class="sheet-title">Who is at the park</h3>
+        <p class="sheet-note">
+            Mark a driver present when they arrive. Until then they cannot be given
+            a ride, and requests will not be sent to this park at all.
+        </p>
+
+        <input type="search" id="arrivals-search" class="search" placeholder="Filter by name, unit or plate">
+
+        <div id="arrivals-list" class="arrivals-list"></div>
+        <p id="arrivals-empty" class="sheet-note hidden">Nobody is on this park's roster yet.</p>
+
+        <button id="arrivals-close" class="btn btn-ghost btn-block">Done</button>
+    </div>
+</div>
+
 <div id="toasts" class="toasts" aria-live="polite"></div>
 
 <script src="/socket.io/socket.io.js"></script>
-<script src="app.js?v=1.0"></script>
+<script src="app.js?v=5.2"></script>
 </body>
 </html>

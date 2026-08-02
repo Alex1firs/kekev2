@@ -671,3 +671,73 @@ kbd {
 }
 .push-override input { margin-top: 3px; width: 18px; height: 18px; flex-shrink: 0; }
 .push-diag { font-size: 0.78rem; color: var(--text-dim); margin-top: 6px; line-height: 1.5; }
+
+/* ── Arrivals ───────────────────────────────────────────────────────────
+ *
+ * Recording who turned up. Wider than the assignment sheet because it is a
+ * list to work down rather than one decision to check, and the touch targets
+ * are deliberately large: this is used standing up, on a tablet, in a park.
+ */
+.sheet-wide { max-width: 640px; }
+.sheet-title { font-size: 1.15rem; font-weight: 800; }
+.sheet-note { font-size: 0.85rem; color: var(--text-dim); line-height: 1.5; }
+
+.arrivals-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    /* Bounded so the Done button stays reachable on a long roster. */
+    max-height: 56vh;
+    overflow-y: auto;
+}
+
+.arrival-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 8px 12px;
+    align-items: center;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.arrival-who b { display: block; font-size: 0.98rem; }
+.arrival-who small { color: var(--text-dim); font-size: 0.8rem; }
+
+.arrival-actions {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.arrival-actions .btn { flex: 1 1 auto; min-height: 40px; }
+.arrival-actions small { color: var(--text-dim); font-size: 0.8rem; }
+
+/* The state a driver is in now, so the row reads without the buttons. */
+.chip-presence {
+    font-size: 0.74rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 4px 9px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    white-space: nowrap;
+}
+.chip-waiting { color: #7ee2a8; border-color: rgba(126, 226, 168, 0.4); }
+.chip-at_park { color: #8ec5ff; border-color: rgba(142, 197, 255, 0.4); }
+.chip-unavailable { color: #ffc978; border-color: rgba(255, 201, 120, 0.4); }
+.chip-offline { color: var(--text-dim); }
+
+/* The state already in force — shown pressed, and disabled. */
+.btn-on {
+    background: rgba(255, 199, 0, 0.16);
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.chip-verbal {
+    color: #ffc978;
+    font-weight: 700;
+}

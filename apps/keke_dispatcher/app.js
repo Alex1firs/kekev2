@@ -904,6 +904,15 @@ async function renderPushState() {
     const working = !!(status && status.pushConfigured && status.devices.length > 0 && !PUSH.error
         && Notification.permission === 'granted');
 
+    /*
+     * The "keep this app open or you will hear nothing" warning predates Web
+     * Push and was shown unconditionally, including to dispatchers whose
+     * background alerts were working. Telling somebody their alerts do not work
+     * when they do is worse than saying nothing: they stop trusting the
+     * notification that is meant to get them back to the screen.
+     */
+    $('shift-keep-open').classList.toggle('hidden', working);
+
     if (working) {
         stateEl.textContent = 'On';
         stateEl.className = 'setup-state setup-ok';
@@ -1695,6 +1704,122 @@ $('drivers').addEventListener('click', (e) => {
     if (row) openAssignSheet(row.getAttribute('data-driver'));
 });
 
+/* ── Arrivals ───────────────────────────────────────────────────────────
+ *
+ * The board shows only drivers who can be assigned right now, which is correct
+ * for assigning and useless for recording that somebody turned up: a driver
+ * with no presence is not on it. `POST /dispatcher/presence` has existed since
+ * the dispatcher API was written and nothing in this app ever called it, so a
+ * driver could be rostered and never become present — and a park with no
+ * present driver is rejected outright by park selection. Nothing could reach a
+ * dispatcher at all.
+ *
+ * For a feature-phone driver there is no other route: they have no app to
+ * report for themselves, so a human at the park does it and it is recorded
+ * against that human.
+ */
+
+/** The full roster behind the arrivals sheet. Not the assignable board. */
+let ARRIVALS = [];
+
+/** What a dispatcher can set, and what each choice means on the ground. */
+const PRESENCE_CHOICES = [
+    ['at_park', 'At park', 'Here, not yet in the queue'],
+    ['waiting', 'Waiting', 'Here and next for work'],
+    ['unavailable', 'On break', 'Here but not taking rides'],
+    ['offline', 'Left', 'Gone home'],
+];
+
+const PRESENCE_LABEL = {
+    offline: 'Left', online: 'Online', at_park: 'At park', waiting: 'Waiting',
+    assigned: 'Assigned', en_route: 'On the way', passenger_boarding: 'Boarding',
+    trip_started: 'On a trip', unavailable: 'On break',
+};
+
+async function openArrivals() {
+    $('arrivals').classList.remove('hidden');
+    $('arrivals-list').innerHTML = '<p class="sheet-note">Loading the roster…</p>';
+    try {
+        const data = await api('/dispatcher/roster');
+        ARRIVALS = data.roster || [];
+    } catch {
+        // api() has already said what went wrong.
+        $('arrivals-list').innerHTML = '<p class="sheet-note">Could not load the roster.</p>';
+        return;
+    }
+    renderArrivals();
+}
+
+function renderArrivals() {
+    const q = ($('arrivals-search').value || '').trim().toLowerCase();
+    const list = ARRIVALS.filter((d) => !q || [
+        d.firstName, d.lastName, d.unitNumber, d.vehiclePlate,
+    ].some((v) => String(v || '').toLowerCase().includes(q)));
+
+    $('arrivals-empty').classList.toggle('hidden', ARRIVALS.length > 0);
+
+    $('arrivals-list').innerHTML = list.map((d) => {
+        const state = d.presenceState || 'offline';
+        /*
+         * A driver already on a trip must not be quietly marked "at park" from
+         * here — that is a real operational change and it belongs to the ride,
+         * not to an arrivals list. Show the state and offer nothing.
+         */
+        const onTrip = ['assigned', 'en_route', 'passenger_boarding', 'trip_started'].includes(state);
+
+        return `
+        <div class="arrival-row" data-arrival="${esc(d.driverId)}">
+            <div class="arrival-who">
+                <b>${esc(d.firstName)} ${esc(d.lastName)}</b>
+                <small>
+                    ${esc(d.unitNumber || d.vehiclePlate || '')}
+                    ${d.featurePhoneOnly ? ' · <span class="chip-verbal">no smartphone</span>' : ''}
+                </small>
+            </div>
+            <div class="arrival-state chip-presence chip-${esc(state)}">${esc(PRESENCE_LABEL[state] || state)}</div>
+            <div class="arrival-actions">
+                ${onTrip
+                    ? '<small>On a trip — changed by the ride, not here.</small>'
+                    : PRESENCE_CHOICES.map(([value, label, why]) => `
+                        <button class="btn btn-small ${state === value ? 'btn-on' : ''}"
+                                data-presence="${esc(value)}" data-driver-id="${esc(d.driverId)}"
+                                title="${esc(why)}" ${state === value ? 'disabled' : ''}>${esc(label)}</button>`).join('')}
+            </div>
+        </div>`;
+    }).join('');
+}
+
+function setPresence(driverId, state) {
+    return guard(async () => {
+        await api('/dispatcher/presence', 'POST', { driverId, state });
+
+        // Reflect it locally so the row updates before the roster reloads.
+        const row = ARRIVALS.find((d) => d.driverId === driverId);
+        if (row) row.presenceState = state;
+        renderArrivals();
+
+        toast(`Marked ${PRESENCE_LABEL[state] || state}.`, 'success');
+
+        // The board only lists assignable drivers, so presence changes what is
+        // on it. Refresh rather than wait for the next poll.
+        refreshDashboard();
+    });
+}
+
+// Delegated — rows are redrawn on every change, and CSP forbids inline handlers.
+$('arrivals-list').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-presence]');
+    if (!btn) return;
+    setPresence(btn.getAttribute('data-driver-id'), btn.getAttribute('data-presence'));
+});
+
+$('arrivals-search').addEventListener('input', renderArrivals);
+$('btn-arrivals').addEventListener('click', openArrivals);
+$('arrivals-close').addEventListener('click', () => $('arrivals').classList.add('hidden'));
+$('arrivals').addEventListener('click', (e) => {
+    if (e.target.id === 'arrivals') $('arrivals').classList.add('hidden');
+});
+
 function assignDriver(driverId, verbal) {
     return guard(async () => {
         const jobId = S.selectedJobId;
@@ -1790,6 +1915,16 @@ document.addEventListener('keydown', (e) => {
      * should reach the board underneath.
      */
     if (!$('sheet').classList.contains('hidden') && e.key !== 'Escape') return;
+
+    /*
+     * Same for arrivals. Without this, the number keys that choose a driver on
+     * the board fire while a dispatcher is marking people present over the top
+     * of it — selecting a driver they cannot see.
+     */
+    if (!$('arrivals').classList.contains('hidden')) {
+        if (e.key === 'Escape') $('arrivals').classList.add('hidden');
+        return;
+    }
 
     const index = S.queue.findIndex((c) => c.jobId === S.selectedJobId);
     const selected = S.queue[index];

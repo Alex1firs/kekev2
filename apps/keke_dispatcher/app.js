@@ -1040,14 +1040,23 @@ $('shift-signout').addEventListener('click', signOut);
  * go in front of them first — and the server refuses a quiet sign-off while
  * they still hold live requests.
  */
-$('btn-end-shift').addEventListener('click', async () => {
+/*
+ * Two buttons, one handler: the topbar on a desktop, the card at the foot of
+ * the page on a phone. Only ever one of them is visible, and both must lead to
+ * the same confirmation — ending a shift is destructive and is never a single
+ * tap from either place.
+ */
+async function openShiftEnd() {
     try {
         const { summary } = await api('/dispatcher/shifts/summary');
         showShiftEnd(summary);
     } catch (err) {
         toast(err.message, 'error');
     }
-});
+}
+
+$('btn-end-shift').addEventListener('click', openShiftEnd);
+$('btn-end-shift-mobile').addEventListener('click', openShiftEnd);
 
 function showShiftEnd(summary) {
     const hours = Math.floor(summary.durationMinutes / 60);
@@ -1225,6 +1234,17 @@ function setConnection(up) {
     const el = $('conn');
     el.className = `conn ${up ? 'conn-up' : 'conn-down'}`;
     el.textContent = up ? 'live' : 'offline';
+
+    /*
+     * Mirrored onto the phone's status card. Colour is not the only signal —
+     * the word says it too, which matters both for colour vision and in park
+     * daylight where a small green pill is indistinguishable from a grey one.
+     */
+    const m = $('m-conn');
+    if (m) {
+        m.textContent = up ? 'Live' : 'Offline';
+        m.style.color = up ? 'var(--green)' : 'var(--red)';
+    }
 }
 
 // ── Data ─────────────────────────────────────────────────────────────────
@@ -1405,6 +1425,11 @@ function renderReadiness() {
 }
 
 function renderHeader() {
+    // The phone's status card mirrors the topbar, which wraps out of sight on
+    // a narrow screen once the counters take the width.
+    $('m-park').textContent = S.park?.code || S.park?.name || '—';
+    $('m-shift').textContent = S.shift ? `on duty ${S.shift.durationMinutes}m` : 'no shift';
+
     $('hdr-park').textContent = S.park?.name || '—';
     $('hdr-code').textContent = S.park?.code || '—';
     $('hdr-shift').textContent = S.shift

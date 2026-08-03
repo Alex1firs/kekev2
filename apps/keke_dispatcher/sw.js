@@ -22,7 +22,7 @@
  * Bump on every shell change. The old cache is deleted on activate, so a stale
  * build cannot outlive a deploy.
  */
-const VERSION = 'v5.4.0';   // arrivals problems + park readiness banner
+const VERSION = 'v5.5.0';   // mobile: document scrolling, reachable End shift
 const SHELL_CACHE = `kd-shell-${VERSION}`;
 
 const SHELL = [

@@ -20,7 +20,7 @@
     <meta name="mobile-web-app-capable" content="yes">
 
     <title>KekeRide Park Dispatch</title>
-    <link rel="stylesheet" href="styles.css?v=5.4">
+    <link rel="stylesheet" href="styles.css?v=5.5">
 </head>
 <body class="booting">
 
@@ -239,6 +239,37 @@
         </section>
     </main>
 
+    <!--
+      Shift status and the end-shift control, for phones.
+
+      The topbar copy of "End shift" is hidden below 560px — which is every
+      phone — so on a handset it did not exist at all. It lives here instead,
+      last on the page, after the requests and the roster: ending a shift is
+      the least frequent thing a dispatcher does and the most costly to hit by
+      accident, so it belongs where a thumb arrives deliberately rather than in
+      the corner it brushes past.
+
+      Not fixed, not sticky. A bar pinned over the board is a bar covering a
+      ride request.
+    -->
+    <section class="shift-actions" id="shift-actions">
+        <div class="shift-actions-status">
+            <div>
+                <span>Park</span>
+                <b id="m-park">—</b>
+            </div>
+            <div>
+                <span>Shift</span>
+                <b id="m-shift">—</b>
+            </div>
+            <div>
+                <span>Connection</span>
+                <b id="m-conn">—</b>
+            </div>
+        </div>
+        <button id="btn-end-shift-mobile" class="btn btn-ghost btn-block btn-tall">End shift</button>
+    </section>
+
     <footer class="shortcuts">
         <span><kbd>↑</kbd><kbd>↓</kbd> request</span>
         <span><kbd>Enter</kbd> take</span>
@@ -340,6 +371,6 @@
 <div id="toasts" class="toasts" aria-live="polite"></div>
 
 <script src="/socket.io/socket.io.js"></script>
-<script src="app.js?v=5.4"></script>
+<script src="app.js?v=5.5"></script>
 </body>
 </html>

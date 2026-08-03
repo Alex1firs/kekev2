@@ -37,7 +37,18 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 html, body {
-    height: 100%;
+    /*
+     * min-height, NOT height.
+     *
+     * `height: 100%` here pinned the document to the viewport: nothing could
+     * grow past it, so the page had no scroll and anything taller than the
+     * screen was simply unreachable. On a 640px-tall phone that included the
+     * whole background-alert setup section.
+     *
+     * `min-height` lets the document be exactly as tall as its content and
+     * scroll normally, which is what every one of these screens actually wants.
+     */
+    min-height: 100%;
     background: var(--bg);
     color: var(--text);
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -47,7 +58,28 @@ html, body {
     -webkit-user-select: none;
     user-select: none;
     -webkit-tap-highlight-color: transparent;
-    overscroll-behavior: none;
+}
+
+body {
+    /*
+     * Vertical scrolling always available; horizontal never. A long unbroken
+     * ride id or address used to widen the page and let it drift sideways,
+     * which on a phone reads as the layout being broken.
+     */
+    overflow-x: hidden;
+    overflow-y: auto;
+    /* Keeps a rubber-band at the end of the list from scrolling the page
+       behind it, without preventing the page from scrolling at all. */
+    overscroll-behavior-y: contain;
+}
+
+/*
+ * Long values must wrap rather than stretch the page. Ride ids, park codes and
+ * pasted addresses have no spaces to break at, and `anywhere` is the only
+ * setting that will break them.
+ */
+.card, .queue, .drivers, .panel, .sheet, .login-card, .shift-actions {
+    overflow-wrap: anywhere;
 }
 
 body.booting > *:not(#login) { display: none; }
@@ -94,15 +126,34 @@ kbd {
 
 /* ── Sign in / shift gate ────────────────────────────────────────────── */
 
+/*
+ * ── Why this is no longer `position: fixed` ─────────────────────────────
+ * It was fixed to the viewport and vertically centred, with no overflow rule.
+ * A card taller than the screen — which the shift gate is on any phone, once
+ * it carries sound, notifications, background alerts, dispatch state, the
+ * install row and two buttons — was then centred on a box it did not fit in,
+ * so its top and bottom were both cut off with no way to reach either. The
+ * "Set up" button for background alerts sat below the fold on a 640px phone
+ * and could not be scrolled to.
+ *
+ * Normal flow with a min-height instead: the card grows, the document grows,
+ * and the page scrolls. `align-items: flex-start` so a tall card starts at the
+ * top and scrolls down, rather than being centred and losing its head.
+ */
 .login-screen {
-    position: fixed;
-    inset: 0;
+    min-height: 100vh;      /* fallback for browsers without dvh */
+    min-height: 100dvh;     /* the real visible height once Chrome's bar moves */
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: center;
-    padding: 24px;
+    padding: 24px 16px calc(32px + env(safe-area-inset-bottom));
+    padding-top: max(24px, env(safe-area-inset-top));
     background: var(--bg);
-    z-index: 100;
+}
+
+/* On anything tall enough to hold the card, centre it as before. */
+@media (min-height: 760px) {
+    .login-screen { align-items: center; }
 }
 .login-card {
     width: min(440px, 100%);
@@ -133,7 +184,18 @@ kbd {
 
 /* ── Workspace shell ─────────────────────────────────────────────────── */
 
-.workspace { height: 100%; display: flex; flex-direction: column; }
+/*
+ * min-height so the shell fills a tall screen but can grow past a short one.
+ * With `height: 100%` the workspace was exactly one viewport tall and the
+ * panels inside it had to scroll independently — two nested scroll areas on a
+ * phone, which is how the page came to feel like it would not scroll at all.
+ */
+.workspace {
+    min-height: 100vh;      /* fallback */
+    min-height: 100dvh;     /* excludes Chrome's collapsing address bar */
+    display: flex;
+    flex-direction: column;
+}
 
 .topbar {
     display: flex;
@@ -338,7 +400,21 @@ kbd {
 .card-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin-bottom: 10px; }
 .card-name { font-size: 1.05rem; font-weight: 700; }
 .card-meta { font-size: 0.75rem; color: var(--text-dim); margin-top: 2px; }
-.card-fare { font-size: 1.15rem; font-weight: 800; color: var(--amber); font-variant-numeric: tabular-nums; }
+.card-fare {
+    font-size: 1.15rem;
+    font-weight: 800;
+    color: var(--amber);
+    font-variant-numeric: tabular-nums;
+    /*
+     * Never break a fare across lines. The page-wide `overflow-wrap: anywhere`
+     * is there for addresses and ride ids, and it split N14,447 into "N14,44"
+     * and "7" on a 320px screen — a number a dispatcher reads out to a driver
+     * must stay one token.
+     */
+    overflow-wrap: normal;
+    white-space: nowrap;
+}
+.card-unit, .driver-unit, .badge, .chip-presence { overflow-wrap: normal; }
 
 .route { display: flex; flex-direction: column; gap: 6px; margin-bottom: 11px; }
 .route-line { display: flex; align-items: flex-start; gap: 9px; font-size: 0.92rem; line-height: 1.35; }
@@ -491,20 +567,116 @@ kbd {
 
 @media (max-width: 900px) {
     .grid { grid-template-columns: 1fr; }
-    /* Both panels stay reachable by scrolling the page rather than nesting
-       two independent scroll areas, which is miserable on a phone. */
-    .grid { overflow-y: auto; }
-    .panel { min-height: 62vh; }
+
+    /*
+     * ONE scroll container: the page.
+     *
+     * This used to give `.grid` its own `overflow-y: auto` and each panel a
+     * `min-height: 62vh`. Inside a viewport-height shell that produced three
+     * competing scroll areas — page, grid, and each panel's own list — and a
+     * drag would move whichever one the finger happened to land on. It read as
+     * "the page will not scroll".
+     *
+     * Now nothing here scrolls internally and the document does all of it.
+     */
+    .grid { overflow: visible; min-height: 0; }
+    .panel { min-height: 0; }
+    .queue, .drivers { overflow: visible; }
+
     .counters { order: 3; width: 100%; }
     .topbar { gap: 10px; }
     .shortcuts { display: none; }   /* no keyboard on a phone */
+
+    /* The panels' internal lists no longer scroll, so an empty state that
+       stretched to fill a scroll box would leave a large dead area. */
+    .empty { padding: 28px 20px; }
 }
 
 @media (max-width: 560px) {
     :root { --gap: 10px; }
     .card-actions .btn { min-width: 0; }
-    .topbar-right .btn-ghost { display: none; }
+
+    /*
+     * The topbar copy of End shift is hidden here — but only because
+     * #shift-actions at the foot of the page carries it instead. It was
+     * previously hidden with nothing taking its place, so on every phone
+     * (all of which are narrower than this) a dispatcher could not end
+     * their shift at all.
+     */
+    .topbar-right #btn-end-shift { display: none; }
+    #shift-actions { display: flex; }
+
+    /* Stack the request card's actions: three buttons side by side on a
+       320px screen leaves each about 90px wide, which is a mis-tap. */
+    .card-actions { flex-direction: column; align-items: stretch; }
+    .card-actions .btn { width: 100%; }
+
+    /*
+     * The counters stay a single scrollable row, deliberately.
+     *
+     * Letting them wrap was tried and was worse: twelve tiles filled the whole
+     * first screen and pushed the incoming requests below the fold, which is
+     * exactly backwards — a dispatcher opens this to work requests, and the
+     * stats are reference. One compact row keeps them glanceable and keeps the
+     * first request near the top. Swiping the strip reveals the rest.
+     */
+    .counters { gap: 6px; }
+    .counter { min-width: 64px; padding: 5px 9px; }
+    .counter b { font-size: 1rem; }
+    .counter span { font-size: 0.6rem; }
+
+    .topbar { padding: 10px 12px; padding-top: max(10px, env(safe-area-inset-top)); }
+    .park-name { font-size: 1rem; }
+    .panel-head { padding: 10px 12px; }
+    .queue, .drivers { padding: 10px; }
 }
+
+/*
+ * Shift status and End shift, at the end of the page.
+ *
+ * Shown only on phones — a desktop keeps the topbar button. Deliberately in
+ * normal flow: a fixed bar would cover the bottom of the driver list, which is
+ * the thing a dispatcher is reading when they reach the end of the page.
+ */
+/*
+ * Hidden by default; revealed by the ≤560px media query above via #shift-actions.
+ * The reveal uses the id deliberately: this block is defined after that query,
+ * and at equal specificity the later rule wins — which is exactly how the
+ * button ended up invisible on the very phones it was added for.
+ */
+.shift-actions {
+    display: none;
+    flex-direction: column;
+    gap: 12px;
+    margin: 0 var(--gap);
+    padding: 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    /*
+     * Clears Chrome's bottom toolbar and the gesture bar. Without it the last
+     * button sits under the browser chrome and cannot be tapped even though it
+     * is technically on screen.
+     */
+    margin-bottom: calc(20px + env(safe-area-inset-bottom));
+}
+.shift-actions-status {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+}
+.shift-actions-status > div { min-width: 0; }
+.shift-actions-status span {
+    display: block;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-dim);
+}
+.shift-actions-status b { font-size: 0.86rem; }
+
+/* A comfortable target for a deliberate, destructive action. */
+.btn-tall { min-height: 52px; }
 
 /* Daylight in a park with a glass roof. Respect the OS, but never go light —
    a white screen outdoors is worse, not better. */
@@ -585,8 +757,14 @@ kbd {
     display: flex;
     flex-direction: column;
     gap: 14px;
+    /* dvh, so a sheet is not sized against a viewport that includes Chrome's
+       address bar and then overflows the moment the bar is showing. */
     max-height: 92vh;
+    max-height: 92dvh;
     overflow-y: auto;
+    /* The sheet is the one place an internal scroll is right: it is a modal,
+       and scrolling the page behind it while it is open is disorienting. */
+    overscroll-behavior: contain;
 }
 @media (min-width: 700px) { .sheet { border-radius: 18px; } }
 
@@ -688,7 +866,9 @@ kbd {
     gap: 10px;
     /* Bounded so the Done button stays reachable on a long roster. */
     max-height: 56vh;
+    max-height: 56dvh;
     overflow-y: auto;
+    overscroll-behavior: contain;
 }
 
 .arrival-row {

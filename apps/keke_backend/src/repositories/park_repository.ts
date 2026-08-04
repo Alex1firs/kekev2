@@ -254,13 +254,35 @@ export class ParkRepository {
      * this park" would drift, and the one that drifts is always the one an
      * authorisation check reads.
      */
+    /**
+     * Everyone who may work at this park — scoped to it, or global.
+     *
+     * ── Why global grants are included ──────────────────────────────────
+     * This matched `parkId = :parkId` alone, so it excluded global grants. But
+     * a park-bound role granted with no park is valid and means "every park":
+     * `staffParkScope` returns '*' for it, and both `staffHoldsParkRole` and
+     * `assignSupervisor` accept it. Until park scoping could be expressed at
+     * all, every grant was global — so this panel read "No staff assigned" on a
+     * park whose supervisor was named directly above it and whose dispatcher
+     * was on duty in the table above that.
+     *
+     * Each row now says which it is, because the difference matters: a global
+     * dispatcher can work every park in the network.
+     */
     static assignedStaff(parkId: string): Promise<StaffRoleAssignment[]> {
         return AppDataSource.getRepository(StaffRoleAssignment).find({
-            where: {
-                parkId,
-                revokedAt: IsNull(),
-                role: In([StaffRole.PARK_DISPATCHER, StaffRole.PARK_SUPERVISOR, StaffRole.CASHIER]),
-            },
+            where: [
+                {
+                    parkId,
+                    revokedAt: IsNull(),
+                    role: In([StaffRole.PARK_DISPATCHER, StaffRole.PARK_SUPERVISOR, StaffRole.CASHIER]),
+                },
+                {
+                    parkId: IsNull(),
+                    revokedAt: IsNull(),
+                    role: In([StaffRole.PARK_DISPATCHER, StaffRole.PARK_SUPERVISOR, StaffRole.CASHIER]),
+                },
+            ],
             order: { grantedAt: 'ASC' },
         });
     }

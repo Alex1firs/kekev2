@@ -197,6 +197,9 @@ router.get('/parks/:parkId', requireStaffPermission(StaffPermission.PARK_READ), 
                 staffUserId: a.staffUserId,
                 role: a.role,
                 grantedAt: a.grantedAt,
+                // A global grant reaches every park in the network, which is a
+                // materially different thing from being assigned to this one.
+                scope: a.parkId ? 'park' : 'global',
                 name: staffBy.get(a.staffUserId)
                     ? `${staffBy.get(a.staffUserId)!.firstName} ${staffBy.get(a.staffUserId)!.lastName}`
                     : a.staffUserId,

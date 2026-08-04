@@ -95,8 +95,11 @@ router.get('/staff/:id', requireStaffPermission(StaffPermission.STAFF_READ), asy
         if (!staff) return res.status(404).json(errBody(ErrorCode.NOT_FOUND, 'Staff member not found.'));
 
         const recent = await StaffService.recentActions(String(req.params.id), 25);
+        const roleParks = await StaffService.getRoleParks(String(req.params.id));
         return res.json({
-            staff: { ...staff, phone: maskPhoneNumber(staff.phone) },
+            // roleParks so the editor can reopen showing which park each role is
+            // confined to, rather than defaulting everything back to "all parks".
+            staff: { ...staff, phone: maskPhoneNumber(staff.phone), roleParks },
             recentActions: recent,
         });
     } catch (err: any) {

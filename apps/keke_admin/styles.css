@@ -1445,3 +1445,15 @@ body.authenticated .admin-container { display: flex; }
 }
 .map-key span { display: flex; align-items: center; gap: 5px; }
 .map-swatch { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+
+/* Park picker beside a park-bound role in the staff editor. */
+.role-park {
+    background: #171b22;
+    border: 1px solid var(--border-color);
+    color: #e2e8f0;
+    padding: 6px 10px;
+    border-radius: 8px;
+    font-size: 0.8rem;
+    margin: -4px 0 8px 26px;
+    max-width: 100%;
+}

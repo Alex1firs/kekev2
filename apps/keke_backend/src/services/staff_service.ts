@@ -17,6 +17,7 @@ import { StaffAuthService } from './staff_auth_service';
 import { AuditService, AuditAction, AuditActor } from './audit_service';
 import { AuthService } from './auth_service';
 import { StaffRole, StaffPermissionType, isStaffRole } from '../config/staff_permissions';
+import { PARK_BOUND_ROLES } from '../middleware/park_scope';
 import { AppError, ErrorCode } from '../utils/errors';
 import { StaffPushService } from './staff_push_service';
 
@@ -90,6 +91,19 @@ export class StaffService {
     static async getRoles(staffUserId: string): Promise<StaffRole[]> {
         const rows = await this.roleRepo.find({ where: { staffUserId, revokedAt: IsNull() } });
         return rows.map((r) => r.role as StaffRole);
+    }
+
+    /**
+     * Which park each role is limited to, or null for every park.
+     *
+     * The role list alone cannot answer "is this dispatcher confined to Holy
+     * Trinity", which is the question the roles editor has to reopen with.
+     */
+    static async getRoleParks(staffUserId: string): Promise<Record<string, string | null>> {
+        const rows = await this.roleRepo.find({ where: { staffUserId, revokedAt: IsNull() } });
+        const out: Record<string, string | null> = {};
+        for (const r of rows) out[r.role] = r.parkId;
+        return out;
     }
 
     static async getById(staffUserId: string): Promise<StaffDto | null> {
@@ -209,11 +223,14 @@ export class StaffService {
             createdByStaffId: actor.staffUserId,
         }));
 
-        for (const role of roles) {
+        // A park may be named at creation, so a dispatcher hired for one park
+        // is scoped to it from the start rather than being global until
+        // somebody remembers to narrow them.
+        for (const { role, parkId } of roles) {
             await this.roleRepo.save(this.roleRepo.create({
                 staffUserId: saved.id,
                 role,
-                parkId: null,
+                parkId,
                 grantedByStaffId: actor.staffUserId,
             }));
         }
@@ -226,13 +243,14 @@ export class StaffService {
             resourceType: 'STAFF_USER',
             resourceId: saved.id,
             metadata: { roles, status: StaffStatus.INVITED },
+            newValue: roles.map((r) => (r.parkId ? `${r.role} @ ${r.parkId}` : `${r.role} (all parks)`)).join(', '),
             ipAddress: ctx.ipAddress ?? null,
             userAgent: ctx.userAgent ?? null,
             correlationId: ctx.correlationId ?? null,
         });
 
         return {
-            staff: this.toDto(saved, roles),
+            staff: this.toDto(saved, roles.map((r) => r.role)),
             setupToken: setup.token,
             setupTokenExpiresAt: setup.expiresAt,
         };
@@ -537,11 +555,20 @@ export class StaffService {
         }
 
         const current = await this.roleRepo.find({ where: { staffUserId, revokedAt: IsNull() } });
-        const currentRoles = new Set(current.map((r) => r.role as StaffRole));
-        const desiredSet = new Set(desired);
 
-        const toGrant = desired.filter((r) => !currentRoles.has(r));
-        const toRevoke = current.filter((r) => !desiredSet.has(r.role as StaffRole));
+        /*
+         * Compared on role AND park, not role alone.
+         *
+         * On role alone, granting PARK_DISPATCHER at a second park looked like
+         * a role the person already held, so nothing was written and the second
+         * park never appeared. The pair is what a grant actually is.
+         */
+        const key = (role: StaffRole, parkId: string | null) => `${role}::${parkId ?? '*'}`;
+        const currentKeys = new Set(current.map((r) => key(r.role as StaffRole, r.parkId)));
+        const desiredKeys = new Set(desired.map((d) => key(d.role, d.parkId)));
+
+        const toGrant = desired.filter((d) => !currentKeys.has(key(d.role, d.parkId)));
+        const toRevoke = current.filter((r) => !desiredKeys.has(key(r.role as StaffRole, r.parkId)));
 
         if (toRevoke.length > 0 && !reason?.trim()) {
             throw new AppError(400, ErrorCode.VALIDATION_ERROR, 'A reason is required when removing a role.');
@@ -558,18 +585,21 @@ export class StaffService {
                 resourceType: 'STAFF_ROLE',
                 resourceId: staff.id,
                 reason: reason!.trim(),
-                metadata: { role: row.role },
+                parkId: row.parkId,
+                previousValue: row.parkId ? `${row.role} @ ${row.parkId}` : `${row.role} (all parks)`,
+                newValue: null,
+                metadata: { role: row.role, parkId: row.parkId },
                 ipAddress: ctx.ipAddress ?? null,
                 userAgent: ctx.userAgent ?? null,
                 correlationId: ctx.correlationId ?? null,
             });
         }
 
-        for (const role of toGrant) {
+        for (const { role, parkId } of toGrant) {
             await this.roleRepo.save(this.roleRepo.create({
                 staffUserId: staff.id,
                 role,
-                parkId: null,
+                parkId,
                 grantedByStaffId: actor.staffUserId,
             }));
             await AuditService.recordCritical({
@@ -577,7 +607,10 @@ export class StaffService {
                 action: AuditAction.STAFF_ROLE_GRANTED,
                 resourceType: 'STAFF_ROLE',
                 resourceId: staff.id,
-                metadata: { role },
+                parkId,
+                previousValue: null,
+                newValue: parkId ? `${role} @ ${parkId}` : `${role} (all parks)`,
+                metadata: { role, parkId },
                 reason: reason?.trim() || null,
                 ipAddress: ctx.ipAddress ?? null,
                 userAgent: ctx.userAgent ?? null,
@@ -605,15 +638,53 @@ export class StaffService {
     }
 
     /** Never trust a role name from the client. */
-    private static parseRoles(input: unknown): StaffRole[] {
+    /**
+     * Accepts either a bare role name or `{ role, parkId }`.
+     *
+     * ── Why a park may now be named ─────────────────────────────────────
+     * Every grant was written with `parkId: null`, and a null park means
+     * platform-wide: `staffParkScope` returns '*' for it. So every dispatcher
+     * ever created could act at every park. With one park that is invisible;
+     * with two it means the dispatcher at one park can claim and assign rides
+     * at the other.
+     *
+     * The park detail screen also lists only park-scoped grants, so it always
+     * read "No staff assigned" while telling the reader to "grant a park-scoped
+     * role under Staff" — advice for a thing no code path could do.
+     *
+     * A null park is still legitimate and still means global; it is now a
+     * choice rather than the only possibility.
+     */
+    private static parseRoles(input: unknown): Array<{ role: StaffRole; parkId: string | null }> {
         const raw = Array.isArray(input) ? input : input == null ? [] : [input];
-        const out = new Set<StaffRole>();
+        const out = new Map<string, { role: StaffRole; parkId: string | null }>();
+
         for (const candidate of raw) {
-            if (!isStaffRole(candidate)) {
-                throw new AppError(400, ErrorCode.VALIDATION_ERROR, `Unknown role: ${String(candidate)}`);
+            const role = typeof candidate === 'object' && candidate !== null
+                ? (candidate as any).role
+                : candidate;
+            const parkId = typeof candidate === 'object' && candidate !== null
+                ? ((candidate as any).parkId ?? null)
+                : null;
+
+            if (!isStaffRole(role)) {
+                throw new AppError(400, ErrorCode.VALIDATION_ERROR, `Unknown role: ${String(role)}`);
             }
-            out.add(candidate);
+
+            /*
+             * Only park-bound roles may be scoped. An OPERATIONS_ADMIN confined
+             * to one park is a contradiction — the role exists to see across
+             * them — and silently accepting the park would produce an account
+             * whose authority did not match its name.
+             */
+            const scoped = parkId != null ? String(parkId) : null;
+            if (scoped !== null && !PARK_BOUND_ROLES.includes(role)) {
+                throw new AppError(400, ErrorCode.VALIDATION_ERROR,
+                    `${role} cannot be limited to one park — it is not a park role.`);
+            }
+
+            out.set(`${role}::${scoped ?? '*'}`, { role, parkId: scoped });
         }
-        return [...out];
+        return [...out.values()];
     }
 }

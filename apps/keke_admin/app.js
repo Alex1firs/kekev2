@@ -1369,6 +1369,28 @@ const STAFF_ROLES = [
     'PARK_DISPATCHER', 'CASHIER', 'SUPPORT_OFFICER', 'READ_ONLY_ANALYST',
 ];
 
+/*
+ * Roles that can be confined to a single park. Mirrors PARK_BOUND_ROLES on the
+ * server, which rejects a park on any other role — an OPERATIONS_ADMIN limited
+ * to one park is a contradiction, since the role exists to see across them.
+ */
+const PARK_BOUND_ROLES = ['PARK_SUPERVISOR', 'PARK_DISPATCHER', 'CASHIER'];
+
+/** Parks, for the role pickers. Loaded once when a staff detail is opened. */
+let PARKS_CACHE = [];
+
+async function loadParksForRolePicker() {
+    if (PARKS_CACHE.length) return;
+    try {
+        const data = await adminFetch('/parks?pageSize=100');
+        PARKS_CACHE = data.items || [];
+    } catch {
+        // A missing park list must not stop somebody editing roles; the picker
+        // simply offers "All parks", which is what the old behaviour was.
+        PARKS_CACHE = [];
+    }
+}
+
 let staffPage = 1;
 let staffAuditPage = 1;
 
@@ -1476,7 +1498,8 @@ function staffModalShell(title, innerHtml) {
     return el;
 }
 
-function openCreateStaffModal() {
+async function openCreateStaffModal() {
+    await loadParksForRolePicker();
     if (!can('staff:create')) return;
     staffModalShell('New staff member', `
         <form id="create-staff-form" class="stack">
@@ -1488,6 +1511,12 @@ function openCreateStaffModal() {
                 <legend>Roles</legend>
                 ${STAFF_ROLES.map(r => `
                     <label class="check"><input type="checkbox" value="${r}" name="cs-role"> ${escapeHtml(r.replace(/_/g, ' '))}</label>
+                    ${PARK_BOUND_ROLES.includes(r) ? `
+                        <select name="cs-role-park" data-role="${r}" class="role-park">
+                            <option value="">All parks</option>
+                            ${(PARKS_CACHE || []).map(p => `
+                                <option value="${escapeHtml(p.parkId)}">${escapeHtml(p.name)} (${escapeHtml(p.code)})</option>`).join('')}
+                        </select>` : ''}
                 `).join('')}
             </fieldset>
             <p class="section-note">
@@ -1499,7 +1528,12 @@ function openCreateStaffModal() {
 
     document.getElementById('create-staff-form').onsubmit = async (e) => {
         e.preventDefault();
-        const roles = [...document.querySelectorAll('input[name="cs-role"]:checked')].map(i => i.value);
+        // Park sent alongside each role, so somebody hired for one park is
+        // confined to it from creation rather than global until corrected.
+        const roles = [...document.querySelectorAll('input[name="cs-role"]:checked')].map((i) => {
+            const picker = document.querySelector(`select[name="cs-role-park"][data-role="${i.value}"]`);
+            return { role: i.value, parkId: picker?.value || null };
+        });
         if (!roles.length) return showToast('Select at least one role', 'error');
         try {
             const result = await adminFetch('/staff', 'POST', {
@@ -1586,6 +1620,7 @@ function showSetupTokenModal(result) {
 
 async function openStaffDetail(id) {
     try {
+        await loadParksForRolePicker();
         const data = await adminFetch(`/staff/${id}`);
         const s = data.staff;
         const canManage = can('staff:suspend');
@@ -1609,8 +1644,21 @@ async function openStaffDetail(id) {
                     <label class="check">
                         <input type="checkbox" name="sd-role" value="${r}" ${s.roles.includes(r) ? 'checked' : ''}>
                         ${escapeHtml(r.replace(/_/g, ' '))}
-                    </label>`).join('')}
+                    </label>
+                    ${PARK_BOUND_ROLES.includes(r) ? `
+                        <select name="sd-role-park" data-role="${r}" class="role-park">
+                            <option value="">All parks</option>
+                            ${(PARKS_CACHE || []).map(p => `
+                                <option value="${escapeHtml(p.parkId)}"
+                                    ${(s.roleParks || {})[r] === p.parkId ? 'selected' : ''}>
+                                    ${escapeHtml(p.name)} (${escapeHtml(p.code)})
+                                </option>`).join('')}
+                        </select>` : ''}`).join('')}
             </fieldset>
+            <p class="section-note">
+                A park role left on <strong>All parks</strong> lets that person work
+                every park in the network. Pick one to confine them to it.
+            </p>
             ${canRoles ? `
                 <label>Reason (required when removing a role)
                     <input id="sd-role-reason" placeholder="Why is this changing?">
@@ -1656,7 +1704,16 @@ async function openStaffDetail(id) {
 }
 
 async function saveStaffRoles(id) {
-    const roles = [...document.querySelectorAll('input[name="sd-role"]:checked')].map(i => i.value);
+    /*
+     * Each role is sent with the park it is limited to, or null for every park.
+     * Grants were previously always written with parkId null, which is what made
+     * a park's "Assigned staff" list permanently empty — and meant every
+     * dispatcher could work every park.
+     */
+    const roles = [...document.querySelectorAll('input[name="sd-role"]:checked')].map((i) => {
+        const picker = document.querySelector(`select[name="sd-role-park"][data-role="${i.value}"]`);
+        return { role: i.value, parkId: picker?.value || null };
+    });
     if (!roles.length) return showToast('At least one role is required', 'error');
     const reason = document.getElementById('sd-role-reason')?.value.trim() || null;
     try {
@@ -2451,8 +2508,13 @@ function renderParkDetail(detail, roster, queue) {
         <h4>Assigned staff</h4>
         ${detail.assignedStaff.length ? `
             <div class="perm-list">${detail.assignedStaff.map(a =>
-                `<code>${escapeHtml(a.name)} · ${escapeHtml(a.role.replace(/_/g, ' '))}</code>`).join(' ')}</div>`
-            : '<p class="section-note">No staff assigned. Grant a park-scoped role under Staff.</p>'}
+                `<code>${escapeHtml(a.name)} · ${escapeHtml(a.role.replace(/_/g, ' '))}` +
+                `${a.scope === 'global' ? ' · <em>all parks</em>' : ' · this park'}</code>`).join(' ')}</div>
+            <p class="section-note">
+                Somebody marked <em>all parks</em> can work every park in the network.
+                Confine them under <strong>Staff</strong> → their account → Roles.
+            </p>`
+            : '<p class="section-note">No staff can work this park yet. Grant somebody a park role under <strong>Staff</strong>.</p>'}
 
         <h4>Zones</h4>
         <div class="action-row">

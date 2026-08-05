@@ -6,6 +6,7 @@ import { resolveActor, requireStaffAuth } from "../middleware/staff_auth";
 import { SYSTEM_LEGACY_ADMIN } from "../services/audit_service";
 import staffAdminRoutes from "./staff_admin_routes";
 import parkAdminRoutes from "./park_admin_routes";
+import communicationsRoutes from "./communications_routes";
 import { DispatchMonitorQueryService } from "../services/dispatch_monitor_query_service";
 import { adminLimiter } from "../middleware/rate_limit";
 import { adminRejectionSchema } from "../services/validation_service";
@@ -778,6 +779,9 @@ router.use(staffAdminRoutes);
 // Park infrastructure, rosters, shifts, presence and badges. Same auth chain,
 // same precedence rule: mounted last so nothing above can be shadowed.
 router.use(parkAdminRoutes);
+// Passenger Communications. Inherits the full staff auth chain above; the
+// legacy shared key is barred from every communications: permission.
+router.use(communicationsRoutes);
 
 export default router;
 

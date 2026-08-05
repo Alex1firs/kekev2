@@ -84,6 +84,20 @@ export const StaffPermission = {
     BADGE_REVOKE: 'badge:revoke',
     BADGE_REPLACE: 'badge:replace',
 
+    // ── Passenger communications ────────────────────────────────────
+    // Drafting and sending are deliberately different rights. The person who
+    // writes an email to every passenger should not also be the person who
+    // decides it goes out, and one permission covering both would make the
+    // approval step decorative.
+    COMMUNICATIONS_VIEW: 'communications:view',
+    COMMUNICATIONS_CREATE: 'communications:create',
+    COMMUNICATIONS_APPROVE: 'communications:approve',
+    COMMUNICATIONS_SEND: 'communications:send',
+    COMMUNICATIONS_SCHEDULE: 'communications:schedule',
+    COMMUNICATIONS_VIEW_REPORTS: 'communications:view_reports',
+    COMMUNICATIONS_MANAGE_TEMPLATES: 'communications:manage_templates',
+    COMMUNICATIONS_MANAGE_PREFERENCES: 'communications:manage_preferences',
+
     // ── Finance ─────────────────────────────────────────────────────────
     WALLET_READ: 'wallet:read',
     WALLET_TOPUP_CREATE: 'wallet:topup_create',
@@ -127,6 +141,16 @@ export const ALL_PERMISSIONS: StaffPermissionType[] = Object.values(StaffPermiss
  * park domain. See docs/admin_auth_migration.md.
  */
 export const LEGACY_FORBIDDEN_PERMISSIONS: ReadonlySet<string> = new Set<string>([
+    // A shared key has no person behind it. Emailing every passenger is the
+    // single least attributable action in this system.
+    StaffPermission.COMMUNICATIONS_VIEW,
+    StaffPermission.COMMUNICATIONS_CREATE,
+    StaffPermission.COMMUNICATIONS_APPROVE,
+    StaffPermission.COMMUNICATIONS_SEND,
+    StaffPermission.COMMUNICATIONS_SCHEDULE,
+    StaffPermission.COMMUNICATIONS_VIEW_REPORTS,
+    StaffPermission.COMMUNICATIONS_MANAGE_TEMPLATES,
+    StaffPermission.COMMUNICATIONS_MANAGE_PREFERENCES,
     // staff administration — a shared key must never mint or elevate a human
     StaffPermission.STAFF_CREATE,
     StaffPermission.STAFF_UPDATE,
@@ -204,6 +228,19 @@ const ROLE_MATRIX: Record<StaffRole, StaffPermissionType[]> = {
         StaffPermission.BADGE_READ,
         StaffPermission.BADGE_REVOKE,
         StaffPermission.BADGE_REPLACE,
+        /*
+         * Communications: may write, schedule and read the results — but NOT
+         * approve or send. An operations admin who could draft a message to
+         * every passenger AND release it would make the approval step
+         * decorative, which is the failure this whole workflow exists to
+         * prevent. Approval and sending stay with SUPER_ADMIN.
+         */
+        StaffPermission.COMMUNICATIONS_VIEW,
+        StaffPermission.COMMUNICATIONS_CREATE,
+        StaffPermission.COMMUNICATIONS_SCHEDULE,
+        StaffPermission.COMMUNICATIONS_VIEW_REPORTS,
+        StaffPermission.COMMUNICATIONS_MANAGE_TEMPLATES,
+        StaffPermission.COMMUNICATIONS_MANAGE_PREFERENCES,
         StaffPermission.WALLET_READ,
         StaffPermission.SETTLEMENT_READ,
         StaffPermission.RIDE_READ,

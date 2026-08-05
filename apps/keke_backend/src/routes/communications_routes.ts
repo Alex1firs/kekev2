@@ -1,0 +1,360 @@
+/**
+ * Passenger Communications — admin API.
+ *
+ * Mounted inside the admin router, so it inherits the whole staff auth chain.
+ * Every route additionally requires a REAL staff actor: the legacy shared key
+ * is barred from the entire `communications:` namespace, because emailing every
+ * passenger is the least attributable thing a shared secret could do.
+ *
+ * There is no bulk-send route in this file. Phase 1 stops at approved and
+ * ready; the sender arrives in Phase 2 behind the kill switch.
+ */
+
+import { Router, Response } from 'express';
+import { CampaignService } from '../services/campaign_service';
+import { AudienceService, AudienceDefinition } from '../services/audience_service';
+import { MarketingConsentService, SuppressionService } from '../services/marketing_consent_service';
+import { EmailAudienceSegment } from '../models/EmailAudienceSegment';
+import { CampaignStatus } from '../models/EmailCampaign';
+import { AppDataSource } from '../config/data_source';
+import { AuditService } from '../services/audit_service';
+import { requireStaffPermission, requireRealStaff, StaffRequest, auditActorOf } from '../middleware/staff_auth';
+import { StaffPermission } from '../config/staff_permissions';
+import { errBody, ErrorCode, AppError } from '../utils/errors';
+
+const router = Router();
+
+function ctxOf(req: StaffRequest) {
+    return {
+        ipAddress: req.ip ?? null,
+        userAgent: (req.headers['user-agent'] as string | undefined) ?? null,
+        correlationId: (req as any).requestId ?? null,
+    };
+}
+
+function fail(res: Response, err: any, fallback: string) {
+    if (err instanceof AppError) return res.status(err.statusCode).json(errBody(err.code, err.message));
+    console.error('[COMMS]', err?.message);
+    return res.status(500).json(errBody(ErrorCode.INTERNAL_ERROR, fallback));
+}
+
+// ── Overview ────────────────────────────────────────────────────────────
+
+router.get('/communications/overview',
+    requireStaffPermission(StaffPermission.COMMUNICATIONS_VIEW),
+    async (_req: StaffRequest, res: Response) => {
+        try {
+            return res.json(await CampaignService.overview());
+        } catch (err: any) {
+            return fail(res, err, "We couldn't load the communications overview.");
+        }
+    });
+
+router.get('/communications/templates',
+    requireStaffPermission(StaffPermission.COMMUNICATIONS_VIEW),
+    (_req: StaffRequest, res: Response) => res.json({ templates: CampaignService.templates() }));
+
+// ── Audience ────────────────────────────────────────────────────────────
+
+/**
+ * Preview an audience without saving anything.
+ *
+ * Returns counts, exclusion reasons and MASKED sample addresses. A full
+ * recipient list is never returned to the browser: an admin needs to know the
+ * audience is right, not to receive an export of passenger emails.
+ */
+router.post('/communications/audience/preview',
+    requireStaffPermission(StaffPermission.COMMUNICATIONS_VIEW),
+    async (req: StaffRequest, res: Response) => {
+        try {
+            const preview = await AudienceService.preview((req.body ?? {}) as AudienceDefinition);
+            return res.json(preview);
+        } catch (err: any) {
+            return fail(res, err, "We couldn't resolve that audience.");
+        }
+    });
+
+router.get('/communications/segments',
+    requireStaffPermission(StaffPermission.COMMUNICATIONS_VIEW),
+    async (_req: StaffRequest, res: Response) => {
+        try {
+            const items = await AppDataSource.getRepository(EmailAudienceSegment)
+                .find({ order: { createdAt: 'DESC' }, take: 100 });
+            return res.json({ items });
+        } catch (err: any) {
+            return fail(res, err, "We couldn't load saved segments.");
+        }
+    });
+
+router.post('/communications/segments',
+    requireRealStaff, requireStaffPermission(StaffPermission.COMMUNICATIONS_CREATE),
+    async (req: StaffRequest, res: Response) => {
+        try {
+            const repo = AppDataSource.getRepository(EmailAudienceSegment);
+            const name = String(req.body?.name ?? '').trim();
+            if (!name) return res.status(400).json(errBody(ErrorCode.MISSING_FIELDS, 'A segment name is required.'));
+
+            const definition = (req.body?.definition ?? {}) as AudienceDefinition;
+            // Counted once for display; membership is always re-resolved at send.
+            const preview = await AudienceService.preview(definition);
+
+            const segment = await repo.save(repo.create({
+                name,
+                description: String(req.body?.description ?? '').trim() || null,
+                definition: definition as Record<string, unknown>,
+                createdByStaffId: req.actor!.staffUserId,
+                lastCount: preview.eligible,
+                lastCountedAt: new Date(),
+            }));
+            return res.status(201).json({ segment, preview });
+        } catch (err: any) {
+            return fail(res, err, "We couldn't save that segment.");
+        }
+    });
+
+// ── Campaigns ───────────────────────────────────────────────────────────
+
+router.get('/communications/campaigns',
+    requireStaffPermission(StaffPermission.COMMUNICATIONS_VIEW),
+    async (req: StaffRequest, res: Response) => {
+        try {
+            const status = req.query.status as CampaignStatus | undefined;
+            return res.json({ items: await CampaignService.list({ status }) });
+        } catch (err: any) {
+            return fail(res, err, "We couldn't load campaigns.");
+        }
+    });
+
+router.get('/communications/campaigns/:id',
+    requireStaffPermission(StaffPermission.COMMUNICATIONS_VIEW),
+    async (req: StaffRequest, res: Response) => {
+        try {
+            const campaign = await CampaignService.get(String(req.params.id));
+            const rendered = await CampaignService.renderFor(campaign);
+            return res.json({ campaign, preview: { html: rendered.html, text: rendered.text } });
+        } catch (err: any) {
+            return fail(res, err, "We couldn't load this campaign.");
+        }
+    });
+
+router.post('/communications/campaigns',
+    requireRealStaff, requireStaffPermission(StaffPermission.COMMUNICATIONS_CREATE),
+    async (req: StaffRequest, res: Response) => {
+        try {
+            const campaign = await CampaignService.create(auditActorOf(req.actor), req.body ?? {}, ctxOf(req));
+            return res.status(201).json({ campaign });
+        } catch (err: any) {
+            return fail(res, err, "We couldn't create this campaign.");
+        }
+    });
+
+router.patch('/communications/campaigns/:id',
+    requireRealStaff, requireStaffPermission(StaffPermission.COMMUNICATIONS_CREATE),
+    async (req: StaffRequest, res: Response) => {
+        try {
+            const campaign = await CampaignService.update(
+                auditActorOf(req.actor), String(req.params.id), req.body ?? {}, ctxOf(req));
+            return res.json({ campaign });
+        } catch (err: any) {
+            return fail(res, err, "We couldn't update this campaign.");
+        }
+    });
+
+/** Duplicate, always as a fresh draft — never inheriting an approval. */
+router.post('/communications/campaigns/:id/duplicate',
+    requireRealStaff, requireStaffPermission(StaffPermission.COMMUNICATIONS_CREATE),
+    async (req: StaffRequest, res: Response) => {
+        try {
+            const source = await CampaignService.get(String(req.params.id));
+            const copy = await CampaignService.create(auditActorOf(req.actor), {
+                name: `${source.name} (copy)`,
+                subject: source.subject,
+                previewText: source.previewText,
+                replyTo: source.replyTo,
+                templateKey: source.templateKey,
+                content: source.content as any,
+                segmentId: source.segmentId,
+                audienceDefinition: source.audienceDefinition as any,
+            }, ctxOf(req));
+            return res.status(201).json({ campaign: copy });
+        } catch (err: any) {
+            return fail(res, err, "We couldn't duplicate this campaign.");
+        }
+    });
+
+router.post('/communications/campaigns/:id/test',
+    requireRealStaff, requireStaffPermission(StaffPermission.COMMUNICATIONS_CREATE),
+    async (req: StaffRequest, res: Response) => {
+        try {
+            const result = await CampaignService.sendTest(
+                auditActorOf(req.actor), String(req.params.id),
+                String(req.body?.to ?? ''), ctxOf(req));
+            return res.json(result);
+        } catch (err: any) {
+            return fail(res, err, "We couldn't send the test email.");
+        }
+    });
+
+router.post('/communications/campaigns/:id/request-approval',
+    requireRealStaff, requireStaffPermission(StaffPermission.COMMUNICATIONS_CREATE),
+    async (req: StaffRequest, res: Response) => {
+        try {
+            return res.json({
+                campaign: await CampaignService.requestApproval(
+                    auditActorOf(req.actor), String(req.params.id), ctxOf(req)),
+            });
+        } catch (err: any) {
+            return fail(res, err, "We couldn't request approval.");
+        }
+    });
+
+router.post('/communications/campaigns/:id/approve',
+    requireRealStaff, requireStaffPermission(StaffPermission.COMMUNICATIONS_APPROVE),
+    async (req: StaffRequest, res: Response) => {
+        try {
+            return res.json({
+                campaign: await CampaignService.approve(
+                    auditActorOf(req.actor), String(req.params.id), ctxOf(req)),
+            });
+        } catch (err: any) {
+            return fail(res, err, "We couldn't approve this campaign.");
+        }
+    });
+
+router.post('/communications/campaigns/:id/schedule',
+    requireRealStaff, requireStaffPermission(StaffPermission.COMMUNICATIONS_SCHEDULE),
+    async (req: StaffRequest, res: Response) => {
+        try {
+            return res.json({
+                campaign: await CampaignService.schedule(
+                    auditActorOf(req.actor), String(req.params.id),
+                    String(req.body?.scheduledAt ?? ''),
+                    String(req.body?.timezone ?? 'Africa/Lagos'), ctxOf(req)),
+            });
+        } catch (err: any) {
+            return fail(res, err, "We couldn't schedule this campaign.");
+        }
+    });
+
+router.post('/communications/campaigns/:id/cancel-schedule',
+    requireRealStaff, requireStaffPermission(StaffPermission.COMMUNICATIONS_SCHEDULE),
+    async (req: StaffRequest, res: Response) => {
+        try {
+            return res.json({
+                campaign: await CampaignService.cancelSchedule(
+                    auditActorOf(req.actor), String(req.params.id),
+                    String(req.body?.reason ?? ''), ctxOf(req)),
+            });
+        } catch (err: any) {
+            return fail(res, err, "We couldn't cancel the schedule.");
+        }
+    });
+
+router.post('/communications/campaigns/:id/cancel',
+    requireRealStaff, requireStaffPermission(StaffPermission.COMMUNICATIONS_CREATE),
+    async (req: StaffRequest, res: Response) => {
+        try {
+            return res.json({
+                campaign: await CampaignService.cancel(
+                    auditActorOf(req.actor), String(req.params.id),
+                    String(req.body?.reason ?? ''), ctxOf(req)),
+            });
+        } catch (err: any) {
+            return fail(res, err, "We couldn't cancel this campaign.");
+        }
+    });
+
+/** Everything that must be true before this campaign may be released. */
+router.get('/communications/campaigns/:id/readiness',
+    requireStaffPermission(StaffPermission.COMMUNICATIONS_VIEW),
+    async (req: StaffRequest, res: Response) => {
+        try {
+            return res.json(await CampaignService.readiness(String(req.params.id)));
+        } catch (err: any) {
+            return fail(res, err, "We couldn't check this campaign.");
+        }
+    });
+
+// ── Suppression and preferences ─────────────────────────────────────────
+
+router.get('/communications/suppression',
+    requireStaffPermission(StaffPermission.COMMUNICATIONS_MANAGE_PREFERENCES),
+    async (req: StaffRequest, res: Response) => {
+        try {
+            const items = await SuppressionService.list({
+                search: req.query.search as string,
+                reason: req.query.reason as string,
+            });
+            return res.json({ items });
+        } catch (err: any) {
+            return fail(res, err, "We couldn't load the suppression list.");
+        }
+    });
+
+router.post('/communications/suppression',
+    requireRealStaff, requireStaffPermission(StaffPermission.COMMUNICATIONS_MANAGE_PREFERENCES),
+    async (req: StaffRequest, res: Response) => {
+        try {
+            const email = String(req.body?.email ?? '');
+            if (!email.includes('@')) {
+                return res.status(400).json(errBody(ErrorCode.VALIDATION_ERROR, 'A valid address is required.'));
+            }
+            const row = await SuppressionService.add(email, 'manual', 'admin', {
+                detail: String(req.body?.reason ?? '') || null,
+                staffId: req.actor!.staffUserId,
+            });
+            await AuditService.recordCritical({
+                actor: auditActorOf(req.actor), action: 'SUPPRESSION_ADDED',
+                resourceType: 'EMAIL_SUPPRESSION', resourceId: row.id,
+                newValue: row.email, reason: String(req.body?.reason ?? '') || null,
+                ...ctxOf(req),
+            });
+            return res.status(201).json({ suppression: row });
+        } catch (err: any) {
+            return fail(res, err, "We couldn't add that address.");
+        }
+    });
+
+/**
+ * Lift a suppression.
+ *
+ * Refuses for hard bounces and complaints. Re-sending to an address that told
+ * a mailbox provider we were spam is how a sending domain is lost — and that
+ * domain also carries KekeRide's verification codes and password resets.
+ */
+router.delete('/communications/suppression/:email',
+    requireRealStaff, requireStaffPermission(StaffPermission.COMMUNICATIONS_MANAGE_PREFERENCES),
+    async (req: StaffRequest, res: Response) => {
+        try {
+            const result = await SuppressionService.remove(
+                String(req.params.email), req.actor!.staffUserId);
+            if (!result.removed) {
+                return res.status(409).json(errBody(ErrorCode.VALIDATION_ERROR,
+                    result.reason === 'not_suppressed'
+                        ? 'That address is not suppressed.'
+                        : 'A hard bounce or spam complaint cannot be lifted — sending again would put the whole sending domain at risk.'));
+            }
+            await AuditService.recordCritical({
+                actor: auditActorOf(req.actor), action: 'SUPPRESSION_REMOVED',
+                resourceType: 'EMAIL_SUPPRESSION', resourceId: String(req.params.email),
+                previousValue: String(req.params.email), newValue: null,
+                reason: String(req.body?.reason ?? '') || null,
+                ...ctxOf(req),
+            });
+            return res.json({ removed: true });
+        } catch (err: any) {
+            return fail(res, err, "We couldn't remove that suppression.");
+        }
+    });
+
+router.get('/communications/consent-stats',
+    requireStaffPermission(StaffPermission.COMMUNICATIONS_VIEW),
+    async (_req: StaffRequest, res: Response) => {
+        try {
+            return res.json(await MarketingConsentService.stats());
+        } catch (err: any) {
+            return fail(res, err, "We couldn't load consent numbers.");
+        }
+    });
+
+export default router;

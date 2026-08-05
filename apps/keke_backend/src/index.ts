@@ -22,6 +22,7 @@ import { NotificationService } from './services/notification_service';
 import { StaleRideSweeper } from './services/stale_ride_sweeper';
 import { ParkJobSweeper } from './services/park_job_sweeper';
 import { redis } from './config/redis';
+import publicCommsRoutes from "./routes/public_comms_routes";
 
 dotenv.config();
 
@@ -112,7 +113,14 @@ if (dispatcherAppDir) {
     'https://fcm.googleapis.com',
   ];
 
-  app.use(['/dispatch', '/dispatcher'], helmet({
+  /*
+ * Unsubscribe and preference pages. Public by design: a passenger must be able
+ * to stop marketing from a device they are not signed in on, and a link that
+ * demands a login is answered with the spam button instead.
+ */
+app.use('/comms', express.urlencoded({ extended: false }), publicCommsRoutes);
+
+app.use(['/dispatch', '/dispatcher'], helmet({
     contentSecurityPolicy: {
       useDefaults: true,
       directives: {

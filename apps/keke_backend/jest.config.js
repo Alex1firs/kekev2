@@ -46,6 +46,21 @@ module.exports = {
    */
   testTimeout: 30_000,
 
+  /*
+   * Half the cores, not all of them.
+   *
+   * Jest defaults to cores-1 workers, which is right for I/O-bound tests and
+   * wrong for this suite: the staff-auth tests are pure CPU — bcrypt at cost 12
+   * — and under 11-way contention a single hash that takes 250ms alone can take
+   * ten times that. The account-lockout test performs five in sequence, and
+   * once the suite grew past ~690 tests it began exceeding even a 30s timeout.
+   *
+   * Capping the workers gives the hashing tests a core to run on. The
+   * alternative — lowering bcrypt's cost for tests — would weaken the thing
+   * being tested, which is not a trade worth making for a faster suite.
+   */
+  maxWorkers: '50%',
+
   // Coverage available but NOT collected by default (keeps normal runs fast).
   collectCoverage: false,
   coverageDirectory: '<rootDir>/coverage',

@@ -55,12 +55,14 @@ class AuthController extends StateNotifier<AuthState> {
   }
 
   Future<void> signup(
-      String email, String password, String firstName, String lastName, String phone) async {
+      String email, String password, String firstName, String lastName, String phone,
+      {bool marketingOptIn = false}) async {
     if (state.status == AuthStatus.authenticating) return;
 
     state = AuthState.authenticating();
     try {
-      final result = await _authRepository.signup(email, password, firstName, lastName, phone);
+      final result = await _authRepository.signup(
+          email, password, firstName, lastName, phone, marketingOptIn: marketingOptIn);
       final devOtp = result['otp'] as String?;
       state = AuthState.needsEmailVerification(email, devOtp: devOtp);
     } catch (e) {

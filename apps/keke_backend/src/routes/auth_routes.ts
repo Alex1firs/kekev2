@@ -10,6 +10,8 @@ import { Wallet } from "../models/Wallet";
 import { authMiddleware, AuthRequest } from "../middleware/auth_middleware";
 import { redis } from "../config/redis";
 import { errBody, ErrorCode } from "../utils/errors";
+import { MarketingConsentService } from "../services/marketing_consent_service";
+import { ConsentSource } from "../models/PassengerCommunicationPreference";
 
 const router = Router();
 
@@ -30,7 +32,7 @@ async function verifyAndConsumeOtp(key: string, otp: string): Promise<boolean> {
 
 async function handleSignup(req: Request, res: Response, role: UserRole) {
     try {
-        const { email, password, first_name, last_name, phone } = req.body ?? {};
+        const { email, password, first_name, last_name, phone, marketing_opt_in } = req.body ?? {};
 
         if (!email || !password || !first_name || !last_name) {
             return res.status(400).json(errBody(ErrorCode.MISSING_FIELDS, "Please fill in all required fields."));
@@ -73,6 +75,30 @@ async function handleSignup(req: Request, res: Response, role: UserRole) {
                 vehicleModel: "PENDING"
             });
             await profileRepo.save(profile);
+        }
+
+        /*
+         * Marketing consent, if the app offered it.
+         *
+         * Strictly additive: an older build sends no `marketing_opt_in`, and
+         * `undefined` writes nothing at all — that passenger keeps the only
+         * defensible default, which is opted out. Only an explicit `true`
+         * records consent, and it is stamped with the source and IP so the
+         * opt-in can be evidenced later.
+         *
+         * Deliberately after the account is saved and deliberately not awaited
+         * into the signup result: a consent row failing to write must not cost
+         * somebody their account.
+         */
+        if (marketing_opt_in === true) {
+            void MarketingConsentService.setPreferences(user.id, {
+                marketing: true,
+                promotionalOffers: true,
+                productUpdates: true,
+            }, {
+                source: ConsentSource.SIGNUP,
+                ipAddress: req.ip ?? null,
+            }).catch((err) => console.error('[SIGNUP_CONSENT]', err?.message));
         }
 
         const otp = generateOtp();

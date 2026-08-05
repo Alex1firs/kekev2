@@ -4,6 +4,7 @@ import 'package:dio/dio.dart' as dio;
 import '../../../../core/theme/app_theme.dart';
 import '../../../core/network/api_client.dart';
 import '../../auth/application/auth_controller.dart';
+import 'communication_preferences_screen.dart';
 
 class PassengerProfileScreen extends ConsumerStatefulWidget {
   const PassengerProfileScreen({super.key});
@@ -191,6 +192,21 @@ class _PassengerProfileScreenState
                 title: 'Location Transparency',
                 subtitle: 'Learn why and when your location is tracked',
                 onTap: () => _showLocationDisclosureSheet(context),
+              ),
+              const Divider(color: AppColors.charcoal, height: 1),
+              // Where a passenger opts in — or back out — of marketing email.
+              // The only lawful route into consent, since nobody was asked at
+              // signup before this build.
+              _DashboardTile(
+                icon: Icons.mark_email_read_outlined,
+                iconColor: AppColors.primary,
+                title: 'Emails from KekeRide',
+                subtitle: 'Choose what we send you',
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const CommunicationPreferencesScreen(),
+                  ),
+                ),
               ),
               const Divider(color: AppColors.charcoal, height: 1),
               // Privacy Policy Tile

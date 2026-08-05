@@ -31,8 +31,14 @@ class AuthRepository {
     }
   }
 
+  /// [marketingOptIn] is the box the passenger ticked, or didn't.
+  ///
+  /// Sent as an explicit boolean rather than omitted when false, so the server
+  /// can tell "declined" from "an older app that never asked". Only a true
+  /// records consent; anything else leaves the passenger opted out.
   Future<Map<String, dynamic>> signup(
-      String email, String password, String firstName, String lastName, String phone) async {
+      String email, String password, String firstName, String lastName, String phone,
+      {bool marketingOptIn = false}) async {
     try {
       final response = await _apiClient.dio.post('/auth/signup', data: {
         'email': email,
@@ -40,6 +46,7 @@ class AuthRepository {
         'first_name': firstName,
         'last_name': lastName,
         'phone': phone,
+        'marketing_opt_in': marketingOptIn,
       });
       return Map<String, dynamic>.from(response.data);
     } on DioException catch (e) {

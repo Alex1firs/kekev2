@@ -23,6 +23,7 @@ import { StaleRideSweeper } from './services/stale_ride_sweeper';
 import { ParkJobSweeper } from './services/park_job_sweeper';
 import { redis } from './config/redis';
 import publicCommsRoutes from "./routes/public_comms_routes";
+import passengerPreferencesRoutes from "./routes/passenger_preferences_routes";
 
 dotenv.config();
 
@@ -119,6 +120,9 @@ if (dispatcherAppDir) {
  * demands a login is answered with the spam button instead.
  */
 app.use('/comms', express.urlencoded({ extended: false }), publicCommsRoutes);
+
+// A passenger's own preferences, authenticated as that passenger.
+app.use("/api/v1/auth", passengerPreferencesRoutes);
 
 app.use(['/dispatch', '/dispatcher'], helmet({
     contentSecurityPolicy: {

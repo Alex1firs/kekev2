@@ -33,6 +33,12 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
   final _passwordFocus = FocusNode();
   final _confirmFocus = FocusNode();
 
+  /// The marketing box, unticked by default.
+  ///
+  /// Opt-IN, never opt-out: a pre-ticked box is not consent, and a passenger
+  /// who simply completes the form must end up receiving nothing.
+  bool _marketingOptIn = false;
+
   bool _obscurePassword = true;
   bool _obscureConfirm = true;
 
@@ -143,6 +149,7 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
       _firstNameCtrl.text.trim(),
       _lastNameCtrl.text.trim(),
       _phoneCtrl.text.trim(),
+      marketingOptIn: _marketingOptIn,
     );
   }
 
@@ -236,6 +243,61 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
                 ],
               ),
             ),
+            /*
+             * Consent and terms, on the final step only.
+             *
+             * The screen previously showed neither, which is why no existing
+             * passenger can lawfully be emailed: they were never asked and never
+             * shown what they were agreeing to. The box is unticked — a
+             * pre-ticked box is not consent — and the wording says plainly what
+             * arrives and that it can be stopped.
+             */
+            if (_step == _totalSteps - 1)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(28, 4, 28, 0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    InkWell(
+                      onTap: () => setState(() => _marketingOptIn = !_marketingOptIn),
+                      borderRadius: BorderRadius.circular(10),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 6),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            SizedBox(
+                              width: 24,
+                              height: 24,
+                              child: Checkbox(
+                                value: _marketingOptIn,
+                                onChanged: (v) => setState(() => _marketingOptIn = v ?? false),
+                                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                visualDensity: VisualDensity.compact,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                'Send me offers, promo codes and news from KekeRide. '
+                                'You can turn this off any time.',
+                                style: AppTextStyles.bodySmall(color: AppColors.midGray),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'We will always send you essential messages about your account '
+                      'and your rides, whatever you choose here.',
+                      style: AppTextStyles.bodySmall(color: AppColors.midGray)
+                          .copyWith(fontSize: 11.5),
+                    ),
+                  ],
+                ),
+              ),
             if (authState.status == AuthStatus.error && authState.errorMessage != null)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 6),

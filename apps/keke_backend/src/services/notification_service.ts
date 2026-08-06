@@ -6,6 +6,7 @@ import { In } from 'typeorm';
 import { redis } from '../config/redis';
 import path from 'path';
 import fs from 'fs';
+import { OperationalPushHealth } from "./operational_push_health";
 
 /**
  * What actually happened to a push. Dispatch needs this to tell a delivered
@@ -152,9 +153,24 @@ export class NotificationService {
             },
         };
 
+        // Timed only so the health monitor has a latency sample. Nothing here
+        // branches on it.
+        const startedAt = Date.now();
         try {
             const response = await admin.messaging().sendEachForMulticast(message);
             console.log(`[NOTIFICATION_RESULT] Success: ${response.successCount} | Failure: ${response.failureCount}`);
+
+            /*
+             * Tell the health monitor how that went, so MARKETING push can
+             * stand down when operational delivery degrades.
+             *
+             * Fire-and-forget and cannot throw: `record` swallows everything
+             * internally and returns void. This send is a ride alert, an OTP or
+             * a payment confirmation — nothing about observing it may delay or
+             * fail it, and nothing in this file reads the monitor back.
+             */
+            OperationalPushHealth.record(
+                tokens.length, response.failureCount, Date.now() - startedAt);
             
             // Cleanup invalid tokens
             if (response.failureCount > 0) {

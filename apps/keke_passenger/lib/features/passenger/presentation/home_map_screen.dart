@@ -15,6 +15,7 @@ import 'wallet_screen.dart';
 import 'trip_history_screen.dart';
 import 'profile_screen.dart';
 import 'saved_locations_manager_screen.dart';
+import 'widgets/communication_opt_in_prompt.dart';
 
 class HomeMapScreen extends ConsumerStatefulWidget {
   const HomeMapScreen({super.key});
@@ -42,6 +43,29 @@ class _HomeMapScreenState extends ConsumerState<HomeMapScreen> {
     super.initState();
     _nearbyLayer = NearbyKekeLayer()..addListener(_onNearbyLayerTick);
     _loadKekeMarkers();
+
+    // Deferred past the first frame so the map is drawn and interactive before
+    // anything is allowed to appear over it.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _maybeAskAboutUpdates());
+  }
+
+  /// Offer the one-time communication prompt, if this moment is safe.
+  ///
+  /// ── The safety rule ─────────────────────────────────────────────────
+  /// [BookingStep.idle] only. Every other step is a booking or a live ride:
+  /// choosing a pickup, waiting for a driver, watching one arrive, on the trip,
+  /// or reading a receipt. A sheet sliding up over any of those is an
+  /// obstruction, and over the emergency or cancellation controls it is a
+  /// hazard. `loading` is excluded too — we do not yet know what the passenger
+  /// is in the middle of.
+  ///
+  /// The server decides whether the prompt is owed at all; this only decides
+  /// whether now is an acceptable time to ask.
+  Future<void> _maybeAskAboutUpdates() async {
+    if (!mounted) return;
+    if (ref.read(bookingControllerProvider).step != BookingStep.idle) return;
+
+    await CommunicationOptInPrompt.maybeShow(context, ref);
   }
 
   void _onNearbyLayerTick() {

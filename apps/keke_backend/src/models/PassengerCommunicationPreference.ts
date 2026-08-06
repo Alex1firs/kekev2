@@ -40,11 +40,42 @@ export class PassengerCommunicationPreference {
     @Column({ default: false })
     marketing!: boolean;
 
+    /**
+     * ── Per channel, because they are different questions ────────────────
+     * WHAT somebody wants to hear about and HOW they are willing to be reached
+     * are independent. A passenger may take a push notification happily and
+     * want no email; SMS is a stronger imposition than either. One switch
+     * covering all four cannot honour "email is fine, stop texting me" without
+     * making them give up both.
+     *
+     * Each is additionally gated on `marketing`, so the master switch remains a
+     * single honest "stop everything".
+     */
+    @Column({ default: false })
+    marketingEmail!: boolean;
+
+    @Column({ default: false })
+    marketingPush!: boolean;
+
+    @Column({ default: false })
+    marketingInApp!: boolean;
+
+    /**
+     * SMS costs the passenger nothing and KekeRide real money, and is the most
+     * intrusive of the four. Never inferred from another channel's consent.
+     */
+    @Column({ default: false })
+    marketingSms!: boolean;
+
+    /** Retained from Phase 1: a content category, not a channel. */
     @Column({ default: false })
     promotionalOffers!: boolean;
 
     @Column({ default: false })
     productUpdates!: boolean;
+
+    @Column({ default: false })
+    surveys!: boolean;
 
     /** Service withdrawals, safety notices. Opt-out, not opt-in. */
     @Column({ default: true })
@@ -83,6 +114,29 @@ export class PassengerCommunicationPreference {
     @Column({ type: "varchar", length: 64, nullable: true })
     @Index()
     unsubscribeToken!: string | null;
+
+    // ── The one-time prompt ─────────────────────────────────────────────
+
+    /**
+     * How many times the prompt has been put in front of this passenger.
+     *
+     * "Ask once, allow a limited reminder, never nag" cannot be enforced
+     * without it: the app would either ask on every launch or never ask again
+     * after a single accidental dismissal.
+     */
+    @Column({ type: "int", default: 0 })
+    promptShownCount!: number;
+
+    @Column({ type: "timestamp", nullable: true })
+    promptLastShownAt!: Date | null;
+
+    /** Set on accept OR decline. Once set, the prompt is finished forever. */
+    @Column({ type: "timestamp", nullable: true })
+    promptAnsweredAt!: Date | null;
+
+    /** Which build the consent was given in, for a disputed opt-in. */
+    @Column({ type: "varchar", length: 40, nullable: true })
+    consentAppVersion!: string | null;
 
     @CreateDateColumn()
     createdAt!: Date;

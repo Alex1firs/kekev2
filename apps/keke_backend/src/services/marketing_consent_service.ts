@@ -23,14 +23,44 @@ import {
 } from '../models/PassengerCommunicationPreference';
 import { EmailSuppression } from '../models/EmailSuppression';
 import { User, UserRole } from '../models/User';
+import { channelSendEnabled } from '../config/communications_config';
 
 /** The marketing categories a campaign can target. */
-export type MarketingCategory = 'promotionalOffers' | 'productUpdates' | 'safetyAnnouncements';
+export type MarketingCategory = 'promotionalOffers' | 'productUpdates' | 'safetyAnnouncements' | 'surveys';
+
+/**
+ * How a passenger can be reached.
+ *
+ * Separate from the category, because they answer different questions: the
+ * category is WHAT a campaign is about, the channel is HOW it arrives. Both
+ * must pass for a message to be sent.
+ */
+export type MarketingChannel = 'email' | 'push' | 'in_app' | 'sms';
+
+/** Asked once, then one reminder. A third ask is pestering. */
+const PROMPT_MAX_SHOWS = 2;
+
+/**
+ * How long before the single reminder is allowed.
+ *
+ * Long enough that it does not feel like the same ask repeated; short enough
+ * that a passenger who was simply busy is still reachable.
+ */
+const PROMPT_REMINDER_GAP_MS = 14 * 24 * 60 * 60 * 1000;
+
+/** The preference column that gates each channel. */
+const CHANNEL_COLUMN: Record<MarketingChannel, 'marketingEmail' | 'marketingPush' | 'marketingInApp' | 'marketingSms'> = {
+    email: 'marketingEmail',
+    push: 'marketingPush',
+    in_app: 'marketingInApp',
+    sms: 'marketingSms',
+};
 
 export interface EligibilityResult {
     eligible: boolean;
     /** Why not, in words an operator can read in a report. */
-    reason?: 'no_consent' | 'unsubscribed' | 'category_off' | 'suppressed' | 'no_email' | 'not_passenger';
+    reason?: 'no_consent' | 'unsubscribed' | 'category_off' | 'channel_off'
+        | 'suppressed' | 'no_email' | 'no_destination' | 'not_passenger' | 'channel_disabled';
 }
 
 export class MarketingConsentService {
@@ -57,8 +87,16 @@ export class MarketingConsentService {
             promotionalOffers?: boolean;
             productUpdates?: boolean;
             safetyAnnouncements?: boolean;
+            surveys?: boolean;
+            marketingEmail?: boolean;
+            marketingPush?: boolean;
+            marketingInApp?: boolean;
+            marketingSms?: boolean;
         },
-        ctx: { source: string; ipAddress?: string | null; reason?: string | null },
+        ctx: {
+            source: string; ipAddress?: string | null;
+            reason?: string | null; appVersion?: string | null;
+        },
     ): Promise<PassengerCommunicationPreference> {
         let pref = await this.repo.findOneBy({ userId });
         if (!pref) {
@@ -75,6 +113,11 @@ export class MarketingConsentService {
         if (input.promotionalOffers !== undefined) pref.promotionalOffers = input.promotionalOffers;
         if (input.productUpdates !== undefined) pref.productUpdates = input.productUpdates;
         if (input.safetyAnnouncements !== undefined) pref.safetyAnnouncements = input.safetyAnnouncements;
+        if (input.surveys !== undefined) pref.surveys = input.surveys;
+        if (input.marketingEmail !== undefined) pref.marketingEmail = input.marketingEmail;
+        if (input.marketingPush !== undefined) pref.marketingPush = input.marketingPush;
+        if (input.marketingInApp !== undefined) pref.marketingInApp = input.marketingInApp;
+        if (input.marketingSms !== undefined) pref.marketingSms = input.marketingSms;
 
         /*
          * Turning the master switch on is a consent event and is stamped.
@@ -86,16 +129,26 @@ export class MarketingConsentService {
             pref.consentSource = ctx.source;
             pref.consentAt = new Date();
             pref.consentIp = ctx.ipAddress ?? null;
+            pref.consentAppVersion = ctx.appVersion ?? null;
             pref.unsubscribedAt = null;
             pref.unsubscribeReason = null;
         }
         if (input.marketing === false && wasMarketing) {
             pref.unsubscribedAt = new Date();
             pref.unsubscribeReason = ctx.reason ?? null;
-            // Everything downstream of the master switch goes with it, so a
-            // passenger who says "stop" does not keep receiving one category.
+            /*
+             * Everything downstream of the master switch goes with it —
+             * categories AND channels. A passenger who says "stop" must not
+             * keep receiving one category down one channel because a flag was
+             * left set.
+             */
             pref.promotionalOffers = false;
             pref.productUpdates = false;
+            pref.surveys = false;
+            pref.marketingEmail = false;
+            pref.marketingPush = false;
+            pref.marketingInApp = false;
+            pref.marketingSms = false;
         }
 
         return this.repo.save(pref);
@@ -130,6 +183,86 @@ export class MarketingConsentService {
             });
         }
         return true;
+    }
+
+    /**
+     * Should the one-time prompt be shown to this passenger?
+     *
+     * ── The nagging rule, in one place ──────────────────────────────────
+     * Answered — accepted or declined — means never again. Dismissed without
+     * an answer earns exactly one reminder, and only after a cooling-off
+     * period, because somebody who swiped a sheet away while hailing a Keke has
+     * not refused; they were busy. Beyond that we stop, because a third ask is
+     * pestering and the answer it extracts is not worth having.
+     *
+     * Server-side rather than in the app: reinstalling must not reset it.
+     */
+    static async shouldShowPrompt(userId: string): Promise<{
+        show: boolean;
+        reason: 'never_asked' | 'reminder_due' | 'answered' | 'limit_reached' | 'too_soon';
+    }> {
+        const pref = await this.repo.findOneBy({ userId });
+
+        if (!pref) return { show: true, reason: 'never_asked' };
+        if (pref.promptAnsweredAt) return { show: false, reason: 'answered' };
+        if (pref.promptShownCount >= PROMPT_MAX_SHOWS) return { show: false, reason: 'limit_reached' };
+        if (pref.promptShownCount === 0) return { show: true, reason: 'never_asked' };
+
+        const since = pref.promptLastShownAt
+            ? Date.now() - new Date(pref.promptLastShownAt).getTime()
+            : Number.POSITIVE_INFINITY;
+        return since >= PROMPT_REMINDER_GAP_MS
+            ? { show: true, reason: 'reminder_due' }
+            : { show: false, reason: 'too_soon' };
+    }
+
+    /** Record that the prompt was put on screen. Never records an answer. */
+    static async recordPromptShown(userId: string): Promise<void> {
+        let pref = await this.repo.findOneBy({ userId });
+        if (!pref) {
+            pref = this.repo.create({
+                userId,
+                unsubscribeToken: randomBytes(24).toString('base64url'),
+            });
+        }
+        pref.promptShownCount = (pref.promptShownCount ?? 0) + 1;
+        pref.promptLastShownAt = new Date();
+        await this.repo.save(pref);
+    }
+
+    /**
+     * Record an answer — accept or decline — which ends the prompt for good.
+     *
+     * A decline writes a row with everything false. Without it, "no row" would
+     * mean both "never asked" and "asked and refused", and the prompt would
+     * return on every launch for somebody who already said no.
+     */
+    static async answerPrompt(
+        userId: string,
+        accepted: boolean,
+        channels: { email?: boolean; push?: boolean; inApp?: boolean; sms?: boolean },
+        ctx: { ipAddress?: string | null; appVersion?: string | null },
+    ): Promise<PassengerCommunicationPreference> {
+        const pref = await this.setPreferences(userId, {
+            marketing: accepted,
+            promotionalOffers: accepted,
+            productUpdates: accepted,
+            marketingEmail: accepted && (channels.email ?? true),
+            marketingPush: accepted && (channels.push ?? true),
+            marketingInApp: accepted && (channels.inApp ?? true),
+            // SMS is never granted by a general "yes". It costs money and is the
+            // most intrusive channel, so it is only ever turned on deliberately
+            // on the preferences screen.
+            marketingSms: accepted && (channels.sms ?? false),
+        }, {
+            source: ConsentSource.IN_APP_PROMPT,
+            ipAddress: ctx.ipAddress ?? null,
+            reason: accepted ? 'accepted_prompt' : 'declined_prompt',
+            appVersion: ctx.appVersion ?? null,
+        });
+
+        pref.promptAnsweredAt = new Date();
+        return this.repo.save(pref);
     }
 
     /** Resolve a preference row from an email-link token. */
@@ -191,6 +324,76 @@ export class MarketingConsentService {
 
         if (!pref.marketing) return { eligible: false, reason: 'no_consent' };
         if (!pref[category]) return { eligible: false, reason: 'category_off' };
+
+        return { eligible: true };
+    }
+
+    /**
+     * May this passenger be reached on this channel, about this category?
+     *
+     * BOTH must pass. The category says what the message is about; the channel
+     * says how it arrives, and a passenger who took email and refused SMS has
+     * answered those separately. Suppression is checked first because it
+     * outranks any preference — it is a fact from the mail system, not a wish.
+     *
+     * Applied per recipient immediately before sending, not once when the
+     * audience was built: somebody who opts out mid-campaign must not receive
+     * the rest of it.
+     */
+    static async checkChannelEligibility(
+        userId: string,
+        channel: MarketingChannel,
+        category: MarketingCategory = 'promotionalOffers',
+        destination?: string | null,
+    ): Promise<EligibilityResult> {
+        /*
+         * The per-channel kill switch, first. A disabled channel must refuse
+         * before anything else is considered, and must not affect the others —
+         * push being switched off cannot stop an email campaign.
+         */
+        if (!channelSendEnabled(channel)) {
+            return { eligible: false, reason: 'channel_disabled' };
+        }
+
+        // Email is the only channel whose destination we suppress on, because
+        // it is the only one that reports bounces and complaints back to us.
+        if (channel === 'email') {
+            if (!destination || !destination.includes('@')) {
+                return { eligible: false, reason: 'no_email' };
+            }
+            if (await SuppressionService.isSuppressed(destination)) {
+                return { eligible: false, reason: 'suppressed' };
+            }
+        } else if (destination !== undefined && !destination) {
+            // No device token, no phone number: nothing to send to.
+            return { eligible: false, reason: 'no_destination' };
+        }
+
+        const pref = await this.repo.findOneBy({ userId });
+        if (!pref) return { eligible: false, reason: 'no_consent' };
+
+        /*
+         * Safety notices are the one category exempt from the marketing switch
+         * — a service withdrawal is something a passenger needs whether or not
+         * they want our offers — but they are NOT exempt from the channel
+         * choice. Somebody who refused SMS does not get texted a safety notice;
+         * it reaches them another way.
+         */
+        if (category === 'safetyAnnouncements') {
+            if (!pref.safetyAnnouncements) return { eligible: false, reason: 'category_off' };
+        } else {
+            if (!pref.marketing) {
+                return { eligible: false, reason: pref.unsubscribedAt ? 'unsubscribed' : 'no_consent' };
+            }
+            if (category !== 'promotionalOffers' && !pref[category]) {
+                return { eligible: false, reason: 'category_off' };
+            }
+            if (category === 'promotionalOffers' && !pref.promotionalOffers) {
+                return { eligible: false, reason: 'category_off' };
+            }
+        }
+
+        if (!pref[CHANNEL_COLUMN[channel]]) return { eligible: false, reason: 'channel_off' };
 
         return { eligible: true };
     }

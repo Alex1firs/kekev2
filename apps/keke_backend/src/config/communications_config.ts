@@ -45,17 +45,26 @@ export interface CommunicationsConfig {
     maxAudienceSize: number;
 
     /**
-     * THE KILL SWITCH.
+     * ── ONE KILL SWITCH PER CHANNEL ─────────────────────────────────────
      *
-     * False means no marketing email leaves this system, whatever the admin
-     * screens say. Transactional email — verification codes, password resets —
-     * does not consult this and is unaffected, which is the entire point of
-     * having it separate.
+     * Independent on purpose. Email being switched off must not stop a push
+     * campaign, and a push provider outage must not take email down with it —
+     * a single flag would make every channel hostage to the worst one.
      *
-     * Ships FALSE. The first production release must not be able to send until
-     * the screens, consent rules, suppression handling and sender domain have
-     * been verified by a person.
+     * Every one of them ships FALSE. A channel is enabled only after it has
+     * been verified on its own: its content, its consent rules, its delivery
+     * reporting and, for SMS, its cost model.
+     *
+     * None of these are consulted by transactional communication. Verification
+     * codes, password resets and ride alerts do not pass through any of it,
+     * which is the entire point of keeping them separate.
      */
+    marketingEmailEnabled: boolean;
+    marketingPushEnabled: boolean;
+    marketingInAppEnabled: boolean;
+    marketingSmsEnabled: boolean;
+
+    /** Retained so existing callers keep working: true if ANY channel is on. */
     marketingSendEnabled: boolean;
 
     /** Where unsubscribe and preference links point. */
@@ -79,8 +88,18 @@ export function loadCommunicationsConfig(): CommunicationsConfig {
         largeAudienceWarning: num('COMMS_LARGE_AUDIENCE_WARNING', 500),
         maxAudienceSize: num('COMMS_MAX_AUDIENCE', 50_000),
 
-        // Default false, deliberately. Enabling it is a decision somebody makes.
-        marketingSendEnabled: bool('MARKETING_SEND_ENABLED', false),
+        // Each defaults false. Enabling one is a decision somebody makes about
+        // that channel alone.
+        marketingEmailEnabled: bool('MARKETING_EMAIL_SEND_ENABLED', false),
+        marketingPushEnabled: bool('MARKETING_PUSH_SEND_ENABLED', false),
+        marketingInAppEnabled: bool('MARKETING_IN_APP_ENABLED', false),
+        marketingSmsEnabled: bool('MARKETING_SMS_SEND_ENABLED', false),
+
+        marketingSendEnabled:
+            bool('MARKETING_EMAIL_SEND_ENABLED', false)
+            || bool('MARKETING_PUSH_SEND_ENABLED', false)
+            || bool('MARKETING_IN_APP_ENABLED', false)
+            || bool('MARKETING_SMS_SEND_ENABLED', false),
 
         publicBaseUrl: (process.env.PUBLIC_API_URL || 'https://api.kekeride.ng').replace(/\/+$/, ''),
         replyToAddress: process.env.COMMS_REPLY_TO || 'support@kekeride.ng',
@@ -100,8 +119,8 @@ export function marketingSendBlockers(): string[] {
     const cfg = loadCommunicationsConfig();
     const problems: string[] = [];
 
-    if (!cfg.marketingSendEnabled) {
-        problems.push('MARKETING_SEND_ENABLED is false — bulk marketing sending is switched off.');
+    if (!cfg.marketingEmailEnabled) {
+        problems.push('MARKETING_EMAIL_SEND_ENABLED is false — email campaigns are switched off.');
     }
     if (!process.env.RESEND_API_KEY) {
         problems.push('RESEND_API_KEY is not set — there is no provider to send through.');
@@ -121,4 +140,47 @@ export function marketingSendBlockers(): string[] {
         problems.push('PUBLIC_API_URL is not https — unsubscribe links would be insecure.');
     }
     return problems;
+}
+
+
+/**
+ * Is this channel permitted to send right now?
+ *
+ * Checked before anything else in the eligibility chain, so a disabled channel
+ * refuses immediately and independently. SMS additionally requires a provider:
+ * there is none in the repository yet, so it cannot send whatever the flag says.
+ */
+export function channelSendEnabled(channel: 'email' | 'push' | 'in_app' | 'sms'): boolean {
+    const cfg = loadCommunicationsConfig();
+    switch (channel) {
+        case 'email': return cfg.marketingEmailEnabled;
+        case 'push': return cfg.marketingPushEnabled;
+        case 'in_app': return cfg.marketingInAppEnabled;
+        case 'sms':
+            // Belt and braces: no verified provider exists, so the flag alone
+            // must not be able to turn on a channel that would silently fail
+            // and cost money on retry.
+            return cfg.marketingSmsEnabled && Boolean(process.env.SMS_PROVIDER_API_KEY);
+        default: return false;
+    }
+}
+
+/** Why each channel cannot send, for the admin Channel Health screen. */
+export function channelBlockers(): Record<string, string[]> {
+    const cfg = loadCommunicationsConfig();
+    return {
+        email: [
+            ...(cfg.marketingEmailEnabled ? [] : ['MARKETING_EMAIL_SEND_ENABLED is false.']),
+            ...(process.env.RESEND_API_KEY ? [] : ['RESEND_API_KEY is not set.']),
+        ],
+        push: [
+            ...(cfg.marketingPushEnabled ? [] : ['MARKETING_PUSH_SEND_ENABLED is false.']),
+            ...(process.env.FIREBASE_SERVICE_ACCOUNT_JSON ? [] : ['Firebase credentials are not set.']),
+        ],
+        in_app: cfg.marketingInAppEnabled ? [] : ['MARKETING_IN_APP_ENABLED is false.'],
+        sms: [
+            ...(cfg.marketingSmsEnabled ? [] : ['MARKETING_SMS_SEND_ENABLED is false.']),
+            ...(process.env.SMS_PROVIDER_API_KEY ? [] : ['No SMS provider is configured.']),
+        ],
+    };
 }

@@ -47,11 +47,18 @@ class _CommunicationPreferencesScreenState
   /// A preference screen that needs confirming is one people leave without
   /// confirming, and the result is a passenger who believes they unsubscribed
   /// and did not.
-  Future<void> _update({bool? offers, bool? updates, bool? safety}) async {
+  Future<void> _update({
+    bool? offers, bool? updates, bool? safety,
+    bool? email, bool? push, bool? inApp, bool? sms,
+  }) async {
     final next = _prefs.copyWith(
       promotionalOffers: offers,
       productUpdates: updates,
       safetyAnnouncements: safety,
+      marketingEmail: email,
+      marketingPush: push,
+      marketingInApp: inApp,
+      marketingSms: sms,
     );
     setState(() {
       _prefs = next;
@@ -63,6 +70,10 @@ class _CommunicationPreferencesScreenState
             promotionalOffers: next.promotionalOffers,
             productUpdates: next.productUpdates,
             safetyAnnouncements: next.safetyAnnouncements,
+            marketingEmail: next.marketingEmail,
+            marketingPush: next.marketingPush,
+            marketingInApp: next.marketingInApp,
+            marketingSms: next.marketingSms,
           );
       if (!mounted) return;
       setState(() {
@@ -132,6 +143,57 @@ class _CommunicationPreferencesScreenState
                   value: _prefs.safetyAnnouncements,
                   enabled: !_saving,
                   onChanged: (v) => _update(safety: v),
+                ),
+
+                const SizedBox(height: 26),
+                Text('HOW WE REACH YOU',
+                    style: AppTextStyles.bodySmall(color: AppColors.midGray)
+                        .copyWith(letterSpacing: 1, fontSize: 11)),
+                const SizedBox(height: 6),
+                Text(
+                  'These are separate choices. You can take email and refuse '
+                  'text messages, or the other way round.',
+                  style: AppTextStyles.bodySmall(color: AppColors.lightGray)
+                      .copyWith(fontSize: 12),
+                ),
+                const SizedBox(height: 8),
+
+                _PreferenceTile(
+                  title: 'Email',
+                  subtitle: 'Offers and news to your inbox.',
+                  value: _prefs.marketingEmail,
+                  enabled: !_saving,
+                  onChanged: (v) => _update(email: v),
+                ),
+                const Divider(color: AppColors.darkGray, height: 1),
+
+                _PreferenceTile(
+                  title: 'Push notifications',
+                  subtitle: 'Occasional offers on your phone.',
+                  value: _prefs.marketingPush,
+                  enabled: !_saving,
+                  onChanged: (v) => _update(push: v),
+                ),
+                const Divider(color: AppColors.darkGray, height: 1),
+
+                _PreferenceTile(
+                  title: 'In the app',
+                  subtitle: 'Offers shown on your home screen.',
+                  value: _prefs.marketingInApp,
+                  enabled: !_saving,
+                  onChanged: (v) => _update(inApp: v),
+                ),
+                const Divider(color: AppColors.darkGray, height: 1),
+
+                // Off unless deliberately chosen here. A general "yes" never
+                // grants it: it is the most intrusive channel and the only one
+                // that can cost the passenger anything.
+                _PreferenceTile(
+                  title: 'Text messages',
+                  subtitle: 'Rarely used. Standard message rates may apply.',
+                  value: _prefs.marketingSms,
+                  enabled: !_saving,
+                  onChanged: (v) => _update(sms: v),
                 ),
 
                 const SizedBox(height: 28),

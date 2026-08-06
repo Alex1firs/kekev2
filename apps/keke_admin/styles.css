@@ -1474,9 +1474,17 @@ body.authenticated .admin-container { display: flex; }
     overflow-x: auto;
     padding-bottom: 2px;
     border-bottom: 1px solid var(--border-color);
-    scrollbar-width: none;
+    /*
+     * A visible, thin scrollbar rather than a hidden one. The tab row already
+     * scrolled; with the scrollbar suppressed there was no cue that anything
+     * lay past the right edge, so the twelfth tab might as well not exist.
+     */
+    scrollbar-width: thin;
+    scrollbar-color: rgba(148,163,184,0.35) transparent;
 }
-.cc-nav::-webkit-scrollbar { display: none; }
+.cc-nav::-webkit-scrollbar { height: 4px; }
+.cc-nav::-webkit-scrollbar-thumb { background: rgba(148,163,184,0.35); border-radius: 2px; }
+.cc-nav::-webkit-scrollbar-track { background: transparent; }
 .cc-tab {
     background: none;
     border: 0;

@@ -16,6 +16,11 @@ import { MultiChannelCampaignService } from '../services/multichannel_campaign_s
 import { CampaignSimulator } from '../services/campaign_simulator';
 import { CampaignTestSend } from '../services/campaign_test_send';
 import { CommunicationsDashboardService } from '../services/communications_dashboard_service';
+import { CampaignCalendarService, CalendarScale } from '../services/campaign_calendar_service';
+import { CampaignAnalyticsService } from '../services/campaign_analytics_service';
+import { AudienceInsightsService } from '../services/audience_insights_service';
+import { CampaignHistoryService } from '../services/campaign_history_service';
+import { audienceOptions } from '../services/audience_registry';
 import { channelBlockers, loadCommunicationsConfig } from '../config/communications_config';
 import { AudienceService, AudienceDefinition } from '../services/audience_service';
 import { MarketingConsentService, SuppressionService } from '../services/marketing_consent_service';
@@ -633,6 +638,102 @@ router.post('/communications/resume/:channel',
         } catch (err: any) {
             return fail(res, err, "We couldn't resume that channel.");
         }
+    });
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Calendar, analytics, insights, history, audiences
+// ═══════════════════════════════════════════════════════════════════════
+
+router.get('/communications/calendar',
+    requireStaffPermission(StaffPermission.COMMUNICATIONS_VIEW),
+    async (req: StaffRequest, res: Response) => {
+        try {
+            const scale = String(req.query.scale ?? 'month') as CalendarScale;
+            if (!['day', 'week', 'month'].includes(scale)) {
+                return res.status(400).json(errBody(ErrorCode.VALIDATION_ERROR, 'scale must be day, week or month.'));
+            }
+            const anchor = String(req.query.date ?? new Date().toISOString());
+            const statuses = req.query.status
+                ? String(req.query.status).split(',').filter(Boolean) as any[]
+                : undefined;
+            return res.json(await CampaignCalendarService.view(scale, anchor, statuses));
+        } catch (err: any) {
+            return fail(res, err, "We couldn't load the calendar.");
+        }
+    });
+
+/*
+ * Drag-and-drop rescheduling.
+ *
+ * Gated on COMMUNICATIONS_SCHEDULE, not on VIEW: moving a send date is a
+ * scheduling decision, and a calendar that anybody who can look at it can also
+ * rearrange is a calendar nobody can trust.
+ */
+router.post('/communications/calendar/reschedule',
+    requireRealStaff, requireStaffPermission(StaffPermission.COMMUNICATIONS_SCHEDULE),
+    async (req: StaffRequest, res: Response) => {
+        try {
+            const result = await CampaignCalendarService.reschedule({
+                campaignId: String(req.body?.campaignId ?? ''),
+                toISO: String(req.body?.scheduledAt ?? ''),
+                actorStaffId: req.actor!.staffUserId!,
+                ipAddress: req.ip ?? null,
+                userAgent: String(req.headers['user-agent'] ?? ''),
+            });
+            await AuditService.recordCritical({
+                actor: auditActorOf(req.actor), action: 'CAMPAIGN_RESCHEDULED',
+                resourceType: 'COMMUNICATION_CAMPAIGN', resourceId: result.id,
+                previousValue: result.movedFrom, newValue: result.scheduledAt, ...ctxOf(req),
+            });
+            return res.json(result);
+        } catch (err: any) {
+            return res.status(400).json(errBody(ErrorCode.VALIDATION_ERROR, err?.message ?? 'Could not reschedule.'));
+        }
+    });
+
+router.get('/communications/analytics',
+    requireStaffPermission(StaffPermission.COMMUNICATIONS_VIEW_REPORTS),
+    async (req: StaffRequest, res: Response) => {
+        try {
+            return res.json(await CampaignAnalyticsService.overview({
+                days: req.query.days ? Number(req.query.days) : undefined,
+                campaignId: req.query.campaignId ? String(req.query.campaignId) : undefined,
+            }));
+        } catch (err: any) {
+            return fail(res, err, "We couldn't load analytics.");
+        }
+    });
+
+router.post('/communications/audience/insights',
+    requireStaffPermission(StaffPermission.COMMUNICATIONS_VIEW),
+    async (req: StaffRequest, res: Response) => {
+        try {
+            return res.json(await AudienceInsightsService.describe(req.body?.definition ?? {}));
+        } catch (err: any) {
+            return res.status(400).json(errBody(ErrorCode.VALIDATION_ERROR, err?.message ?? 'Could not describe that audience.'));
+        }
+    });
+
+router.get('/communications/mc/campaigns/:id/history',
+    requireStaffPermission(StaffPermission.COMMUNICATIONS_VIEW),
+    async (req: StaffRequest, res: Response) => {
+        try {
+            const campaignId = String(req.params.id);
+            const [history, attribution] = await Promise.all([
+                CampaignHistoryService.forCampaign(campaignId),
+                CampaignHistoryService.attribution(campaignId),
+            ]);
+            return res.json({ history, attribution });
+        } catch (err: any) {
+            return fail(res, err, "We couldn't load the campaign history.");
+        }
+    });
+
+/** The audience registry — which audiences exist, which are usable, what each still needs. */
+router.get('/communications/audiences',
+    requireStaffPermission(StaffPermission.COMMUNICATIONS_VIEW),
+    async (_req: StaffRequest, res: Response) => {
+        return res.json({ audiences: audienceOptions() });
     });
 
 export default router;

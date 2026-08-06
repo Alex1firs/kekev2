@@ -58,11 +58,22 @@ describe('personalisation fallbacks', () => {
 });
 
 describe('every template', () => {
-    it('there are eight, each with a consent category', () => {
-        expect(TEMPLATES).toHaveLength(8);
+    /*
+     * Deliberately not a fixed count. This asserted `toHaveLength(8)` and broke
+     * the moment the library grew — a test that fails for adding a template is
+     * testing the wrong thing. What matters is that every template carries a
+     * consent category and a unique key.
+     */
+    it('every template has a valid consent category', () => {
+        expect(TEMPLATES.length).toBeGreaterThanOrEqual(8);
         for (const t of TEMPLATES) {
             expect(['promotionalOffers', 'productUpdates', 'safetyAnnouncements']).toContain(t.category);
         }
+    });
+
+    it('every template key is unique', () => {
+        const keys = TEMPLATES.map((t) => t.key);
+        expect(new Set(keys).size).toBe(keys.length);
     });
 
     /*

@@ -23,6 +23,7 @@ import { channelDefaults, validateChannelContent, analyseSms, ChannelIssue } fro
 import { renderTemplate } from './email_templates';
 import { loadCommunicationsConfig, channelSendEnabled, channelBlockers } from '../config/communications_config';
 import { AuditService, AuditActor } from './audit_service';
+import { CampaignHistoryService, CampaignAction } from './campaign_history_service';
 import { AppError, ErrorCode } from '../utils/errors';
 
 /** Naira per SMS segment. Configurable: it is a commercial term, not a fact. */
@@ -123,6 +124,18 @@ export class MultiChannelCampaignService {
             resourceType: 'COMMUNICATION_CAMPAIGN', resourceId: campaign.id,
             newValue: campaign.name, ...ctx,
         });
+        /*
+         * Both records are written. The audit log answers "what did this person
+         * do"; the campaign history answers "what happened to this campaign".
+         * Same events, different questions, asked months apart by different
+         * people — see campaign_history_service.
+         */
+        await CampaignHistoryService.record({
+            campaignId: campaign.id, action: CampaignAction.CREATED,
+            actorStaffId: actor.staffUserId, note: campaign.name,
+            ipAddress: (ctx as any).ipAddress ?? null,
+            userAgent: (ctx as any).userAgent ?? null,
+        });
         return campaign;
     }
 
@@ -152,6 +165,12 @@ export class MultiChannelCampaignService {
         this.assertEditable(campaign);
 
         const before = contentFingerprint(await this.materialParts(campaign));
+        // Snapshot for the history diff, before anything is assigned.
+        const previousValues = {
+            name: campaign.name, description: campaign.description,
+            objective: campaign.objective, segmentId: campaign.segmentId,
+            audienceDefinition: campaign.audienceDefinition,
+        };
 
         if (patch.name !== undefined) campaign.name = String(patch.name).trim();
         if (patch.description !== undefined) campaign.description = patch.description?.trim() || null;
@@ -163,6 +182,17 @@ export class MultiChannelCampaignService {
         await this.repo.save(campaign);
 
         await this.invalidateApprovalIfChanged(actor, campaign, before, CampaignAudit.EDITED, ctx);
+        await CampaignHistoryService.record({
+            campaignId: id, action: CampaignAction.EDITED,
+            actorStaffId: actor.staffUserId,
+            changes: CampaignHistoryService.diff(previousValues, {
+                name: campaign.name, description: campaign.description,
+                objective: campaign.objective, segmentId: campaign.segmentId,
+                audienceDefinition: campaign.audienceDefinition,
+            }),
+            ipAddress: (ctx as any).ipAddress ?? null,
+            userAgent: (ctx as any).userAgent ?? null,
+        });
         return this.get(id);
     }
 
@@ -190,6 +220,15 @@ export class MultiChannelCampaignService {
         const saved = await this.channels.save(row);
 
         await this.invalidateApprovalIfChanged(actor, campaign, before, CampaignAudit.CHANNEL_CHANGED, ctx);
+        await CampaignHistoryService.record({
+            campaignId: id,
+            action: patch.content !== undefined
+                ? CampaignAction.CONTENT_EDITED
+                : patch.enabled ? CampaignAction.CHANNEL_ENABLED : CampaignAction.CHANNEL_DISABLED,
+            actorStaffId: actor.staffUserId, channel: String(channel),
+            ipAddress: (ctx as any).ipAddress ?? null,
+            userAgent: (ctx as any).userAgent ?? null,
+        });
         return saved;
     }
 
@@ -469,6 +508,13 @@ export class MultiChannelCampaignService {
             resourceType: 'COMMUNICATION_CAMPAIGN', resourceId: id,
             previousValue: CampaignStatus.DRAFT, newValue: CampaignStatus.AWAITING_APPROVAL, ...ctx,
         });
+        await CampaignHistoryService.record({
+            campaignId: id, action: CampaignAction.APPROVAL_REQUESTED,
+            actorStaffId: actor.staffUserId,
+            changes: [{ field: 'status', from: CampaignStatus.DRAFT, to: CampaignStatus.AWAITING_APPROVAL }],
+            ipAddress: (ctx as any).ipAddress ?? null,
+            userAgent: (ctx as any).userAgent ?? null,
+        });
         return saved;
     }
 
@@ -505,6 +551,13 @@ export class MultiChannelCampaignService {
             resourceType: 'COMMUNICATION_CAMPAIGN', resourceId: id,
             previousValue: CampaignStatus.AWAITING_APPROVAL, newValue: CampaignStatus.APPROVED, ...ctx,
         });
+        await CampaignHistoryService.record({
+            campaignId: id, action: CampaignAction.APPROVED,
+            actorStaffId: actor.staffUserId,
+            changes: [{ field: 'status', from: CampaignStatus.AWAITING_APPROVAL, to: CampaignStatus.APPROVED }],
+            ipAddress: (ctx as any).ipAddress ?? null,
+            userAgent: (ctx as any).userAgent ?? null,
+        });
         return saved;
     }
 
@@ -525,6 +578,13 @@ export class MultiChannelCampaignService {
             actor, action: CampaignAudit.CANCELLED,
             resourceType: 'COMMUNICATION_CAMPAIGN', resourceId: id,
             reason: reason.trim(), previousValue: previous, newValue: CampaignStatus.CANCELLED, ...ctx,
+        });
+        await CampaignHistoryService.record({
+            campaignId: id, action: CampaignAction.CANCELLED,
+            actorStaffId: actor.staffUserId, note: reason.trim(),
+            changes: [{ field: 'status', from: previous, to: CampaignStatus.CANCELLED }],
+            ipAddress: (ctx as any).ipAddress ?? null,
+            userAgent: (ctx as any).userAgent ?? null,
         });
         return saved;
     }

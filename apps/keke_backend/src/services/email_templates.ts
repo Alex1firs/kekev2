@@ -211,15 +211,36 @@ export interface EmailTemplate {
     description: string;
     /** Which consent category a campaign on this template belongs to. */
     category: 'promotionalOffers' | 'productUpdates' | 'safetyAnnouncements';
+    /** Grouping for the library screen. */
+    group?: 'Promotions' | 'Lifecycle' | 'Service' | 'Community';
+    /** Who this is written for. Only 'passenger' can be sent today. */
+    audience?: 'passenger' | 'driver';
+    /** One line on when to reach for it, shown on the card. */
+    whenToUse?: string;
     defaults: TemplateContent;
 }
 
 /**
- * The eight templates.
+ * The template library.
  *
- * Category is a property of the template, not a free choice: a safety notice
- * must not be sendable under promotional consent, and a discount must not be
- * sendable under a safety exemption. Binding it here removes the opportunity.
+ * ── Category is a property of the template, not a free choice ────────────
+ * A safety notice must not be sendable under promotional consent, and a
+ * discount must not be sendable under a safety exemption. Binding it here
+ * removes the opportunity rather than relying on whoever fills the form in.
+ *
+ * ── Two of these are for drivers, and cannot be sent ─────────────────────
+ * Driver appreciation and the driver-facing referral exist because the copy is
+ * the easy part and the consent record is not. They carry `audience: 'driver'`,
+ * which the audience registry currently refuses — so they are visible, usable
+ * as a starting point, and impossible to send until a driver consent record
+ * exists. A library that quietly omitted them would make the gap invisible.
+ *
+ * ── Service templates are not marketing ──────────────────────────────────
+ * Service interruption and safety update go under `safetyAnnouncements`, which
+ * defaults to ON and is not withdrawable by an ordinary unsubscribe — they are
+ * part of running a transport service. That is exactly why they must never be
+ * used to carry an offer: the one category people cannot opt out of is the one
+ * most easily abused.
  */
 export const TEMPLATES: EmailTemplate[] = [
     {
@@ -309,6 +330,105 @@ export const TEMPLATES: EmailTemplate[] = [
             headline: 'An important service notice',
             body: 'Hello {{firstName}},\n\nWe are writing to let you know about a change that affects your rides.',
             ctaLabel: 'Open KekeRide',
+        },
+    },
+    {
+        key: 'weekend_discount',
+        name: 'Weekend discount',
+        description: 'A time-boxed offer for Friday to Sunday.',
+        category: 'promotionalOffers',
+        group: 'Promotions',
+        audience: 'passenger',
+        whenToUse: 'Filling quiet weekend hours. Say when it ends — an offer with no deadline gets ignored.',
+        defaults: {
+            headline: 'Cheaper Kekes all weekend',
+            body: 'Hello {{firstName}},\n\nFrom Friday evening until Sunday night, every KekeRide trip is discounted. '
+                + 'No code needed — the lower fare shows in the app before you confirm.',
+            ctaLabel: 'Book a weekend ride',
+            footnote: 'Offer ends Sunday at midnight. Available in participating areas only.',
+        },
+    },
+    {
+        key: 'holiday',
+        name: 'Holiday greeting',
+        description: 'Christmas, Easter, Eid, Independence Day.',
+        category: 'promotionalOffers',
+        group: 'Community',
+        audience: 'passenger',
+        whenToUse: 'A greeting, not an advert. If it needs a promo code, use the promotional template instead.',
+        defaults: {
+            headline: 'From all of us at KekeRide',
+            body: 'Hello {{firstName}},\n\nThank you for riding with us this year. '
+                + 'However you are spending the holiday, we hope you get there safely.\n\n'
+                + 'Our drivers are on the road throughout, so if you need a Keke, we are here.',
+            ctaLabel: 'Open KekeRide',
+            footnote: 'Fares may be higher than usual during peak holiday hours.',
+        },
+    },
+    {
+        key: 'passenger_appreciation',
+        name: 'Passenger appreciation',
+        description: 'Thanking frequent riders. No offer attached.',
+        category: 'promotionalOffers',
+        group: 'Community',
+        audience: 'passenger',
+        whenToUse: 'Pair with the high-frequency audience filter. Sending this to somebody with two rides reads as a form letter.',
+        defaults: {
+            headline: 'Thank you for riding with us',
+            body: 'Hello {{firstName}},\n\nYou have been one of our most regular passengers, and we noticed. '
+                + 'Thank you for trusting KekeRide to get you where you are going.',
+            ctaLabel: 'Book your next ride',
+            footnote: 'You are receiving this because you ride with us often.',
+        },
+    },
+    {
+        key: 'driver_appreciation',
+        name: 'Driver appreciation',
+        description: 'Thanking drivers. Cannot be sent yet — drivers have no consent record.',
+        category: 'promotionalOffers',
+        group: 'Community',
+        audience: 'driver',
+        whenToUse: 'Ready for when a driver consent record exists. Until then this is a draft nobody can send.',
+        defaults: {
+            headline: 'Thank you for driving with KekeRide',
+            body: 'Hello {{firstName}},\n\nYour trips this month kept passengers moving, and we want to say so plainly. '
+                + 'Thank you for the hours, the early starts and the care you take with every passenger.',
+            ctaLabel: 'Open the driver app',
+            footnote: 'Sent to active KekeRide drivers.',
+        },
+    },
+    {
+        key: 'service_interruption',
+        name: 'Service interruption',
+        description: 'A planned or ongoing disruption. Not marketing.',
+        category: 'safetyAnnouncements',
+        group: 'Service',
+        audience: 'passenger',
+        whenToUse: 'Say what is affected, where, and when it ends. Never attach an offer to this — '
+            + 'safety consent cannot be withdrawn, so using it to advertise abuses the one channel people cannot leave.',
+        defaults: {
+            headline: 'Service disruption in your area',
+            body: 'Hello {{firstName}},\n\nKekeRide service is disrupted in parts of the city. '
+                + 'We expect normal service to return shortly.\n\n'
+                + 'If you have a ride in progress, your driver will complete it as normal.',
+            ctaLabel: 'Check the app',
+            footnote: 'This is a service notice, not a promotion. You cannot unsubscribe from safety notices.',
+        },
+    },
+    {
+        key: 'feature_announcement',
+        name: 'Feature announcement',
+        description: 'Something new in the app.',
+        category: 'productUpdates',
+        group: 'Lifecycle',
+        audience: 'passenger',
+        whenToUse: 'One feature per message. A list of five improvements gets read as none.',
+        defaults: {
+            headline: 'Something new in KekeRide',
+            body: 'Hello {{firstName}},\n\nWe have added something to the app that should make booking simpler. '
+                + 'Update to the latest version to try it.',
+            ctaLabel: 'See what is new',
+            footnote: 'You are receiving this because you asked for product updates.',
         },
     },
 ];

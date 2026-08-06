@@ -2393,6 +2393,9 @@ async function ccRender() {
     try {
         switch (ccTab) {
             case 'dashboard':   return ccRenderDashboard(body);
+            case 'calendar':    return ccRenderCalendar(body);
+            case 'analytics':   return ccRenderAnalytics(body);
+            case 'library':     return ccRenderLibrary(body);
             case 'overview':    return ccRenderOverview(body);
             case 'campaigns':   return ccRenderCampaigns(body, null);
             case 'drafts':      return ccRenderCampaigns(body, 'draft');
@@ -3054,7 +3057,58 @@ function ccRenderBuilder(body, detail, readiness) {
                     ${ccChannelPreview(ccChannelTab, detail.previews, current?.content || {})}
                 </aside>
             </div>
+
+            <!--
+              Insights, previews and history.
+
+              Kept below the editor rather than beside it: each is read once, at
+              a decision point, and none of them is needed while typing. Loaded
+              on demand so opening a campaign to fix a typo does not run five
+              aggregate queries.
+            -->
+            <div class="cc-detail-tabs" id="cc-detail-tabs">
+                ${[['insights', 'Audience insights', 'fa-users'],
+                   ['previews', 'Full previews', 'fa-eye'],
+                   ['history', 'History', 'fa-clock-rotate-left']].map(([k, label, icon]) => `
+                    <button class="cc-detail-tab ${ccDetailTab === k ? 'active' : ''}"
+                            onclick="ccSetDetailTab('${k}')">
+                        <i class="fas ${icon}"></i> ${label}
+                    </button>`).join('')}
+            </div>
+            <div class="cc-detail-panel" id="cp-detail-panel"></div>
         </div>`;
+
+    ccLoadDetailPanel(detail.campaign);
+}
+
+/** Which of the three lower panels is showing. Survives a re-render. */
+let ccDetailTab = 'insights';
+
+function ccSetDetailTab(tab) {
+    ccDetailTab = tab;
+    document.querySelectorAll('.cc-detail-tab').forEach((b, i) =>
+        b.classList.toggle('active', ['insights', 'previews', 'history'][i] === tab));
+    ccLoadDetailPanel();
+}
+
+/**
+ * Load whichever lower panel is selected.
+ *
+ * Each of these costs a round trip and, for insights, a handful of aggregate
+ * queries over the ride table. Loading all three every time a campaign is
+ * opened would make editing a subject line noticeably slow for no benefit.
+ */
+function ccLoadDetailPanel(campaign) {
+    if (campaign) window.ccCurrentCampaign = campaign;
+    const host = document.getElementById('cp-detail-panel');
+    if (!host || !ccCampaignId) return;
+
+    if (ccDetailTab === 'insights') {
+        const def = (window.ccCurrentCampaign && window.ccCurrentCampaign.audienceDefinition) || {};
+        return cpRenderInsights(host, def);
+    }
+    if (ccDetailTab === 'previews') return cpRenderPreviews(host, ccCampaignId);
+    return cpRenderHistory(host, ccCampaignId);
 }
 
 function ccChannel(key) {

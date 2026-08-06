@@ -5,6 +5,8 @@ import dotenv from "dotenv";
 import { PassengerCommunicationPreference } from "../models/PassengerCommunicationPreference";
 import { EmailSuppression } from "../models/EmailSuppression";
 import { EmailWebhookEvent } from "../models/EmailWebhookEvent";
+import { CommunicationCampaignEvent } from "../models/CommunicationCampaignEvent";
+import { InAppMessageDelivery } from "../models/InAppMessageDelivery";
 import { EmailCampaign } from "../models/EmailCampaign";
 import { EmailCampaignRecipient } from "../models/EmailCampaignRecipient";
 import { EmailDeliveryEvent } from "../models/EmailDeliveryEvent";
@@ -29,6 +31,7 @@ export const AppDataSource = new DataSource({
     PassengerCommunicationPreference, EmailSuppression, EmailCampaign, EmailCampaignRecipient, EmailDeliveryEvent, EmailAudienceSegment,
     CommunicationCampaign, CommunicationCampaignChannel,
     MarketingPushJob, EmailWebhookEvent,
+    CommunicationCampaignEvent, InAppMessageDelivery,
 ],
 
     migrations: ["dist/migrations/*.js"],

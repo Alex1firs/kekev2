@@ -22,27 +22,17 @@ import { PassengerCommunicationPreference } from '../models/PassengerCommunicati
 import { EmailSuppression } from '../models/EmailSuppression';
 import { loadCommunicationsConfig } from '../config/communications_config';
 import { MarketingCategory } from './marketing_consent_service';
+import { AudienceType, assertAudienceAvailable } from './audience_registry';
 
-/**
+/*
  * Who a campaign is addressed to.
  *
- * ── Why this exists before it is needed ──────────────────────────────────
- * Every other audience KekeRide will eventually want to reach — drivers,
- * dispatchers, supervisors, staff, partners — differs from passengers in
- * exactly two places: which rows the query selects, and which consent record
- * governs them. Naming the audience here turns those into a registry entry
- * instead of a rewrite.
- *
- * Only `passenger` is registered. The others are listed so the shape is fixed,
- * and `resolve()` refuses them loudly rather than quietly falling through to a
- * send: a driver has no consent record, so reaching them would mean marketing
- * to someone who never agreed. That is a decision to be made deliberately, not
- * a default to be inherited.
+ * The definitions live in audience_registry.ts — one entry per audience,
+ * naming its consent model, its channels and what is still missing before it
+ * can be enabled. Re-exported here so existing importers are unaffected.
  */
-export type AudienceType = 'passenger' | 'driver' | 'dispatcher' | 'supervisor' | 'staff' | 'partner';
-
-/** The audiences that can actually be resolved today. */
-export const REGISTERED_AUDIENCES: ReadonlySet<AudienceType> = new Set<AudienceType>(['passenger']);
+export type { AudienceType } from './audience_registry';
+export { REGISTERED_AUDIENCES, AUDIENCE_REGISTRY, audienceOptions } from './audience_registry';
 
 export interface AudienceDefinition {
     /**
@@ -109,6 +99,14 @@ export class AudienceService {
     static async resolve(definition: AudienceDefinition): Promise<{
         members: AudienceMember[];
         preview: AudiencePreview;
+        /*
+         * Everyone the filters matched, before consent and suppression were
+         * applied. Additive; existing callers ignore it. Audience insights
+         * describes THIS set rather than `members`, because "who is this
+         * campaign for" and "who will receive it" are different questions, and
+         * the gap between them is the thing worth noticing.
+         */
+        matchedIds: string[];
     }> {
         const cfg = loadCommunicationsConfig();
         const category: MarketingCategory = definition.category ?? 'promotionalOffers';
@@ -122,12 +120,7 @@ export class AudienceService {
          * silently go to every passenger instead.
          */
         const audienceType: AudienceType = definition.audienceType ?? 'passenger';
-        if (!REGISTERED_AUDIENCES.has(audienceType)) {
-            throw new Error(
-                `The "${audienceType}" audience is not available yet. `
-                + 'It needs its own consent record and opt-in flow before anything can be addressed to it.',
-            );
-        }
+        assertAudienceAvailable(audienceType);
 
         // ── 1. Passengers matching the activity and date filters ────────
         const qb = AppDataSource.getRepository(User).createQueryBuilder('u')
@@ -226,6 +219,7 @@ export class AudienceService {
         }
 
         const matched = await qb.getMany();
+        const matchedIds = matched.map((u) => String(u.id));
 
         // ── 2. Eligibility, applied to the matched set ──────────────────
         const prefs = await AppDataSource.getRepository(PassengerCommunicationPreference).find();
@@ -261,6 +255,7 @@ export class AudienceService {
 
         return {
             members,
+            matchedIds,
             preview: {
                 matched: matched.length,
                 eligible: members.length,

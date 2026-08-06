@@ -211,7 +211,7 @@ export class AudienceInsightsService {
             `
             SELECT COALESCE(p.city, 'Unknown') AS name, COUNT(DISTINCT r."passengerId")::int AS count
             FROM ride r
-            LEFT JOIN park p ON p.id = r."parkId"
+            LEFT JOIN park p ON p."parkId"::text = r."parkId"
             WHERE r."passengerId" = ANY($1::text[]) AND r.status = 'completed'
             GROUP BY 1 ORDER BY 2 DESC LIMIT 12
             `,
@@ -225,7 +225,7 @@ export class AudienceInsightsService {
             `
             SELECT p.name AS name, COUNT(DISTINCT r."passengerId")::int AS count
             FROM ride r
-            JOIN park p ON p.id = r."parkId"
+            JOIN park p ON p."parkId"::text = r."parkId"
             WHERE r."passengerId" = ANY($1::text[]) AND r.status = 'completed'
             GROUP BY 1 ORDER BY 2 DESC LIMIT 12
             `,

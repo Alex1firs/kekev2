@@ -73,8 +73,8 @@ export class CampaignAnalyticsService {
              */
             empty: totals.campaignsSent === 0,
             emptyReason: totals.campaignsSent === 0
-                ? 'No campaign has been sent. Every marketing channel is switched off, so these charts are '
-                  + 'showing an accurate zero rather than a missing measurement.'
+                ? 'Every marketing channel is switched off, so these charts are showing an accurate '
+                  + 'zero rather than a missing measurement.'
                 : null,
         };
     }

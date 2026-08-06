@@ -26,6 +26,18 @@ const VIEWPORTS = [
     { name: 'phone', width: 390, height: 2400 },
 ];
 
+/*
+ * Which Communications tab to shoot. Passed as argv[4]; defaults to the
+ * dashboard so the original invocation still works.
+ */
+const TAB = process.argv[4] || 'dashboard';
+const RENDERERS = {
+    dashboard: 'ccRenderDashboard',
+    calendar: 'ccRenderCalendar',
+    analytics: 'ccRenderAnalytics',
+    library: 'ccRenderLibrary',
+};
+
 const MIME = {
     '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css',
     '.png': 'image/png', '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
@@ -108,7 +120,15 @@ async function main() {
             (async () => {
                 const SNAP = ${snapshot};
                 window.adminFetch = async (p) => {
-                    if (p.includes('/communications/dashboard')) return SNAP;
+                    // The captured payloads are keyed by the path fragment
+                    // each screen asks for. Anything unmatched returns {} so a
+                    // screen that fans out does not fail on its second call.
+                    if (p.includes('/communications/dashboard')) return SNAP.dashboard || SNAP;
+                    if (p.includes('/communications/analytics')) return SNAP.analytics;
+                    if (p.includes('/communications/calendar')) return SNAP.calendar;
+                    if (p.includes('/audience/insights')) return SNAP.insights;
+                    if (p.includes('/communications/templates')) return SNAP.templates;
+                    if (p.includes('/communications/audiences')) return SNAP.audiences;
                     return {};
                 };
                 window.showToast = () => {};
@@ -121,9 +141,11 @@ async function main() {
                 const sec = document.getElementById('communications');
                 sec.classList.remove('hidden');
                 sec.style.display = '';
-                ccTab = 'dashboard';
-                await ccRenderDashboard(document.getElementById('cc-body'));
-                ccStopDashboardRefresh();
+                ccTab = '${TAB}';
+                document.querySelectorAll('.cc-tab').forEach((b) =>
+                    b.classList.toggle('active', b.dataset.cc === '${TAB}'));
+                await window['${RENDERERS[TAB] || 'ccRenderDashboard'}'](document.getElementById('cc-body'));
+                if (window.ccStopDashboardRefresh) ccStopDashboardRefresh();
                 return document.getElementById('cc-body').innerHTML.length;
             })()
         `;
@@ -137,9 +159,9 @@ async function main() {
 
         await sleep(400);
         const shot = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
-        const out = path.join(OUTDIR, `dashboard-${vp.name}.png`);
+        const out = path.join(OUTDIR, `${TAB}-${vp.name}.png`);
         fs.writeFileSync(out, Buffer.from(shot.result.data, 'base64'));
-        console.log(`  ${vp.name.padEnd(8)} ${vp.width}x${vp.height}  ${out}  (${rendered} chars rendered)`);
+        console.log(`  ${TAB.padEnd(10)} ${vp.name.padEnd(8)} ${vp.width}x${vp.height}  ${out}  (${rendered} chars rendered)`);
     }
 
     ws.close();

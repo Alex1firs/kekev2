@@ -112,10 +112,21 @@ function cpLines(series, days) {
     const x = (i) => PAD + (i * (W - PAD * 2)) / (n - 1);
     const y = (v) => H - PAD - (v / max) * (H - PAD * 2);
 
-    const gridlines = [0, 0.5, 1].map((f) => `
+    /*
+     * Gridline labels are de-duplicated. With a max of 1 the three fractions
+     * round to 0, 1, 1 — an axis reading "1, 1, 0" makes the chart look broken
+     * even when the data is a perfectly correct flat zero.
+     */
+    const seen = new Set();
+    const gridlines = [0, 0.5, 1].map((f) => {
+        const value = Math.round(max * f);
+        const label = seen.has(value) ? '' : String(value);
+        seen.add(value);
+        return `
         <line x1="${PAD}" x2="${W - PAD}" y1="${y(max * f)}" y2="${y(max * f)}"
               stroke="rgba(148,163,184,0.14)" stroke-width="1"/>
-        <text x="4" y="${y(max * f) + 4}" class="cp-axis">${Math.round(max * f)}</text>`).join('');
+        ${label ? `<text x="4" y="${y(max * f) + 4}" class="cp-axis">${label}</text>` : ''}`;
+    }).join('');
 
     const paths = series.map((s) => {
         const d = s.values.map((v, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');

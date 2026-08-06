@@ -173,7 +173,7 @@ export class AudienceInsightsService {
             WITH ids AS (SELECT unnest($1::text[]) AS id),
             per_user AS (
                 SELECT ids.id,
-                       COUNT(r.id) FILTER (WHERE r.status = 'completed')                            AS rides,
+                       COUNT(r."rideId") FILTER (WHERE r.status = 'completed')                            AS rides,
                        COALESCE(SUM(COALESCE(r."finalFare", r.fare)) FILTER (WHERE r.status = 'completed'), 0) AS spend
                 FROM ids
                 LEFT JOIN ride r ON r."passengerId" = ids.id

@@ -542,8 +542,9 @@ async function cpRenderInsights(container, definition) {
         <div class="cp-insight-block">
             <h4 class="cc-h4">Devices</h4>
             ${cpDonut([
-                { label: 'Android', value: d.devices.android, colour: '#34d399' },
-                { label: 'iPhone', value: d.devices.ios, colour: '#60a5fa' },
+                { label: 'Android only', value: d.devices.android, colour: '#34d399' },
+                { label: 'iPhone only', value: d.devices.ios, colour: '#60a5fa' },
+                { label: 'Both', value: d.devices.both || 0, colour: '#a78bfa' },
                 { label: 'No device', value: d.devices.noDevice, colour: 'rgba(148,163,184,0.35)' },
             ], 'Android', d.devices.androidSharePct == null ? '—' : `${d.devices.androidSharePct}%`)}
             <p class="section-note">${tip('devices')}</p>

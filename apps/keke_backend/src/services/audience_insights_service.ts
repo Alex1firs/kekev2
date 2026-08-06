@@ -61,6 +61,8 @@ export interface AudienceInsights {
     devices: {
         android: number;
         ios: number;
+        /** Registered on both platforms. Counted here only, never twice. */
+        both: number;
         noDevice: number;
         /** Of those with any device registered. */
         androidSharePct: number | null;
@@ -125,7 +127,7 @@ export class AudienceInsightsService {
             neverCompletedRide: 'Registered, never completed a ride. Includes people who only ever cancelled.',
             averageSpend: 'Mean of total completed-ride fares per passenger, in naira. Excludes cancelled rides.',
             cities: 'From the park a ride was dispatched through, not from the passenger\'s address — KekeRide does not hold addresses.',
-            devices: 'From registered push tokens. A passenger with no token has the app uninstalled or push denied.',
+            devices: 'From registered push tokens. Buckets are exclusive and sum to the audience — someone with both platforms is counted once, under "both". No token means the app is uninstalled or push was denied.',
         };
     }
 
@@ -247,23 +249,39 @@ export class AudienceInsightsService {
                 GROUP BY 1
             )
             SELECT
-                COUNT(*) FILTER (WHERE t.android)                       AS android,
-                COUNT(*) FILTER (WHERE t.ios)                           AS ios,
+                COUNT(*) FILTER (WHERE t.android AND NOT t.ios)         AS android,
+                COUNT(*) FILTER (WHERE t.ios AND NOT t.android)         AS ios,
+                COUNT(*) FILTER (WHERE t.android AND t.ios)             AS both,
                 COUNT(*) FILTER (WHERE t.id IS NULL)                    AS no_device
             FROM ids LEFT JOIN t ON t.id = ids.id
             `,
             [userIds],
         );
 
+        /*
+         * Buckets are exclusive, so they sum to the audience.
+         *
+         * A passenger can register tokens on both platforms — an old Android
+         * and a new iPhone, or a shared handset. Counting them under each would
+         * make the donut add up to more than the audience it describes, which
+         * is the kind of chart somebody notices in a meeting and stops
+         * trusting the whole screen over.
+         */
         const android = Number(row?.android ?? 0);
         const ios = Number(row?.ios ?? 0);
-        const withDevice = android + ios;
+        const both = Number(row?.both ?? 0);
+        const withDevice = android + ios + both;
 
         return {
             android,
             ios,
+            both,
             noDevice: Number(row?.no_device ?? 0),
-            androidSharePct: withDevice > 0 ? Math.round((android / withDevice) * 1000) / 10 : null,
+            // Share of device-owning passengers reachable on Android, counting
+            // dual-platform passengers as reachable on both.
+            androidSharePct: withDevice > 0
+                ? Math.round(((android + both) / withDevice) * 1000) / 10
+                : null,
         };
     }
 
@@ -276,7 +294,7 @@ export class AudienceInsightsService {
             },
             behaviour: { averageRides: 0, medianRides: 0, averageSpendNaira: 0, totalSpendNaira: 0 },
             cities: [], parks: [],
-            devices: { android: 0, ios: 0, noDevice: 0, androidSharePct: null },
+            devices: { android: 0, ios: 0, both: 0, noDevice: 0, androidSharePct: null },
             definitions: this.definitions(),
         };
     }

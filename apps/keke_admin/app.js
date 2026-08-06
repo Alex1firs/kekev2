@@ -118,7 +118,20 @@ async function init() {
     fetchPayouts().catch(() => {});
     fetchSosAlerts().catch(() => {});
 
-    setInterval(refreshOverview, 30000);
+    /*
+     * Only while the Overview is actually on screen.
+     *
+     * This polled unconditionally, forever — thirty requests every fifteen
+     * minutes whether or not anybody was looking at it, and it kept running
+     * behind every other section. Against a 100-request budget that is a third
+     * of the allowance spent on a screen nobody is reading, and it is a large
+     * part of why the dashboard started answering "rate limit exceeded".
+     */
+    setInterval(() => {
+        if (document.hidden) return;
+        if (document.getElementById('overview')?.classList.contains('hidden')) return;
+        refreshOverview();
+    }, 30000);
 
 }
 
@@ -2111,7 +2124,7 @@ function startOperationsPolling() {
         if (document.hidden) return;
         if (document.getElementById('operations')?.classList.contains('hidden')) return;
         fetchOperations();
-    }, 15000);
+    }, 30000);
 }
 
 function stopOperationsPolling() {
@@ -2128,26 +2141,6 @@ document.getElementById('ops-feed-filter')?.addEventListener('change', () => {
     opsFeedEvents = [];
     fetchOperationsFeed();
 });
-
-/**
- * Poll only while the section is on screen.
- *
- * A timer left running behind another tab is a request every fifteen seconds
- * forever, and this endpoint touches every park.
- */
-function startOperationsPolling() {
-    stopOperationsPolling();
-    if (!document.getElementById('ops-auto')?.checked) return;
-    opsTimer = setInterval(() => {
-        if (document.hidden) return;
-        if (document.getElementById('operations')?.classList.contains('hidden')) return;
-        fetchOperations();
-    }, 15000);
-}
-
-function stopOperationsPolling() {
-    if (opsTimer) { clearInterval(opsTimer); opsTimer = null; }
-}
 
 document.getElementById('ops-refresh')?.addEventListener('click', fetchOperations);
 document.getElementById('ops-auto')?.addEventListener('change', startOperationsPolling);

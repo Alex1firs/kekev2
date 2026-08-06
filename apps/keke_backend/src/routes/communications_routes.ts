@@ -15,6 +15,7 @@ import { CampaignService } from '../services/campaign_service';
 import { MultiChannelCampaignService } from '../services/multichannel_campaign_service';
 import { CampaignSimulator } from '../services/campaign_simulator';
 import { CampaignTestSend } from '../services/campaign_test_send';
+import { CommunicationsDashboardService } from '../services/communications_dashboard_service';
 import { channelBlockers, loadCommunicationsConfig } from '../config/communications_config';
 import { AudienceService, AudienceDefinition } from '../services/audience_service';
 import { MarketingConsentService, SuppressionService } from '../services/marketing_consent_service';
@@ -563,6 +564,74 @@ router.post('/communications/mc/campaigns/:id/test',
                 auditActorOf(req.actor), String(req.params.id), addresses, ctxOf(req)));
         } catch (err: any) {
             return fail(res, err, "We couldn't send the test.");
+        }
+    });
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Global dashboard and emergency controls
+// ═══════════════════════════════════════════════════════════════════════
+
+router.get('/communications/dashboard',
+    requireStaffPermission(StaffPermission.COMMUNICATIONS_VIEW),
+    async (_req: StaffRequest, res: Response) => {
+        try {
+            return res.json(await CommunicationsDashboardService.snapshot());
+        } catch (err: any) {
+            return fail(res, err, "We couldn't load the dashboard.");
+        }
+    });
+
+/**
+ * Emergency stop for a marketing channel.
+ *
+ * The route accepts only marketing channel names. There is no value of
+ * `:channel` that stops a ride alert, an OTP or an SOS — a screen with a big
+ * red button must not be one keystroke away from silencing the notification
+ * that tells a passenger their driver has arrived.
+ */
+/*
+ * Deliberately asymmetric: pausing needs only COMMUNICATIONS_VIEW, resuming
+ * needs COMMUNICATIONS_SEND.
+ *
+ * Anyone trusted to watch the dashboard is trusted to stop it. An operations
+ * admin who sees something wrong at 2am must not be locked out of the emergency
+ * stop because they are not a sender. Starting a send back up is a sending
+ * decision and keeps the higher bar.
+ */
+router.post('/communications/pause/:channel',
+    requireRealStaff, requireStaffPermission(StaffPermission.COMMUNICATIONS_VIEW),
+    async (req: StaffRequest, res: Response) => {
+        try {
+            const channel = String(req.params.channel);
+            const result = await CommunicationsDashboardService.pause(
+                channel as any, String(req.body?.reason ?? ''), req.actor!.staffUserId);
+
+            await AuditService.recordCritical({
+                actor: auditActorOf(req.actor), action: 'MARKETING_CHANNEL_PAUSED',
+                resourceType: 'COMMUNICATION_CHANNEL', resourceId: channel,
+                reason: String(req.body?.reason ?? '') || null,
+                previousValue: 'running', newValue: 'paused', ...ctxOf(req),
+            });
+            return res.json(result);
+        } catch (err: any) {
+            return res.status(400).json(errBody(ErrorCode.VALIDATION_ERROR, err?.message ?? 'Unknown channel.'));
+        }
+    });
+
+router.post('/communications/resume/:channel',
+    requireRealStaff, requireStaffPermission(StaffPermission.COMMUNICATIONS_SEND),
+    async (req: StaffRequest, res: Response) => {
+        try {
+            const channel = String(req.params.channel);
+            const result = await CommunicationsDashboardService.resume(channel as any);
+            await AuditService.recordCritical({
+                actor: auditActorOf(req.actor), action: 'MARKETING_CHANNEL_RESUMED',
+                resourceType: 'COMMUNICATION_CHANNEL', resourceId: channel,
+                previousValue: 'paused', newValue: 'running', ...ctxOf(req),
+            });
+            return res.json(result);
+        } catch (err: any) {
+            return fail(res, err, "We couldn't resume that channel.");
         }
     });
 

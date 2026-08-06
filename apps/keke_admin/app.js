@@ -2366,7 +2366,7 @@ document.getElementById('park-ops-back')?.addEventListener('click', () => {
 // canSend:false whatever the browser asks, and there is no send endpoint to
 // call. The Send button reflects that rather than causing it.
 
-let ccTab = 'overview';
+let ccTab = 'dashboard';
 let ccCampaignId = null;
 let ccChannelTab = 'email';
 
@@ -2378,6 +2378,7 @@ const CC_CHANNELS = [
 ];
 
 function ccSwitch(tab) {
+    ccStopDashboardRefresh();
     ccTab = tab;
     document.querySelectorAll('.cc-tab').forEach((b) =>
         b.classList.toggle('active', b.dataset.cc === tab));
@@ -2391,6 +2392,7 @@ async function ccRender() {
 
     try {
         switch (ccTab) {
+            case 'dashboard':   return ccRenderDashboard(body);
             case 'overview':    return ccRenderOverview(body);
             case 'campaigns':   return ccRenderCampaigns(body, null);
             case 'drafts':      return ccRenderCampaigns(body, 'draft');
@@ -2402,7 +2404,7 @@ async function ccRender() {
             case 'suppression': return ccRenderSuppression(body);
             case 'health':      return ccRenderHealth(body);
             case 'automations': return ccRenderAutomations(body);
-            default:            return ccRenderOverview(body);
+            default:            return ccRenderDashboard(body);
         }
     } catch {
         body.innerHTML = '<p class="section-note">Could not load this view.</p>';
@@ -2426,6 +2428,254 @@ function ccSendingBanner(sendingAvailable) {
 }
 
 // ── Overview ───────────────────────────────────────────────────────────────
+
+// ── Global Communications Dashboard ────────────────────────────────────────
+//
+// Both queues, every channel, every provider, on one screen — and the
+// emergency stop.
+//
+// The screen is deliberately built around one claim: operational notifications
+// are a separate system. So operational appears with its own panel, its own
+// throughput, and a lock instead of a pause button. There is no control here
+// that can stop a ride alert, an OTP or an SOS, and the server would refuse the
+// request if the browser invented one.
+
+let ccDashTimer = null;
+
+function ccStopDashboardRefresh() {
+    if (ccDashTimer) { clearInterval(ccDashTimer); ccDashTimer = null; }
+}
+
+function ccHealthDot(state) {
+    const cls = state === 'healthy' ? 'ok' : state === 'degraded' ? 'warn' : 'bad';
+    const label = state === 'healthy' ? 'Healthy' : state === 'degraded' ? 'Degraded' : 'Offline';
+    return `<span class="cc-dot cc-dot-${cls}"></span>${label}`;
+}
+
+function ccMetric(label, value, tone) {
+    return `<div class="cc-metric ${tone ? 'cc-metric-' + tone : ''}">
+        <span class="cc-metric-v">${value}</span>
+        <span class="cc-metric-l">${escapeHtml(label)}</span>
+    </div>`;
+}
+
+async function ccRenderDashboard(body, silent) {
+    if (!silent) body.innerHTML = '<div class="cc-loading">Loading…</div>';
+
+    let d;
+    try {
+        d = await adminFetch('/communications/dashboard');
+    } catch (e) {
+        body.innerHTML = `<p class="section-note">Could not load the dashboard. ${escapeHtml(e.message || '')}</p>`;
+        return;
+    }
+
+    const q = d.queues;
+    const m = q.marketing;
+    const op = d.operational;
+    const pct = (v) => (v == null ? '—' : v + '%');
+
+    /* Channel rows: state, blockers, and the pause control for that channel. */
+    const channelRow = (key, label) => {
+        const c = d.channels[key] || { enabled: false, blockers: [] };
+        const p = d.pauses[key] || { paused: false };
+        const allPaused = d.pauses.all && d.pauses.all.paused;
+        const stopped = p.paused || allPaused;
+        const ch = m.byChannel[key];
+
+        let status, tone;
+        if (stopped) { status = 'Paused'; tone = 'bad'; }
+        else if (!c.enabled) { status = 'Disabled'; tone = 'muted'; }
+        else { status = 'Enabled'; tone = 'ok'; }
+
+        return `<tr>
+            <td><strong>${escapeHtml(label)}</strong></td>
+            <td><span class="cc-pill cc-pill-${tone}">${status}</span></td>
+            <td>${ch ? ch.waiting : 0}</td>
+            <td>${ch ? ch.sent : 0}</td>
+            <td>${ch ? ch.failed : 0}</td>
+            <td class="cc-blockers">${
+                (c.blockers && c.blockers.length)
+                    ? c.blockers.map((b) => escapeHtml(b)).join('<br>')
+                    : '<span class="muted">—</span>'
+            }</td>
+            <td class="cc-actions-cell">${
+                stopped
+                    ? `<button class="btn-secondary btn-small" onclick="ccResume('${key}')">Resume</button>`
+                    : `<button class="btn-danger btn-small" onclick="ccPause('${key}','${escapeHtml(label)}')">Pause</button>`
+            }</td>
+        </tr>`;
+    };
+
+    const pausedNote = (p) => {
+        if (!p || !p.paused) return '';
+        const when = p.at ? new Date(p.at).toLocaleString() : '';
+        return `<div class="cc-alert cc-alert-danger">
+            <i class="fas fa-hand"></i>
+            <div><strong>All marketing is paused.</strong>
+            ${escapeHtml(p.reason || '')} ${when ? '· ' + escapeHtml(when) : ''}
+            <br><span class="muted">Operational notifications are unaffected and continue to send.</span></div>
+        </div>`;
+    };
+
+    body.innerHTML = `
+        <h2 class="cc-h2">Communications dashboard</h2>
+        <p class="section-note">Updated ${new Date(d.generatedAt).toLocaleTimeString()} · refreshes every 15s</p>
+
+        ${pausedNote(d.pauses.all)}
+
+        <!-- The two queues, side by side, because the whole claim of the
+             architecture is that they are not the same queue. -->
+        <h3 class="cc-h3">Queue isolation</h3>
+        <div class="cc-queues">
+            <div class="cc-queue cc-queue-op">
+                <div class="cc-queue-head">
+                    <span class="cc-queue-title"><i class="fas fa-lock"></i> Operational queue</span>
+                    <span class="cc-pill cc-pill-ok">Never pausable</span>
+                </div>
+                <div class="cc-metrics">
+                    ${ccMetric('Waiting', q.operational.waiting)}
+                    ${ccMetric('Processing', q.operational.processing)}
+                    ${ccMetric('Sends (5 min)', op.attempts)}
+                    ${ccMetric('Failure rate', pct(op.failureRatePct), op.failureRatePct >= 25 ? 'bad' : '')}
+                    ${ccMetric('Median latency', op.medianLatencyMs == null ? '—' : op.medianLatencyMs + 'ms')}
+                </div>
+                <p class="cc-queue-note">${escapeHtml(q.operational.note)}</p>
+                ${op.healthy ? '' : `<div class="cc-alert cc-alert-warn"><i class="fas fa-triangle-exclamation"></i>
+                    <div><strong>Operational push is degraded.</strong> ${op.reasons.map(escapeHtml).join(' ')}
+                    <br>Marketing has already stood down automatically.</div></div>`}
+            </div>
+
+            <div class="cc-queue cc-queue-mk">
+                <div class="cc-queue-head">
+                    <span class="cc-queue-title"><i class="fas fa-bullhorn"></i> Marketing queue</span>
+                    <span class="cc-pill cc-pill-muted">Priority 3 · yields</span>
+                </div>
+                <div class="cc-metrics">
+                    ${ccMetric('Depth', m.depth)}
+                    ${ccMetric('Waiting', m.waiting)}
+                    ${ccMetric('Processing', m.processing)}
+                    ${ccMetric('Retrying', m.retrying, m.retrying ? 'warn' : '')}
+                    ${ccMetric('Success rate', pct(m.successRatePct))}
+                    ${ccMetric('Failure rate', pct(m.failureRatePct), m.failureRatePct >= 10 ? 'warn' : '')}
+                </div>
+                <p class="cc-queue-note">Own worker, own rate limit, own retry policy.
+                Sent ${m.sent} · failed ${m.failed} · skipped ${m.skipped}.</p>
+            </div>
+        </div>
+
+        <p class="cc-isolation">
+            <i class="fas fa-circle-info"></i>
+            These are two independent systems. They share only the Firebase credentials
+            and the device-token registry. Marketing volume cannot delay, exhaust or
+            throttle an operational notification, and nothing on this screen can pause one.
+        </p>
+
+        <!-- Emergency controls -->
+        <h3 class="cc-h3">Emergency controls</h3>
+        <div class="cc-emergency">
+            ${
+                (d.pauses.all && d.pauses.all.paused)
+                    ? `<button class="btn-primary" onclick="ccResume('all')">
+                         <i class="fas fa-play"></i> Resume all marketing</button>`
+                    : `<button class="btn-danger" onclick="ccPause('all','all marketing')">
+                         <i class="fas fa-stop"></i> Pause all marketing</button>`
+            }
+            <span class="section-note">Takes effect on the next batch — within seconds.
+            Operational notifications are not affected.</span>
+        </div>
+
+        <div class="table-wrap">
+            <table class="data-table cc-table">
+                <thead><tr>
+                    <th>Channel</th><th>State</th><th>Waiting</th><th>Sent</th>
+                    <th>Failed</th><th>Blocked by</th><th></th>
+                </tr></thead>
+                <tbody>
+                    ${channelRow('email', 'Email')}
+                    ${channelRow('push', 'Push')}
+                    ${channelRow('in_app', 'In-app')}
+                    ${channelRow('sms', 'SMS')}
+                    <tr class="cc-row-locked">
+                        <td><strong>Operational</strong>
+                            <div class="muted">Ride alerts, OTP, receipts, SOS</div></td>
+                        <td><span class="cc-pill cc-pill-ok">Always on</span></td>
+                        <td>0</td><td>${op.attempts}</td><td>${op.failures}</td>
+                        <td class="muted">—</td>
+                        <td class="cc-actions-cell">
+                            <span class="cc-locked" title="Operational notifications can never be paused from this screen">
+                                <i class="fas fa-lock"></i> Not pausable
+                            </span>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Delivery monitoring -->
+        <h3 class="cc-h3">Delivery monitoring</h3>
+        <div class="cc-providers">
+            ${d.providers.map((p) => `
+                <div class="cc-provider cc-provider-${p.state}">
+                    <div class="cc-provider-name">${escapeHtml(p.name)}</div>
+                    <div class="cc-provider-state">${ccHealthDot(p.state)}</div>
+                    <div class="cc-provider-detail">${escapeHtml(p.detail)}</div>
+                </div>`).join('')}
+        </div>
+
+        <h3 class="cc-h3">Campaigns</h3>
+        <div class="cc-metrics">
+            ${ccMetric('Draft', d.campaigns.draft)}
+            ${ccMetric('Awaiting approval', d.campaigns.awaitingApproval, d.campaigns.awaitingApproval ? 'warn' : '')}
+            ${ccMetric('Approved', d.campaigns.approved)}
+            ${ccMetric('Scheduled', d.campaigns.scheduled)}
+            ${ccMetric('Sending', d.campaigns.sending)}
+        </div>
+    `;
+
+    ccStopDashboardRefresh();
+    ccDashTimer = setInterval(() => {
+        // Stop polling as soon as the view is gone, so a dashboard left open in
+        // a background tab is not still hitting the admin rate limit an hour later.
+        const el = document.getElementById('cc-body');
+        const visible = document.getElementById('communications');
+        if (!el || !visible || visible.classList.contains('hidden') || ccTab !== 'dashboard') {
+            ccStopDashboardRefresh();
+            return;
+        }
+        ccRenderDashboard(el, true);
+    }, 15000);
+}
+
+/**
+ * Pause a marketing channel.
+ *
+ * A reason is required, not because the server needs one, but because the audit
+ * entry is read months later by somebody asking why a campaign stopped halfway.
+ */
+async function ccPause(channel, label) {
+    const reason = prompt(`Pause ${label}?\n\nThis stops marketing on the next batch. Operational notifications (ride alerts, OTP, SOS) are unaffected.\n\nReason:`);
+    if (reason === null) return;
+    if (!reason.trim()) { showToast('A reason is required.', 'error'); return; }
+
+    try {
+        await adminFetch(`/communications/pause/${channel}`, 'POST', { reason: reason.trim() });
+        showToast(`Paused ${label}.`, 'success');
+        ccRenderDashboard(document.getElementById('cc-body'));
+    } catch (e) {
+        showToast(e.message || 'Could not pause.', 'error');
+    }
+}
+
+async function ccResume(channel) {
+    try {
+        await adminFetch(`/communications/resume/${channel}`, 'POST', {});
+        showToast('Resumed.', 'success');
+        ccRenderDashboard(document.getElementById('cc-body'));
+    } catch (e) {
+        showToast(e.message || 'Could not resume.', 'error');
+    }
+}
 
 async function ccRenderOverview(body) {
     const d = await adminFetch('/communications/mc/overview');

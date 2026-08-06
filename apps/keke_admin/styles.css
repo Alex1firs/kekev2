@@ -1677,3 +1677,63 @@ body.authenticated .admin-container { display: flex; }
                border-radius: 12px; padding: 14px; color: var(--text-primary); cursor: pointer;
                display: flex; flex-direction: column; gap: 6px; }
 .cc-aud-card:hover { border-color: var(--accent-amber); }
+
+/* ── Global communications dashboard ─────────────────────────────────────
+   Operational and marketing are drawn as two separate panels with different
+   accent colours, because the point being made is that they are two systems. */
+.cc-h3 { margin: 26px 0 10px; font-size: 0.95rem; font-weight: 800;
+    letter-spacing: 0.02em; color: var(--text, #e2e8f0); }
+
+.cc-queues { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 900px) { .cc-queues { grid-template-columns: 1fr; } }
+
+.cc-queue { border: 1px solid rgba(148,163,184,0.18); border-radius: 12px;
+    padding: 14px 16px; background: rgba(15,23,42,0.35); }
+.cc-queue-op { border-left: 3px solid #34d399; }
+.cc-queue-mk { border-left: 3px solid #60a5fa; }
+.cc-queue-head { display: flex; align-items: center; justify-content: space-between;
+    gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+.cc-queue-title { font-weight: 800; font-size: 0.92rem; }
+.cc-queue-note { margin-top: 10px; font-size: 0.78rem; color: #94a3b8; line-height: 1.5; }
+
+.cc-metrics { display: flex; flex-wrap: wrap; gap: 10px; }
+.cc-metric { min-width: 88px; padding: 10px 12px; border-radius: 10px;
+    background: rgba(148,163,184,0.08); display: flex; flex-direction: column; gap: 2px; }
+.cc-metric-v { font-size: 1.25rem; font-weight: 800; line-height: 1.1; }
+.cc-metric-l { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; color: #94a3b8; }
+.cc-metric-bad .cc-metric-v { color: #f87171; }
+.cc-metric-warn .cc-metric-v { color: #fbbf24; }
+
+.cc-isolation { margin-top: 12px; padding: 12px 14px; border-radius: 10px;
+    background: rgba(96,165,250,0.08); border: 1px solid rgba(96,165,250,0.22);
+    font-size: 0.8rem; color: #cbd5e1; line-height: 1.6; display: flex; gap: 10px; }
+
+.cc-emergency { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 14px; }
+
+.cc-pill-ok    { background: rgba(16,185,129,0.16); color: #34d399; }
+.cc-pill-bad   { background: rgba(248,113,113,0.16); color: #f87171; }
+.cc-pill-muted { background: rgba(148,163,184,0.16); color: #94a3b8; }
+
+/* The locked row: visibly not a control. */
+.cc-row-locked { background: rgba(52,211,153,0.05); }
+.cc-locked { display: inline-flex; align-items: center; gap: 6px; font-size: 0.75rem;
+    font-weight: 700; color: #34d399; cursor: not-allowed; }
+.cc-blockers { font-size: 0.72rem; color: #fbbf24; line-height: 1.45; max-width: 280px; }
+.cc-actions-cell { white-space: nowrap; }
+
+.cc-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 7px; }
+.cc-dot-ok   { background: #34d399; }
+.cc-dot-warn { background: #fbbf24; }
+.cc-dot-bad  { background: #f87171; }
+
+.cc-providers { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+.cc-provider { border: 1px solid rgba(148,163,184,0.18); border-radius: 10px; padding: 12px 14px;
+    background: rgba(15,23,42,0.35); }
+.cc-provider-healthy  { border-left: 3px solid #34d399; }
+.cc-provider-degraded { border-left: 3px solid #fbbf24; }
+.cc-provider-offline  { border-left: 3px solid #f87171; }
+.cc-provider-name { font-weight: 700; font-size: 0.85rem; margin-bottom: 4px; }
+.cc-provider-state { font-size: 0.78rem; font-weight: 700; margin-bottom: 6px; }
+.cc-provider-detail { font-size: 0.74rem; color: #94a3b8; line-height: 1.5; }
+
+.cc-alert-danger { background: rgba(248,113,113,0.1); border: 1px solid rgba(248,113,113,0.28); }

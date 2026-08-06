@@ -23,7 +23,34 @@ import { EmailSuppression } from '../models/EmailSuppression';
 import { loadCommunicationsConfig } from '../config/communications_config';
 import { MarketingCategory } from './marketing_consent_service';
 
+/**
+ * Who a campaign is addressed to.
+ *
+ * ── Why this exists before it is needed ──────────────────────────────────
+ * Every other audience KekeRide will eventually want to reach — drivers,
+ * dispatchers, supervisors, staff, partners — differs from passengers in
+ * exactly two places: which rows the query selects, and which consent record
+ * governs them. Naming the audience here turns those into a registry entry
+ * instead of a rewrite.
+ *
+ * Only `passenger` is registered. The others are listed so the shape is fixed,
+ * and `resolve()` refuses them loudly rather than quietly falling through to a
+ * send: a driver has no consent record, so reaching them would mean marketing
+ * to someone who never agreed. That is a decision to be made deliberately, not
+ * a default to be inherited.
+ */
+export type AudienceType = 'passenger' | 'driver' | 'dispatcher' | 'supervisor' | 'staff' | 'partner';
+
+/** The audiences that can actually be resolved today. */
+export const REGISTERED_AUDIENCES: ReadonlySet<AudienceType> = new Set<AudienceType>(['passenger']);
+
 export interface AudienceDefinition {
+    /**
+     * Who is being addressed. Defaults to passengers, which is what every
+     * existing campaign means and what every stored definition omits.
+     */
+    audienceType?: AudienceType;
+
     /** Which marketing category this campaign belongs to. Gates consent. */
     category?: MarketingCategory;
 
@@ -88,6 +115,19 @@ export class AudienceService {
 
         const inactiveDays = definition.inactiveDays ?? cfg.inactiveDaysThreshold;
         const frequentThreshold = definition.minCompletedRides ?? cfg.frequentRideThreshold;
+
+        /*
+         * The audience seam. An unregistered audience stops here rather than
+         * falling back to passengers — a campaign written for drivers must not
+         * silently go to every passenger instead.
+         */
+        const audienceType: AudienceType = definition.audienceType ?? 'passenger';
+        if (!REGISTERED_AUDIENCES.has(audienceType)) {
+            throw new Error(
+                `The "${audienceType}" audience is not available yet. `
+                + 'It needs its own consent record and opt-in flow before anything can be addressed to it.',
+            );
+        }
 
         // ── 1. Passengers matching the activity and date filters ────────
         const qb = AppDataSource.getRepository(User).createQueryBuilder('u')

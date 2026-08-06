@@ -118,13 +118,20 @@ export class MarketingPushService {
             return { ...empty, reason: 'Marketing push is disabled.' };
         }
 
-        // 2. Operational health. Marketing yields; this is the whole point.
+        // 2. The emergency stop. Read before every batch, so pressing it takes
+        // effect on the next batch rather than the next campaign.
+        const { CommunicationsDashboardService } = await import('./communications_dashboard_service');
+        if (await CommunicationsDashboardService.channelPaused('push')) {
+            return { ...empty, reason: 'Marketing push is paused by operations.' };
+        }
+
+        // 3. Operational health. Marketing yields; this is the whole point.
         const permission = await OperationalPushHealth.marketingMayRun();
         if (!permission.allowed) {
             return { ...empty, reason: permission.reason };
         }
 
-        // 3. Marketing's own rate limit, independent of anything operational.
+        // 4. Marketing's own rate limit, independent of anything operational.
         const allowance = Math.min(RATE.batchSize(), Math.ceil(RATE.perMinute() / 6));
         const due = await this.jobs.find({
             where: { state: MarketingPushState.QUEUED, nextAttemptAt: LessThanOrEqual(new Date()) },

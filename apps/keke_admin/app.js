@@ -172,6 +172,7 @@ function switchSection(id) {
     if (id === 'driver-dispatch-metrics') fetchDispatchMetrics();
     if (id === 'sos-alerts')    fetchSosAlerts();
     if (id === 'audit-log')     fetchAuditLog();
+    if (id === 'communications') ccRender();
     if (id === 'operations')    { fetchOperations(); startOperationsPolling(); }
     else stopOperationsPolling();
     if (id === 'parks')         fetchParks();
@@ -2353,6 +2354,737 @@ document.getElementById('park-ops-back')?.addEventListener('click', () => {
     clearInterval(parkOpsTimer);
     switchSection('operations');
     fetchOperations();
+});
+
+// ── Communications Centre ──────────────────────────────────────────────────
+//
+// A campaign is one audience, one approval and one audit trail, delivered on
+// one or more channels. The channel tabs edit content; everything above them
+// belongs to the campaign as a whole.
+//
+// Nothing here can send. Every channel kill switch is off, the server returns
+// canSend:false whatever the browser asks, and there is no send endpoint to
+// call. The Send button reflects that rather than causing it.
+
+let ccTab = 'overview';
+let ccCampaignId = null;
+let ccChannelTab = 'email';
+
+const CC_CHANNELS = [
+    { key: 'email',  label: 'Email',        icon: 'fa-envelope' },
+    { key: 'push',   label: 'Push',         icon: 'fa-mobile-screen' },
+    { key: 'in_app', label: 'In-app',       icon: 'fa-window-maximize' },
+    { key: 'sms',    label: 'SMS',          icon: 'fa-comment-sms' },
+];
+
+function ccSwitch(tab) {
+    ccTab = tab;
+    document.querySelectorAll('.cc-tab').forEach((b) =>
+        b.classList.toggle('active', b.dataset.cc === tab));
+    ccRender();
+}
+
+async function ccRender() {
+    const body = document.getElementById('cc-body');
+    if (!body) return;
+    body.innerHTML = '<div class="cc-loading">Loading…</div>';
+
+    try {
+        switch (ccTab) {
+            case 'overview':    return ccRenderOverview(body);
+            case 'campaigns':   return ccRenderCampaigns(body, null);
+            case 'drafts':      return ccRenderCampaigns(body, 'draft');
+            case 'create':      return ccRenderCreate(body);
+            case 'audiences':   return ccRenderAudiences(body);
+            case 'templates':   return ccRenderTemplates(body);
+            case 'preferences': return ccRenderPreferences(body);
+            case 'reports':     return ccRenderReports(body);
+            case 'suppression': return ccRenderSuppression(body);
+            case 'health':      return ccRenderHealth(body);
+            case 'automations': return ccRenderAutomations(body);
+            default:            return ccRenderOverview(body);
+        }
+    } catch {
+        body.innerHTML = '<p class="section-note">Could not load this view.</p>';
+    }
+}
+
+/** The standing reminder that nothing can go out yet. */
+function ccSendingBanner(sendingAvailable) {
+    const el = document.getElementById('cc-sending-banner');
+    if (!el) return;
+    el.innerHTML = sendingAvailable ? '' : `
+        <div class="cc-alert cc-alert-info">
+            <i class="fas fa-circle-info"></i>
+            <div>
+                <strong>Sending is not enabled.</strong>
+                Campaigns can be written, previewed and approved. No message can
+                leave KekeRide until each channel is separately verified and its
+                delivery pipeline is built.
+            </div>
+        </div>`;
+}
+
+// ── Overview ───────────────────────────────────────────────────────────────
+
+async function ccRenderOverview(body) {
+    const d = await adminFetch('/communications/mc/overview');
+    ccSendingBanner(d.sendingAvailable);
+
+    const c = d.consent;
+    const stat = (label, value, tone = '', hint = '') => `
+        <div class="cc-stat ${tone}">
+            <span class="cc-stat-value">${value}</span>
+            <label>${escapeHtml(label)}</label>
+            ${hint ? `<small>${escapeHtml(hint)}</small>` : ''}
+        </div>`;
+
+    const channelCard = (key, label, icon, info) => `
+        <div class="cc-channel ${info.enabled ? 'on' : 'off'}">
+            <div class="cc-channel-head">
+                <span><i class="fas ${icon}"></i> ${escapeHtml(label)}</span>
+                <span class="cc-pill ${info.enabled ? 'cc-pill-on' : 'cc-pill-off'}">
+                    ${info.enabled ? 'Enabled' : 'Disabled'}
+                </span>
+            </div>
+            ${info.blockers.length
+                ? `<ul>${info.blockers.map((b) => `<li>${escapeHtml(b)}</li>`).join('')}</ul>`
+                : '<p class="cc-muted">Ready.</p>'}
+        </div>`;
+
+    body.innerHTML = `
+        <h2 class="cc-h2">Audience</h2>
+        <div class="cc-stats">
+            ${stat('Total passengers', c.passengers)}
+            ${/* The number that matters on day one, and the reason it is not
+                 shown as "opted out": nobody has refused, nobody was asked. */''}
+            ${stat('Never asked', c.neverAsked, c.neverAsked ? 'warn' : '', 'Cannot be emailed')}
+            ${stat('Declined', c.declined, '', 'Asked, said no')}
+            ${stat('Email opt-ins', c.email, c.email ? 'good' : '')}
+            ${stat('Push opt-ins', c.push, c.push ? 'good' : '')}
+            ${stat('In-app opt-ins', c.inApp, c.inApp ? 'good' : '')}
+            ${stat('SMS opt-ins', c.sms, c.sms ? 'good' : '')}
+            ${stat('Suppressed', c.suppressed, c.suppressed ? 'bad' : '')}
+        </div>
+
+        <h2 class="cc-h2">Campaigns</h2>
+        <div class="cc-stats">
+            ${stat('Drafts', d.campaigns.draft)}
+            ${stat('Awaiting approval', d.campaigns.awaitingApproval, d.campaigns.awaitingApproval ? 'warn' : '')}
+            ${stat('Approved', d.campaigns.approved)}
+            ${stat('Scheduled', d.campaigns.scheduled)}
+            ${stat('Sending', d.campaigns.sending)}
+            ${stat('Completed', d.campaigns.completed)}
+        </div>
+
+        <h2 class="cc-h2">Channel health</h2>
+        <div class="cc-channels">
+            ${channelCard('email', 'Email', 'fa-envelope', d.channels.email)}
+            ${channelCard('push', 'Push notification', 'fa-mobile-screen', d.channels.push)}
+            ${channelCard('in_app', 'In-app message', 'fa-window-maximize', d.channels.in_app)}
+            ${channelCard('sms', 'SMS', 'fa-comment-sms', d.channels.sms)}
+        </div>`;
+}
+
+// ── Campaign list ──────────────────────────────────────────────────────────
+
+async function ccRenderCampaigns(body, status) {
+    const q = status ? `?status=${status}` : '';
+    const d = await adminFetch(`/communications/mc/campaigns${q}`);
+    ccSendingBanner(false);
+
+    if (!d.items.length) {
+        body.innerHTML = `
+            <div class="cc-empty">
+                <i class="fas fa-paper-plane"></i>
+                <h3>${status ? 'No drafts yet' : 'No campaigns yet'}</h3>
+                <p>Create one to write, preview and approve it.</p>
+                <button class="btn-primary" onclick="ccSwitch('create')">Create campaign</button>
+            </div>`;
+        return;
+    }
+
+    body.innerHTML = `
+        <div class="cc-list">
+            ${d.items.map((c) => `
+                <article class="cc-card" onclick="ccOpen('${escapeHtml(c.id)}')">
+                    <header>
+                        <div>
+                            <b>${escapeHtml(c.name)}</b>
+                            ${c.objective ? `<small>${escapeHtml(c.objective)}</small>` : ''}
+                        </div>
+                        <span class="cc-status cc-status-${escapeHtml(c.status)}">
+                            ${escapeHtml(String(c.status).replace(/_/g, ' '))}
+                        </span>
+                    </header>
+                    ${c.description ? `<p class="cc-muted">${escapeHtml(c.description)}</p>` : ''}
+                    <div class="cc-chanrow">
+                        ${(c.channels || []).map((ch) => `
+                            <span class="cc-chan ${ch.enabled ? '' : 'muted'}">
+                                ${escapeHtml(ch.channel.replace('_', '-'))}
+                                ${ch.eligibleCount != null ? ` · ${ch.eligibleCount}` : ''}
+                            </span>`).join('') || '<span class="cc-muted">No channels</span>'}
+                    </div>
+                    <footer class="cc-muted">Updated ${timeAgo(c.updatedAt)}</footer>
+                </article>`).join('')}
+        </div>`;
+}
+
+// ── Create ─────────────────────────────────────────────────────────────────
+
+async function ccRenderCreate(body) {
+    const presets = await adminFetch('/communications/audience-presets');
+    ccSendingBanner(false);
+
+    body.innerHTML = `
+        <div class="cc-form-wrap">
+            <h2 class="cc-h2">New campaign</h2>
+            <form id="cc-create" class="cc-form">
+                <label>Campaign name
+                    <input id="cc-name" required placeholder="Weekend 30% discount">
+                </label>
+                <label>Internal description
+                    <input id="cc-desc" placeholder="Only your team sees this">
+                </label>
+                <label>Objective
+                    <select id="cc-obj">
+                        <option value="promotion">Promotion or offer</option>
+                        <option value="reactivation">Reactivation</option>
+                        <option value="announcement">Announcement</option>
+                        <option value="service_area">New service area</option>
+                        <option value="product_update">Product update</option>
+                        <option value="survey">Survey or feedback</option>
+                    </select>
+                </label>
+                <label>Audience
+                    <select id="cc-aud">
+                        ${presets.presets.map((p) =>
+                            `<option value="${escapeHtml(p.key)}">${escapeHtml(p.label)}</option>`).join('')}
+                    </select>
+                </label>
+                <p class="section-note">
+                    Thresholds in use — frequent: ${presets.thresholds.frequentRideThreshold}+ rides,
+                    inactive: ${presets.thresholds.inactiveDaysThreshold} days.
+                    These are configurable, not fixed.
+                </p>
+
+                <fieldset class="cc-channels-pick">
+                    <legend>Channels</legend>
+                    ${CC_CHANNELS.map((c) => `
+                        <label class="check">
+                            <input type="checkbox" name="cc-chan" value="${c.key}"
+                                ${c.key === 'email' ? 'checked' : ''}>
+                            <i class="fas ${c.icon}"></i> ${c.label}
+                        </label>`).join('')}
+                </fieldset>
+
+                <button type="submit" class="btn-primary full-width">Create draft</button>
+            </form>
+        </div>`;
+
+    document.getElementById('cc-create').onsubmit = async (e) => {
+        e.preventDefault();
+        const key = document.getElementById('cc-aud').value;
+        const preset = presets.presets.find((p) => p.key === key);
+        const channels = [...document.querySelectorAll('input[name="cc-chan"]:checked')]
+            .map((i) => i.value);
+        if (!channels.length) return showToast('Choose at least one channel', 'error');
+
+        try {
+            const r = await adminFetch('/communications/mc/campaigns', 'POST', {
+                name: document.getElementById('cc-name').value.trim(),
+                description: document.getElementById('cc-desc').value.trim() || null,
+                objective: document.getElementById('cc-obj').value,
+                audienceDefinition: preset ? preset.definition : { activity: 'all' },
+                channels,
+            });
+            showToast('Draft created', 'success');
+            ccOpen(r.campaign.id);
+        } catch { /* surfaced */ }
+    };
+}
+
+// ── Builder ────────────────────────────────────────────────────────────────
+
+async function ccOpen(id) {
+    ccCampaignId = id;
+    ccTab = 'campaigns';
+    document.querySelectorAll('.cc-tab').forEach((b) =>
+        b.classList.toggle('active', b.dataset.cc === 'campaigns'));
+
+    const body = document.getElementById('cc-body');
+    body.innerHTML = '<div class="cc-loading">Loading campaign…</div>';
+
+    const [detail, readiness] = await Promise.all([
+        adminFetch(`/communications/mc/campaigns/${id}`),
+        adminFetch(`/communications/mc/campaigns/${id}/readiness`),
+    ]);
+    ccSendingBanner(readiness.sendingAvailable);
+    ccRenderBuilder(body, detail, readiness);
+}
+
+function ccRenderBuilder(body, detail, readiness) {
+    const c = detail.campaign;
+    const channels = detail.channels;
+    const enabled = channels.filter((ch) => ch.enabled);
+    if (!enabled.some((ch) => ch.channel === ccChannelTab)) {
+        ccChannelTab = enabled[0]?.channel || 'email';
+    }
+
+    const rc = readiness.channels.find((x) => x.channel === ccChannelTab);
+    const current = channels.find((x) => x.channel === ccChannelTab);
+
+    body.innerHTML = `
+        <div class="cc-builder">
+            <header class="cc-builder-head">
+                <div>
+                    <button class="btn-secondary btn-small" onclick="ccSwitch('campaigns')">← All campaigns</button>
+                    <h2>${escapeHtml(c.name)}</h2>
+                    <p class="cc-muted">
+                        ${escapeHtml(c.objective || 'no objective')} ·
+                        <span class="cc-status cc-status-${escapeHtml(c.status)}">
+                            ${escapeHtml(String(c.status).replace(/_/g, ' '))}
+                        </span>
+                    </p>
+                </div>
+                <div class="cc-builder-actions">
+                    ${c.status === 'draft' ? `
+                        <button class="btn-secondary" onclick="ccRequestApproval('${escapeHtml(c.id)}')">
+                            Request approval
+                        </button>` : ''}
+                    ${c.status === 'awaiting_approval' && can('communications:approve') ? `
+                        <button class="btn-primary" onclick="ccApprove('${escapeHtml(c.id)}')">Approve</button>` : ''}
+                    ${/* Disabled from the SERVER's readiness, not a browser
+                         decision — there is no send endpoint to call. */''}
+                    <button class="btn-primary" disabled title="Sending is not enabled yet">
+                        <i class="fas fa-paper-plane"></i> Send
+                    </button>
+                </div>
+            </header>
+
+            <div class="cc-summary">
+                <div><span>Audience</span><b>${readiness.audienceSize}</b></div>
+                <div><span>Deliveries</span><b>${readiness.totals.totalDeliveries}</b></div>
+                <div><span>Unique passengers</span><b>${readiness.totals.uniquePassengers}</b></div>
+                <div><span>Estimated cost</span><b>₦${Number(readiness.totals.estimatedCost).toLocaleString()}</b></div>
+            </div>
+
+            ${readiness.blockers.length ? `
+                <div class="cc-alert cc-alert-warn">
+                    <i class="fas fa-triangle-exclamation"></i>
+                    <div>
+                        <strong>Not ready to send.</strong>
+                        <ul>${readiness.blockers.map((b) => `<li>${escapeHtml(b)}</li>`).join('')}</ul>
+                    </div>
+                </div>` : ''}
+
+            <div class="cc-chan-tabs">
+                ${CC_CHANNELS.map((ch) => {
+                    const row = channels.find((x) => x.channel === ch.key);
+                    const on = row?.enabled;
+                    const stats = readiness.channels.find((x) => x.channel === ch.key);
+                    return `
+                    <button class="cc-chan-tab ${ccChannelTab === ch.key ? 'active' : ''} ${on ? '' : 'off'}"
+                            onclick="ccChannel('${ch.key}')">
+                        <i class="fas ${ch.icon}"></i>
+                        <span>${ch.label}</span>
+                        ${on && stats ? `<em>${stats.eligible}</em>` : '<em class="cc-muted">off</em>'}
+                    </button>`;
+                }).join('')}
+            </div>
+
+            <div class="cc-editor-grid">
+                <div class="cc-editor">
+                    <label class="check cc-enable">
+                        <input type="checkbox" id="cc-ch-enabled" ${current?.enabled ? 'checked' : ''}
+                               onchange="ccToggleChannel()">
+                        Use ${escapeHtml(ccChannelTab.replace('_', '-'))} for this campaign
+                    </label>
+                    ${ccChannelEditor(ccChannelTab, current?.content || {}, rc)}
+                </div>
+                <aside class="cc-preview">
+                    <h4>Preview</h4>
+                    ${ccChannelPreview(ccChannelTab, detail.previews, current?.content || {})}
+                </aside>
+            </div>
+        </div>`;
+}
+
+function ccChannel(key) {
+    ccChannelTab = key;
+    ccOpen(ccCampaignId);
+}
+
+function ccField(id, label, value, placeholder = '', type = 'input') {
+    const v = escapeHtml(value ?? '');
+    return `
+        <label>${escapeHtml(label)}
+            ${type === 'textarea'
+                ? `<textarea id="${id}" rows="5" placeholder="${escapeHtml(placeholder)}">${v}</textarea>`
+                : `<input id="${id}" value="${v}" placeholder="${escapeHtml(placeholder)}">`}
+        </label>`;
+}
+
+function ccIssues(rc) {
+    if (!rc?.issues?.length) return '';
+    return `<ul class="cc-issues">${rc.issues.map((i) => `
+        <li class="cc-issue-${escapeHtml(i.severity)}">
+            <b>${escapeHtml(i.field)}</b> ${escapeHtml(i.message)}
+        </li>`).join('')}</ul>`;
+}
+
+function ccChannelEditor(channel, content, rc) {
+    if (channel === 'email') {
+        return `
+            ${ccField('f-subject', 'Subject', content.subject, 'Your next ride is on us')}
+            ${ccField('f-previewText', 'Preview text', content.previewText, 'Shown after the subject in an inbox')}
+            ${ccField('f-headline', 'Headline', content.headline)}
+            ${ccField('f-body', 'Body', content.body, 'Hello {{firstName}},', 'textarea')}
+            ${ccField('f-ctaLabel', 'Button label', content.ctaLabel, 'Book a ride')}
+            ${ccField('f-ctaUrl', 'Button link', content.ctaUrl, 'https://kekeride.ng/app')}
+            ${ccIssues(rc)}
+            <button class="btn-primary" onclick="ccSaveChannel('email')">Save email</button>`;
+    }
+    if (channel === 'push') {
+        return `
+            ${ccField('f-title', 'Title', content.title, 'Your next ride is on us')}
+            ${ccField('f-body', 'Body', content.body, 'Tap to claim your discount', 'textarea')}
+            ${ccField('f-deepLink', 'Deep link', content.deepLink, 'kekeride://offers')}
+            ${ccField('f-imageUrl', 'Image URL', content.imageUrl)}
+            ${ccIssues(rc)}
+            <button class="btn-primary" onclick="ccSaveChannel('push')">Save push</button>`;
+    }
+    if (channel === 'in_app') {
+        const sel = (v, cur) => v === cur ? 'selected' : '';
+        return `
+            <label>Placement
+                <select id="f-placement">
+                    <option value="banner" ${sel('banner', content.placement)}>Banner — home screen</option>
+                    <option value="modal" ${sel('modal', content.placement)}>Modal — after a completed ride</option>
+                    <option value="inbox" ${sel('inbox', content.placement)}>Inbox card</option>
+                </select>
+            </label>
+            ${ccField('f-title', 'Title', content.title)}
+            ${ccField('f-body', 'Body', content.body, '', 'textarea')}
+            ${ccField('f-ctaLabel', 'Button label', content.ctaLabel)}
+            ${ccField('f-ctaUrl', 'Button link', content.ctaUrl)}
+            <div class="cc-row">
+                ${ccField('f-priority', 'Priority', content.priority ?? 5)}
+                ${ccField('f-frequencyCap', 'Show at most', content.frequencyCap ?? 3)}
+            </div>
+            <div class="cc-row">
+                <label>Starts<input id="f-startsAt" type="date" value="${escapeHtml(content.startsAt ?? '')}"></label>
+                <label>Ends<input id="f-endsAt" type="date" value="${escapeHtml(content.endsAt ?? '')}"></label>
+            </div>
+            <p class="section-note">
+                In-app messages never appear during ride search, driver matching,
+                a trip, payment, cancellation or an emergency.
+            </p>
+            ${ccIssues(rc)}
+            <button class="btn-primary" onclick="ccSaveChannel('in_app')">Save in-app</button>`;
+    }
+    if (channel === 'sms') {
+        return `
+            ${ccField('f-body', 'Message', content.body, 'KekeRide: 30% off this weekend. Reply STOP to opt out.', 'textarea')}
+            ${ccField('f-senderId', 'Sender', content.senderId ?? 'KekeRide')}
+            <div class="cc-sms-meter" id="cc-sms-meter"></div>
+            ${ccIssues(rc)}
+            <p class="section-note">
+                SMS has no configured provider, so this channel cannot send
+                whatever its content says. Segments and cost are shown so the
+                message can be written economically now.
+            </p>
+            <button class="btn-primary" onclick="ccSaveChannel('sms')">Save SMS</button>`;
+    }
+    return '<p class="section-note">No editor for this channel.</p>';
+}
+
+function ccChannelPreview(channel, previews, content) {
+    if (channel === 'email' && previews?.email) {
+        return `
+            <div class="cc-preview-tabs">
+                <button class="active" onclick="ccPreviewMode(this,'mobile')">Mobile</button>
+                <button onclick="ccPreviewMode(this,'desktop')">Desktop</button>
+            </div>
+            <div class="cc-frame cc-frame-mobile" id="cc-email-frame">
+                <iframe srcdoc="${escapeHtml(previews.email.html)}"></iframe>
+            </div>`;
+    }
+    if (channel === 'push') {
+        const p = previews?.push || content;
+        return `
+            <div class="cc-push-preview">
+                <div class="cc-push-note">Android</div>
+                <div class="cc-push-card">
+                    <div class="cc-push-app">KekeRide · now</div>
+                    <b>${escapeHtml(p.title || 'Title')}</b>
+                    <span>${escapeHtml(p.body || 'Body text')}</span>
+                </div>
+                <div class="cc-push-note">iOS</div>
+                <div class="cc-push-card cc-push-ios">
+                    <b>${escapeHtml(p.title || 'Title')}</b>
+                    <span>${escapeHtml(p.body || 'Body text')}</span>
+                </div>
+            </div>`;
+    }
+    if (channel === 'in_app') {
+        const p = previews?.in_app || content;
+        return `
+            <div class="cc-inapp-preview">
+                <div class="cc-phone">
+                    <div class="cc-phone-bar">KekeRide</div>
+                    <div class="cc-inapp-${escapeHtml(p.placement || 'banner')}">
+                        <b>${escapeHtml(p.title || 'Title')}</b>
+                        <span>${escapeHtml(p.body || 'Message body')}</span>
+                        ${p.ctaLabel ? `<button>${escapeHtml(p.ctaLabel)}</button>` : ''}
+                    </div>
+                </div>
+            </div>`;
+    }
+    if (channel === 'sms') {
+        const p = previews?.sms || { body: content.body, segments: 0, characters: 0, encoding: 'GSM-7' };
+        return `
+            <div class="cc-sms-preview">
+                <div class="cc-sms-bubble">${escapeHtml(p.body || 'Message')}</div>
+                <dl class="cc-sms-facts">
+                    <div><dt>Encoding</dt><dd>${escapeHtml(p.encoding)}</dd></div>
+                    <div><dt>Characters</dt><dd>${p.characters}</dd></div>
+                    <div><dt>Segments</dt><dd>${p.segments}</dd></div>
+                </dl>
+            </div>`;
+    }
+    return '<p class="cc-muted">Enable this channel to preview it.</p>';
+}
+
+function ccPreviewMode(btn, mode) {
+    btn.parentElement.querySelectorAll('button').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    const frame = document.getElementById('cc-email-frame');
+    if (frame) frame.className = `cc-frame cc-frame-${mode}`;
+}
+
+async function ccSaveChannel(channel) {
+    const read = (id) => document.getElementById(id)?.value ?? undefined;
+    const content = {};
+    for (const f of ['subject', 'previewText', 'headline', 'body', 'ctaLabel', 'ctaUrl',
+                     'title', 'deepLink', 'imageUrl', 'placement', 'senderId',
+                     'startsAt', 'endsAt']) {
+        const v = read(`f-${f}`);
+        if (v !== undefined) content[f] = v;
+    }
+    for (const n of ['priority', 'frequencyCap']) {
+        const v = read(`f-${n}`);
+        if (v !== undefined) content[n] = Number(v);
+    }
+
+    try {
+        await adminFetch(
+            `/communications/mc/campaigns/${ccCampaignId}/channels/${channel}`, 'PUT', { content });
+        showToast('Saved', 'success');
+        ccOpen(ccCampaignId);
+    } catch { /* surfaced */ }
+}
+
+async function ccToggleChannel() {
+    const enabled = document.getElementById('cc-ch-enabled').checked;
+    try {
+        await adminFetch(
+            `/communications/mc/campaigns/${ccCampaignId}/channels/${ccChannelTab}`, 'PUT', { enabled });
+        ccOpen(ccCampaignId);
+    } catch { /* surfaced */ }
+}
+
+async function ccRequestApproval(id) {
+    try {
+        await adminFetch(`/communications/mc/campaigns/${id}/request-approval`, 'POST', {});
+        showToast('Sent for approval', 'success');
+        ccOpen(id);
+    } catch { /* surfaced */ }
+}
+
+async function ccApprove(id) {
+    try {
+        await adminFetch(`/communications/mc/campaigns/${id}/approve`, 'POST', {});
+        showToast('Approved', 'success');
+        ccOpen(id);
+    } catch { /* surfaced */ }
+}
+
+// ── Remaining views ────────────────────────────────────────────────────────
+
+async function ccRenderAudiences(body) {
+    const [presets, segments] = await Promise.all([
+        adminFetch('/communications/audience-presets'),
+        adminFetch('/communications/segments'),
+    ]);
+    ccSendingBanner(false);
+
+    body.innerHTML = `
+        <h2 class="cc-h2">Audience builder</h2>
+        <div class="cc-aud-grid">
+            ${presets.presets.map((p) => `
+                <button class="cc-aud-card" onclick="ccPreviewAudience('${escapeHtml(p.key)}')">
+                    <b>${escapeHtml(p.label)}</b>
+                    <span id="cc-aud-${escapeHtml(p.key)}" class="cc-muted">Tap to count</span>
+                </button>`).join('')}
+        </div>
+        <div id="cc-aud-result"></div>
+
+        <h2 class="cc-h2">Saved segments</h2>
+        ${segments.items.length
+            ? `<div class="cc-list">${segments.items.map((s) => `
+                <article class="cc-card">
+                    <header><b>${escapeHtml(s.name)}</b>
+                        <span class="cc-muted">${s.lastCount ?? '—'} eligible</span></header>
+                    ${s.description ? `<p class="cc-muted">${escapeHtml(s.description)}</p>` : ''}
+                </article>`).join('')}</div>`
+            : '<p class="section-note">No saved segments yet.</p>'}`;
+
+    window.__ccPresets = presets.presets;
+}
+
+async function ccPreviewAudience(key) {
+    const preset = (window.__ccPresets || []).find((p) => p.key === key);
+    if (!preset) return;
+    const el = document.getElementById(`cc-aud-${key}`);
+    if (el) el.textContent = 'Counting…';
+    try {
+        const r = await adminFetch('/communications/audience/preview', 'POST', preset.definition);
+        if (el) el.textContent = `${r.eligible} eligible of ${r.matched}`;
+        document.getElementById('cc-aud-result').innerHTML = `
+            <div class="cc-alert cc-alert-info">
+                <i class="fas fa-users"></i>
+                <div>
+                    <strong>${escapeHtml(preset.label)}</strong>
+                    — ${r.matched} matched, <b>${r.eligible} eligible</b>, ${r.excluded} excluded.
+                    ${Object.keys(r.exclusions).length ? `
+                        <ul>${Object.entries(r.exclusions).map(([k, v]) =>
+                            `<li>${escapeHtml(k.replace(/_/g, ' '))}: ${v}</li>`).join('')}</ul>` : ''}
+                </div>
+            </div>`;
+    } catch {
+        if (el) el.textContent = 'Could not count';
+    }
+}
+
+async function ccRenderTemplates(body) {
+    const d = await adminFetch('/communications/templates');
+    ccSendingBanner(false);
+    body.innerHTML = `
+        <h2 class="cc-h2">Email templates</h2>
+        <div class="cc-list">
+            ${d.templates.map((t) => `
+                <article class="cc-card">
+                    <header>
+                        <b>${escapeHtml(t.name)}</b>
+                        <span class="cc-chan">${escapeHtml(t.category)}</span>
+                    </header>
+                    <p class="cc-muted">${escapeHtml(t.description)}</p>
+                </article>`).join('')}
+        </div>
+        <p class="section-note">
+            The consent category is a property of the template, not a per-campaign
+            choice — a discount cannot be sent under the safety-notice exemption.
+        </p>`;
+}
+
+async function ccRenderPreferences(body) {
+    const c = await adminFetch('/communications/consent-stats');
+    ccSendingBanner(false);
+    body.innerHTML = `
+        <h2 class="cc-h2">Communication preferences</h2>
+        <div class="cc-stats">
+            <div class="cc-stat"><span class="cc-stat-value">${c.passengers}</span><label>Passengers</label></div>
+            <div class="cc-stat ${c.optedIn ? 'good' : ''}"><span class="cc-stat-value">${c.optedIn}</span><label>Opted in</label></div>
+            <div class="cc-stat ${c.neverAsked ? 'warn' : ''}"><span class="cc-stat-value">${c.neverAsked}</span><label>Never asked</label></div>
+            <div class="cc-stat"><span class="cc-stat-value">${c.unsubscribed}</span><label>Unsubscribed</label></div>
+        </div>
+        <p class="section-note">
+            Preferences are set by passengers in the app. There is deliberately no
+            control here to opt somebody in: consent given by an administrator on
+            somebody's behalf is not consent.
+        </p>`;
+}
+
+async function ccRenderReports(body) {
+    ccSendingBanner(false);
+    body.innerHTML = `
+        <div class="cc-empty">
+            <i class="fas fa-chart-line"></i>
+            <h3>No deliveries to report</h3>
+            <p>
+                Nothing has been sent, so there is nothing to measure. Reports
+                appear here once the delivery pipeline is built and a campaign
+                has gone out.
+            </p>
+        </div>`;
+}
+
+async function ccRenderSuppression(body) {
+    const d = await adminFetch('/communications/suppression');
+    ccSendingBanner(false);
+    body.innerHTML = `
+        <h2 class="cc-h2">Suppression list</h2>
+        ${d.items.length ? `
+            <div class="table-container compact">
+                <table>
+                    <thead><tr><th>Address</th><th>Reason</th><th>Source</th><th>Added</th></tr></thead>
+                    <tbody>${d.items.map((s) => `
+                        <tr>
+                            <td>${escapeHtml(s.email)}</td>
+                            <td><span class="cc-chan">${escapeHtml(s.reason)}</span></td>
+                            <td>${escapeHtml(s.source)}</td>
+                            <td>${new Date(s.createdAt).toLocaleDateString()}</td>
+                        </tr>`).join('')}</tbody>
+                </table>
+            </div>` : '<p class="section-note">Nothing suppressed.</p>'}
+        <p class="section-note">
+            A hard bounce or spam complaint cannot be lifted. Sending again to an
+            address that reported us would put the domain that carries KekeRide's
+            verification codes at risk.
+        </p>`;
+}
+
+async function ccRenderHealth(body) {
+    const d = await adminFetch('/communications/channel-health');
+    ccSendingBanner(false);
+    body.innerHTML = `
+        <h2 class="cc-h2">Channel health</h2>
+        <div class="cc-channels">
+            ${Object.entries(d.channels).map(([key, blockers]) => `
+                <div class="cc-channel ${blockers.length ? 'off' : 'on'}">
+                    <div class="cc-channel-head">
+                        <span>${escapeHtml(key.replace('_', '-'))}</span>
+                        <span class="cc-pill ${blockers.length ? 'cc-pill-off' : 'cc-pill-on'}">
+                            ${blockers.length ? 'Disabled' : 'Enabled'}
+                        </span>
+                    </div>
+                    ${blockers.length
+                        ? `<ul>${blockers.map((b) => `<li>${escapeHtml(b)}</li>`).join('')}</ul>`
+                        : '<p class="cc-muted">Ready.</p>'}
+                </div>`).join('')}
+        </div>`;
+}
+
+function ccRenderAutomations(body) {
+    ccSendingBanner(false);
+    // Honest about not existing, rather than a mocked-up screen that implies
+    // something is running.
+    body.innerHTML = `
+        <div class="cc-empty">
+            <i class="fas fa-robot"></i>
+            <h3>Automations are not built yet</h3>
+            <p>
+                This is where recurring campaigns would live — a welcome message
+                on a passenger's first ride, a reactivation after thirty quiet
+                days. Nothing is scheduled and nothing runs.
+            </p>
+        </div>`;
+}
+
+document.getElementById('cc-nav')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('.cc-tab');
+    if (btn) ccSwitch(btn.dataset.cc);
 });
 
 // ── Park list ──────────────────────────────────────────────────────────────

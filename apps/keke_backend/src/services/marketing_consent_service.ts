@@ -408,6 +408,40 @@ export class MarketingConsentService {
         return rows.map((r) => r.userId);
     }
 
+    /**
+     * Consent counts per channel, for the Overview.
+     *
+     * "Never asked" is the number that matters on day one and is deliberately
+     * distinguished from "declined": one is an opportunity, the other is an
+     * answer, and showing them as a single figure would hide the difference.
+     */
+    static async channelStats(): Promise<{
+        passengers: number; neverAsked: number; declined: number;
+        email: number; push: number; inApp: number; sms: number;
+        productUpdates: number; suppressed: number;
+    }> {
+        const passengers = await AppDataSource.getRepository(User)
+            .count({ where: { role: UserRole.PASSENGER } });
+        const rows = await this.repo.find();
+        const suppressed = await AppDataSource.getRepository(EmailSuppression).count();
+
+        const on = (k: keyof PassengerCommunicationPreference) =>
+            rows.filter((r) => r.marketing && r[k] === true).length;
+
+        return {
+            passengers,
+            neverAsked: Math.max(0, passengers - rows.length),
+            // Asked, and said no. A row with the master switch off.
+            declined: rows.filter((r) => !r.marketing).length,
+            email: on('marketingEmail'),
+            push: on('marketingPush'),
+            inApp: on('marketingInApp'),
+            sms: on('marketingSms'),
+            productUpdates: on('productUpdates'),
+            suppressed,
+        };
+    }
+
     /** Headline consent numbers for the overview screen. */
     static async stats(): Promise<{
         passengers: number; optedIn: number; unsubscribed: number; neverAsked: number; suppressed: number;

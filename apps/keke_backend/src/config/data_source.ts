@@ -8,6 +8,7 @@ import { EmailCampaign } from "../models/EmailCampaign";
 import { EmailCampaignRecipient } from "../models/EmailCampaignRecipient";
 import { EmailDeliveryEvent } from "../models/EmailDeliveryEvent";
 import { EmailAudienceSegment } from "../models/EmailAudienceSegment";
+import { CommunicationCampaign, CommunicationCampaignChannel } from "../models/CommunicationCampaign";
 
 dotenv.config();
 
@@ -24,6 +25,7 @@ export const AppDataSource = new DataSource({
     logging: ["error", "warn", "migration"],
     entities: [Wallet, LedgerEntry, Transaction, PayoutRecord, DriverProfile, Ride, AuditLog, User, DeviceToken, SavedLocation, Setting, SosAlert, RideReview, DispatchEvent, StaffUser, StaffRoleAssignment, StaffSession, StaffAuditEvent, ContactRevealEvent, Park, ParkZone, DispatcherShift, DriverPresence, DriverPresenceEvent, ParkDriverRoster, DriverBadge, ParkDispatchJob, StaffDeviceToken, StaffPushDelivery,
     PassengerCommunicationPreference, EmailSuppression, EmailCampaign, EmailCampaignRecipient, EmailDeliveryEvent, EmailAudienceSegment,
+    CommunicationCampaign, CommunicationCampaignChannel,
 ],
 
     migrations: ["dist/migrations/*.js"],

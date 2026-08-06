@@ -125,6 +125,14 @@
                 <li data-section="operations" data-requires-permission="park:view_metrics">
                     <i class="fas fa-tower-broadcast"></i> <span>Operations</span>
                 </li>
+                <!--
+                  Communications Centre. One parent entry with its own sub-nav
+                  inside the section, rather than eleven sidebar rows — the
+                  sidebar is already long and these belong together.
+                -->
+                <li data-section="communications" data-requires-permission="communications:view">
+                    <i class="fas fa-paper-plane"></i> <span>Communications</span>
+                </li>
                 <li data-section="parks" data-requires-permission="park:read">
                     <i class="fas fa-warehouse"></i> <span>Parks</span>
                 </li>
@@ -538,6 +546,33 @@
                   every ride failed, with the reason recorded only in the
                   dispatch trace — one ride at a time, in a table nobody reads.
                 -->
+                <!--
+                  The Communications Centre.
+                  Nothing in here can send: every channel kill switch is off and
+                  the server returns canSend:false regardless of what the browser
+                  asks for.
+                -->
+                <section id="communications" class="content-section hidden">
+                    <div class="cc-shell">
+                        <nav class="cc-nav" id="cc-nav">
+                            <button class="cc-tab active" data-cc="overview">Overview</button>
+                            <button class="cc-tab" data-cc="campaigns">Campaigns</button>
+                            <button class="cc-tab" data-cc="drafts">Drafts</button>
+                            <button class="cc-tab" data-cc="create">Create</button>
+                            <button class="cc-tab" data-cc="audiences">Audiences</button>
+                            <button class="cc-tab" data-cc="templates">Templates</button>
+                            <button class="cc-tab" data-cc="preferences">Preferences</button>
+                            <button class="cc-tab" data-cc="reports">Delivery Reports</button>
+                            <button class="cc-tab" data-cc="suppression">Suppression</button>
+                            <button class="cc-tab" data-cc="health">Channel Health</button>
+                            <button class="cc-tab" data-cc="automations">Automations</button>
+                        </nav>
+
+                        <div class="cc-banner" id="cc-sending-banner"></div>
+                        <div class="cc-body" id="cc-body"></div>
+                    </div>
+                </section>
+
                 <section id="operations" class="content-section hidden">
                     <div class="ops-head">
                         <div class="ops-totals" id="ops-totals"></div>

@@ -12,6 +12,8 @@
 
 import { Router, Response } from 'express';
 import { CampaignService } from '../services/campaign_service';
+import { MultiChannelCampaignService } from '../services/multichannel_campaign_service';
+import { channelBlockers, loadCommunicationsConfig } from '../config/communications_config';
 import { AudienceService, AudienceDefinition } from '../services/audience_service';
 import { MarketingConsentService, SuppressionService } from '../services/marketing_consent_service';
 import { EmailAudienceSegment } from '../models/EmailAudienceSegment';
@@ -355,6 +357,180 @@ router.get('/communications/consent-stats',
         } catch (err: any) {
             return fail(res, err, "We couldn't load consent numbers.");
         }
+    });
+
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Multi-channel campaigns (Phase B)
+//
+//  There is no send route here. `readiness` returns canSend: false from the
+//  server, so a disabled button in the browser is not the only thing standing
+//  between a draft and 57 passengers.
+// ═══════════════════════════════════════════════════════════════════════
+
+router.get('/communications/mc/overview',
+    requireStaffPermission(StaffPermission.COMMUNICATIONS_VIEW),
+    async (_req: StaffRequest, res: Response) => {
+        try {
+            return res.json(await MultiChannelCampaignService.overview());
+        } catch (err: any) {
+            return fail(res, err, "We couldn't load the overview.");
+        }
+    });
+
+router.get('/communications/mc/campaigns',
+    requireStaffPermission(StaffPermission.COMMUNICATIONS_VIEW),
+    async (req: StaffRequest, res: Response) => {
+        try {
+            return res.json({
+                items: await MultiChannelCampaignService.list({ status: req.query.status as any }),
+            });
+        } catch (err: any) {
+            return fail(res, err, "We couldn't load campaigns.");
+        }
+    });
+
+router.get('/communications/mc/campaigns/:id',
+    requireStaffPermission(StaffPermission.COMMUNICATIONS_VIEW),
+    async (req: StaffRequest, res: Response) => {
+        try {
+            const id = String(req.params.id);
+            const [campaign, channels, previews] = await Promise.all([
+                MultiChannelCampaignService.get(id),
+                MultiChannelCampaignService.channelsFor(id),
+                MultiChannelCampaignService.previews(id),
+            ]);
+            return res.json({ campaign, channels, previews });
+        } catch (err: any) {
+            return fail(res, err, "We couldn't load this campaign.");
+        }
+    });
+
+router.post('/communications/mc/campaigns',
+    requireRealStaff, requireStaffPermission(StaffPermission.COMMUNICATIONS_CREATE),
+    async (req: StaffRequest, res: Response) => {
+        try {
+            const campaign = await MultiChannelCampaignService.create(
+                auditActorOf(req.actor), req.body ?? {}, ctxOf(req));
+            return res.status(201).json({ campaign });
+        } catch (err: any) {
+            return fail(res, err, "We couldn't create this campaign.");
+        }
+    });
+
+router.patch('/communications/mc/campaigns/:id',
+    requireRealStaff, requireStaffPermission(StaffPermission.COMMUNICATIONS_CREATE),
+    async (req: StaffRequest, res: Response) => {
+        try {
+            return res.json({
+                campaign: await MultiChannelCampaignService.update(
+                    auditActorOf(req.actor), String(req.params.id), req.body ?? {}, ctxOf(req)),
+            });
+        } catch (err: any) {
+            return fail(res, err, "We couldn't update this campaign.");
+        }
+    });
+
+router.put('/communications/mc/campaigns/:id/channels/:channel',
+    requireRealStaff, requireStaffPermission(StaffPermission.COMMUNICATIONS_CREATE),
+    async (req: StaffRequest, res: Response) => {
+        try {
+            return res.json({
+                channel: await MultiChannelCampaignService.setChannel(
+                    auditActorOf(req.actor), String(req.params.id),
+                    String(req.params.channel) as any, req.body ?? {}, ctxOf(req)),
+            });
+        } catch (err: any) {
+            return fail(res, err, "We couldn't update that channel.");
+        }
+    });
+
+/** Audience resolved once, then evaluated per channel. */
+router.get('/communications/mc/campaigns/:id/readiness',
+    requireStaffPermission(StaffPermission.COMMUNICATIONS_VIEW),
+    async (req: StaffRequest, res: Response) => {
+        try {
+            return res.json(await MultiChannelCampaignService.readiness(String(req.params.id)));
+        } catch (err: any) {
+            return fail(res, err, "We couldn't check this campaign.");
+        }
+    });
+
+router.get('/communications/mc/campaigns/:id/previews',
+    requireStaffPermission(StaffPermission.COMMUNICATIONS_VIEW),
+    async (req: StaffRequest, res: Response) => {
+        try {
+            return res.json(await MultiChannelCampaignService.previews(String(req.params.id)));
+        } catch (err: any) {
+            return fail(res, err, "We couldn't render the previews.");
+        }
+    });
+
+router.post('/communications/mc/campaigns/:id/request-approval',
+    requireRealStaff, requireStaffPermission(StaffPermission.COMMUNICATIONS_CREATE),
+    async (req: StaffRequest, res: Response) => {
+        try {
+            return res.json({
+                campaign: await MultiChannelCampaignService.requestApproval(
+                    auditActorOf(req.actor), String(req.params.id), ctxOf(req)),
+            });
+        } catch (err: any) {
+            return fail(res, err, "We couldn't request approval.");
+        }
+    });
+
+router.post('/communications/mc/campaigns/:id/approve',
+    requireRealStaff, requireStaffPermission(StaffPermission.COMMUNICATIONS_APPROVE),
+    async (req: StaffRequest, res: Response) => {
+        try {
+            return res.json({
+                campaign: await MultiChannelCampaignService.approve(
+                    auditActorOf(req.actor), String(req.params.id), ctxOf(req)),
+            });
+        } catch (err: any) {
+            return fail(res, err, "We couldn't approve this campaign.");
+        }
+    });
+
+router.post('/communications/mc/campaigns/:id/cancel',
+    requireRealStaff, requireStaffPermission(StaffPermission.COMMUNICATIONS_CREATE),
+    async (req: StaffRequest, res: Response) => {
+        try {
+            return res.json({
+                campaign: await MultiChannelCampaignService.cancel(
+                    auditActorOf(req.actor), String(req.params.id),
+                    String(req.body?.reason ?? ''), ctxOf(req)),
+            });
+        } catch (err: any) {
+            return fail(res, err, "We couldn't cancel this campaign.");
+        }
+    });
+
+/** Channel Health: why each channel can or cannot send. */
+router.get('/communications/channel-health',
+    requireStaffPermission(StaffPermission.COMMUNICATIONS_VIEW),
+    (_req: StaffRequest, res: Response) => res.json({ channels: channelBlockers() }));
+
+/** The audience presets offered in the builder. */
+router.get('/communications/audience-presets',
+    requireStaffPermission(StaffPermission.COMMUNICATIONS_VIEW),
+    (_req: StaffRequest, res: Response) => {
+        const cfg = loadCommunicationsConfig();
+        return res.json({
+            presets: [
+                { key: 'all', label: 'All passengers', definition: { activity: 'all' } },
+                { key: 'active', label: 'Completed at least one ride', definition: { activity: 'completed_any' } },
+                { key: 'inactive', label: `No ride in ${cfg.inactiveDaysThreshold} days`, definition: { activity: 'inactive' } },
+                { key: 'new', label: 'Registered, never requested', definition: { activity: 'never_requested' } },
+                { key: 'no_completed', label: 'Requested, never completed', definition: { activity: 'requested_never_completed' } },
+                { key: 'frequent', label: `${cfg.frequentRideThreshold}+ completed rides`, definition: { activity: 'frequent' } },
+            ],
+            thresholds: {
+                frequentRideThreshold: cfg.frequentRideThreshold,
+                inactiveDaysThreshold: cfg.inactiveDaysThreshold,
+                highValueSpendThreshold: cfg.highValueSpendThreshold,
+            },
+        });
     });
 
 export default router;

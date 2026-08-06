@@ -1737,3 +1737,40 @@ body.authenticated .admin-container { display: flex; }
 .cc-provider-detail { font-size: 0.74rem; color: #94a3b8; line-height: 1.5; }
 
 .cc-alert-danger { background: rgba(248,113,113,0.1); border: 1px solid rgba(248,113,113,0.28); }
+
+/* ── System readiness card ────────────────────────────────────────────── */
+.cc-readiness { border: 1px solid rgba(148,163,184,0.2); border-radius: 12px;
+    padding: 16px 18px; margin-bottom: 18px; background: rgba(15,23,42,0.4); }
+.cc-readiness.ready   { border-left: 3px solid #34d399; }
+.cc-readiness.blocked { border-left: 3px solid #fbbf24; }
+.cc-readiness-head { display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+
+.cc-checks { list-style: none; margin: 0; padding: 0; display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 8px 18px; }
+.cc-check { display: flex; gap: 10px; align-items: flex-start; font-size: 0.82rem; }
+.cc-check i { margin-top: 3px; font-size: 0.9rem; }
+.cc-check.pass i { color: #34d399; }
+.cc-check.fail i { color: #fbbf24; }
+.cc-check-label { display: block; font-weight: 700; }
+.cc-check-detail { display: block; color: #94a3b8; font-size: 0.74rem; line-height: 1.45; margin-top: 1px; }
+
+.cc-readiness-foot { margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(148,163,184,0.15); }
+.cc-sending-state { display: inline-flex; align-items: center; gap: 10px; padding: 8px 14px;
+    border-radius: 10px; margin-bottom: 8px; }
+.cc-sending-state.off { background: rgba(52,211,153,0.1); border: 1px solid rgba(52,211,153,0.3); }
+.cc-sending-state.on  { background: rgba(251,191,36,0.1); border: 1px solid rgba(251,191,36,0.35); }
+.cc-sending-state strong { font-size: 0.95rem; letter-spacing: 0.05em; }
+.cc-sending-state.off strong { color: #34d399; }
+.cc-sending-state.on strong  { color: #fbbf24; }
+
+/* ── Infrastructure health ────────────────────────────────────────────── */
+.cc-h4 { margin: 16px 0 6px; font-size: 0.8rem; font-weight: 800; text-transform: uppercase;
+    letter-spacing: 0.05em; color: #94a3b8; }
+.cc-provider-warning  { border-left: 3px solid #fbbf24; }
+.cc-dot-deg { background: #fb923c; }
+.cc-provider-degraded { border-left: 3px solid #fb923c; }
+.cc-shared { font-size: 0.6rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em;
+    padding: 2px 6px; border-radius: 4px; margin-left: 6px; vertical-align: middle;
+    background: rgba(96,165,250,0.16); color: #93c5fd; }
+.cc-legend { margin-top: 12px; line-height: 2; }

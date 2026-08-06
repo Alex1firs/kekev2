@@ -29,3 +29,7 @@ GoogleService-Info.plist
 !apps/keke_driver/ios/Runner/GoogleService-Info.plist
 !apps/keke_passenger/ios/Runner/GoogleService-Info.plist
 *.p8
+
+# Deployed artifact — the source of truth is infra/nginx/nginx.conf.
+# Present only on the droplet, where the gateway bind-mounts it.
+/nginx.conf

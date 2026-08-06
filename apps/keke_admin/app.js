@@ -2446,10 +2446,16 @@ function ccStopDashboardRefresh() {
     if (ccDashTimer) { clearInterval(ccDashTimer); ccDashTimer = null; }
 }
 
+const CC_HEALTH = {
+    healthy:  { cls: 'ok',   label: 'Healthy' },
+    warning:  { cls: 'warn', label: 'Warning' },
+    degraded: { cls: 'deg',  label: 'Degraded' },
+    offline:  { cls: 'bad',  label: 'Offline' },
+};
+
 function ccHealthDot(state) {
-    const cls = state === 'healthy' ? 'ok' : state === 'degraded' ? 'warn' : 'bad';
-    const label = state === 'healthy' ? 'Healthy' : state === 'degraded' ? 'Degraded' : 'Offline';
-    return `<span class="cc-dot cc-dot-${cls}"></span>${label}`;
+    const h = CC_HEALTH[state] || CC_HEALTH.offline;
+    return `<span class="cc-dot cc-dot-${h.cls}"></span>${h.label}`;
 }
 
 function ccMetric(label, value, tone) {
@@ -2457,6 +2463,103 @@ function ccMetric(label, value, tone) {
         <span class="cc-metric-v">${value}</span>
         <span class="cc-metric-l">${escapeHtml(label)}</span>
     </div>`;
+}
+
+/**
+ * System readiness — the single card an administrator reads before enabling
+ * marketing.
+ *
+ * Deliberately not a summary of the dashboard below it. Every row answers "is
+ * this safe to switch on", and the verdict excludes the two rows describing the
+ * switches themselves — otherwise turning marketing on would make the card
+ * report NOT ready, which is exactly backwards.
+ */
+function ccReadinessCard(r) {
+    if (!r) return '';
+
+    const rows = r.checks.map((c) => `
+        <li class="cc-check ${c.pass ? 'pass' : 'fail'}">
+            <i class="fas ${c.pass ? 'fa-circle-check' : 'fa-circle-xmark'}"></i>
+            <div>
+                <span class="cc-check-label">${escapeHtml(c.label)}</span>
+                <span class="cc-check-detail">${escapeHtml(c.detail || '')}</span>
+            </div>
+        </li>`).join('');
+
+    const verdict = r.readyToEnable
+        ? `<span class="cc-pill cc-pill-ok">Prerequisites met</span>`
+        : `<span class="cc-pill cc-pill-bad">${r.blockers.length} blocker${r.blockers.length === 1 ? '' : 's'}</span>`;
+
+    return `
+    <section class="cc-readiness ${r.readyToEnable ? 'ready' : 'blocked'}">
+        <div class="cc-readiness-head">
+            <h3 class="cc-h3" style="margin:0"><i class="fas fa-clipboard-check"></i> System readiness</h3>
+            ${verdict}
+        </div>
+
+        <ul class="cc-checks">${rows}</ul>
+
+        <div class="cc-readiness-foot">
+            <div class="cc-sending-state ${r.campaignSendingEnabled ? 'on' : 'off'}">
+                <span class="cc-check-label">Campaign sending enabled</span>
+                <strong>${r.campaignSendingEnabled ? 'YES' : 'NO'}</strong>
+            </div>
+            <p class="section-note">
+                ${
+                    r.readyToEnable
+                        ? 'Every prerequisite is met. Enabling remains a deliberate decision — '
+                          + 'the switches are environment variables on the server, not a button on this page.'
+                        : 'Do not enable marketing while anything above is failing: '
+                          + escapeHtml(r.blockers.join(', ')) + '.'
+                }
+            </p>
+        </div>
+    </section>`;
+}
+
+/**
+ * Infrastructure health, grouped.
+ *
+ * Core infrastructure is listed first and separately because it is shared with
+ * the operational path: when Redis is down, the reason a campaign will not send
+ * is the same reason dispatch is struggling, and an operator should not have to
+ * find that out on a different screen.
+ */
+function ccInfrastructure(list) {
+    if (!list || !list.length) return '';
+
+    const card = (p) => `
+        <div class="cc-provider cc-provider-${p.state}">
+            <div class="cc-provider-name">
+                ${escapeHtml(p.name)}
+                ${p.sharedWithOperational
+                    ? '<span class="cc-shared" title="Shared with operational traffic">shared</span>' : ''}
+            </div>
+            <div class="cc-provider-state">${ccHealthDot(p.state)}</div>
+            <div class="cc-provider-detail">${escapeHtml(p.detail)}</div>
+        </div>`;
+
+    const group = (title, key, note) => {
+        const items = list.filter((p) => (p.group || 'provider') === key);
+        if (!items.length) return '';
+        return `
+            <h4 class="cc-h4">${escapeHtml(title)}</h4>
+            ${note ? `<p class="section-note">${escapeHtml(note)}</p>` : ''}
+            <div class="cc-providers">${items.map(card).join('')}</div>`;
+    };
+
+    return `
+        <h3 class="cc-h3">Infrastructure health</h3>
+        ${group('Core infrastructure', 'infrastructure',
+            'Shared with dispatch, rides and authentication. A failure here is not a marketing problem.')}
+        ${group('Delivery providers', 'provider')}
+        ${group('Workers', 'worker')}
+        <p class="section-note cc-legend">
+            <span class="cc-dot cc-dot-ok"></span> Healthy — working ·
+            <span class="cc-dot cc-dot-warn"></span> Warning — working, needs attention ·
+            <span class="cc-dot cc-dot-deg"></span> Degraded — reachable and failing ·
+            <span class="cc-dot cc-dot-bad"></span> Offline — unreachable or unconfigured
+        </p>`;
 }
 
 async function ccRenderDashboard(body, silent) {
@@ -2523,6 +2626,8 @@ async function ccRenderDashboard(body, silent) {
         <p class="section-note">Updated ${new Date(d.generatedAt).toLocaleTimeString()} · refreshes every 15s</p>
 
         ${pausedNote(d.pauses.all)}
+
+        ${ccReadinessCard(d.readiness)}
 
         <!-- The two queues, side by side, because the whole claim of the
              architecture is that they are not the same queue. -->
@@ -2612,16 +2717,8 @@ async function ccRenderDashboard(body, silent) {
             </table>
         </div>
 
-        <!-- Delivery monitoring -->
-        <h3 class="cc-h3">Delivery monitoring</h3>
-        <div class="cc-providers">
-            ${d.providers.map((p) => `
-                <div class="cc-provider cc-provider-${p.state}">
-                    <div class="cc-provider-name">${escapeHtml(p.name)}</div>
-                    <div class="cc-provider-state">${ccHealthDot(p.state)}</div>
-                    <div class="cc-provider-detail">${escapeHtml(p.detail)}</div>
-                </div>`).join('')}
-        </div>
+        <!-- Infrastructure health and delivery monitoring -->
+        ${ccInfrastructure(d.infrastructure || d.providers)}
 
         <h3 class="cc-h3">Campaigns</h3>
         <div class="cc-metrics">

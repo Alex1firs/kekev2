@@ -116,3 +116,119 @@ describe('the audience seam', () => {
     it.each(['driver', 'dispatcher', 'supervisor', 'staff', 'partner'])(
         'does not register %s', (t) => expect(REGISTERED_AUDIENCES.has(t)).toBe(false));
 });
+
+// ── System readiness ────────────────────────────────────────────────────
+
+describe('the readiness card', () => {
+    const { CommunicationsDashboardService: D } = require('../../src/services/communications_dashboard_service');
+
+    const infra = (over = {}) => ([
+        { name: 'Redis', state: 'healthy', detail: 'ok' },
+        { name: 'PostgreSQL', state: 'healthy', detail: 'ok' },
+        { name: 'Firebase (FCM)', state: 'healthy', detail: 'ok' },
+        { name: 'Email provider (Resend)', state: 'healthy', detail: 'ok' },
+        { name: 'Webhooks', state: 'healthy', detail: 'ok' },
+        { name: 'Queue workers', state: 'healthy', detail: 'ok' },
+        { name: 'Retry workers', state: 'healthy', detail: 'ok' },
+        ...(Array.isArray(over) ? over : []),
+    ]);
+
+    const base = (overrides = {}) => D.systemReadiness({
+        infrastructure: infra(),
+        operational: { healthy: true, reasons: [] },
+        queues: {},
+        pauses: { all: { paused: false } },
+        ...overrides,
+    });
+
+    const rowFor = (r, key) => r.checks.find((c) => c.key === key);
+
+    it('reports marketing as disabled while every switch is off', () => {
+        const r = base();
+        expect(rowFor(r, 'marketing_disabled').pass).toBe(true);
+        expect(r.campaignSendingEnabled).toBe(false);
+    });
+
+    it('is ready to enable when every prerequisite passes', () => {
+        const r = base();
+        expect(r.readyToEnable).toBe(true);
+        expect(r.blockers).toEqual([]);
+    });
+
+    /*
+     * The distinction the card exists to make. "Ready" is about the
+     * prerequisites, not about whether sending happens to be off — otherwise
+     * turning marketing on would make the card report NOT ready, which is
+     * exactly backwards.
+     */
+    it('stays ready after marketing is switched on', () => {
+        process.env.MARKETING_EMAIL_SEND_ENABLED = 'true';
+        try {
+            const r = base();
+            expect(r.campaignSendingEnabled).toBe(true);
+            expect(rowFor(r, 'marketing_disabled').pass).toBe(false);
+            expect(r.readyToEnable).toBe(true);
+        } finally {
+            delete process.env.MARKETING_EMAIL_SEND_ENABLED;
+        }
+    });
+
+    it('counts the emergency stop as a kill switch when channels are on', () => {
+        process.env.MARKETING_EMAIL_SEND_ENABLED = 'true';
+        try {
+            expect(rowFor(base(), 'kill_switch_active').pass).toBe(false);
+            const paused = base({ pauses: { all: { paused: true } } });
+            expect(rowFor(paused, 'kill_switch_active').pass).toBe(true);
+        } finally {
+            delete process.env.MARKETING_EMAIL_SEND_ENABLED;
+        }
+    });
+
+    it('blocks on unconfigured webhooks', () => {
+        const r = D.systemReadiness({
+            infrastructure: infra().map((p) =>
+                p.name === 'Webhooks' ? { ...p, state: 'offline', detail: 'no secret' } : p),
+            operational: { healthy: true, reasons: [] },
+            queues: {}, pauses: { all: { paused: false } },
+        });
+        expect(rowFor(r, 'webhooks_configured').pass).toBe(false);
+        expect(r.readyToEnable).toBe(false);
+        expect(r.blockers).toContain('Webhooks configured');
+    });
+
+    it('blocks when operational push is degraded', () => {
+        const r = D.systemReadiness({
+            infrastructure: infra(),
+            operational: { healthy: false, reasons: ['40% of operational pushes are failing.'] },
+            queues: {}, pauses: { all: { paused: false } },
+        });
+        expect(rowFor(r, 'operational_healthy').pass).toBe(false);
+        expect(r.readyToEnable).toBe(false);
+    });
+
+    /*
+     * A warning is not a blocker. "SMS has no provider" and "3 messages are
+     * awaiting retry" are things to know, not reasons to refuse.
+     */
+    it('treats a warning as passing', () => {
+        const r = D.systemReadiness({
+            infrastructure: infra().map((p) =>
+                p.name === 'Retry workers' ? { ...p, state: 'warning', detail: '3 awaiting retry' } : p),
+            operational: { healthy: true, reasons: [] },
+            queues: {}, pauses: { all: { paused: false } },
+        });
+        expect(rowFor(r, 'retry_worker_healthy').pass).toBe(true);
+        expect(r.readyToEnable).toBe(true);
+    });
+
+    it('adds a blocking row when core infrastructure is down', () => {
+        const r = D.systemReadiness({
+            infrastructure: infra().map((p) =>
+                p.name === 'Redis' ? { ...p, state: 'offline', detail: 'unreachable' } : p),
+            operational: { healthy: true, reasons: [] },
+            queues: {}, pauses: { all: { paused: false } },
+        });
+        expect(r.readyToEnable).toBe(false);
+        expect(r.blockers).toContain('Redis available');
+    });
+});

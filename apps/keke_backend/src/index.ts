@@ -70,6 +70,68 @@ app.post('/api/v1/finance/webhook', express.raw({ type: 'application/json' }), a
   }
 });
 
+/**
+ * Resend delivery events.
+ *
+ * ── Mounted here, before express.json(), because the signature covers the
+ * raw bytes ──────────────────────────────────────────────────────────────
+ * Re-serialising a parsed body changes key order and whitespace, and the HMAC
+ * then never matches. Same reason as the Paystack hook above.
+ *
+ * ── It answers before it thinks ──────────────────────────────────────────
+ * Once the signature checks out we return 200 and process afterwards. A slow
+ * database or a bug in the handler must not make Resend believe delivery
+ * reporting is failing: Svix would retry, back off, and eventually disable the
+ * endpoint — and the same Resend account carries every OTP and password reset
+ * KekeRide sends. Losing marketing analytics is an inconvenience; having the
+ * provider mark our endpoint unhealthy is a login outage waiting to happen.
+ *
+ * The processing itself is wrapped so nothing can escape into an unhandled
+ * rejection, and it touches only communications tables.
+ */
+app.post('/api/v1/communications/webhooks/resend',
+  express.raw({ type: '*/*', limit: '1mb' }),
+  async (req, res) => {
+    const raw = Buffer.isBuffer(req.body) ? req.body.toString('utf8') : String(req.body ?? '');
+
+    /*
+     * Verified against the secret directly, NOT via emailProvider().
+     *
+     * emailProvider() falls back to NullProvider wherever RESEND_API_KEY is
+     * absent, and NullProvider.verifyWebhook() returns true unconditionally so
+     * that tests need no signing. Routing this through it would mean any
+     * environment without an API key accepting forged events — and a forged
+     * event can suppress an address or withdraw a passenger's consent.
+     */
+    if (!process.env.RESEND_WEBHOOK_SECRET) {
+      return res.status(503).json({ error: 'webhook not configured' });
+    }
+    const { ResendProvider } = await import('./services/email_provider');
+    if (!new ResendProvider().verifyWebhook(raw, req.headers)) {
+      // 401 rather than 400: Svix treats 4xx as "do not retry", which is right
+      // — an unsigned or replayed event will not become valid on a second try.
+      return res.status(401).json({ error: 'invalid signature' });
+    }
+
+    let body: any;
+    try { body = JSON.parse(raw); }
+    catch { return res.status(400).json({ error: 'invalid json' }); }
+
+    const svixId = String(req.headers['svix-id'] ?? '');
+    res.status(200).json({ received: true });
+
+    void (async () => {
+      try {
+        const { EmailWebhookService } = await import('./services/email_webhook_service');
+        await EmailWebhookService.handle(svixId, body);
+      } catch (err: any) {
+        // Deliberately only logged. There is no caller left to tell, and this
+        // path must never be able to affect sending or operational traffic.
+        console.error('[EMAIL_WEBHOOK] processing failed:', err?.message);
+      }
+    })();
+  });
+
 app.use(express.json({ limit: '1mb' }));
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 

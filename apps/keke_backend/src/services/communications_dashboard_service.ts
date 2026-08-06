@@ -20,7 +20,6 @@ import { CommunicationCampaign, CampaignStatus } from '../models/CommunicationCa
 import { OperationalPushHealth } from './operational_push_health';
 import { loadCommunicationsConfig, channelBlockers } from '../config/communications_config';
 import { redis } from '../config/redis';
-import * as admin from 'firebase-admin';
 
 /**
  * Four states, and the difference between the middle two matters.
@@ -190,21 +189,36 @@ export class CommunicationsDashboardService {
         out.push(await this.redisHealth());
         out.push(await this.postgresHealth());
 
+        /*
+         * Asked of NotificationService, not of `admin.apps`.
+         *
+         * `admin.apps` is per-process state, so it reads empty in any process
+         * that has not sent a push yet — a maintenance script, a one-off probe,
+         * a worker. Reporting that as "no Firebase credentials" would put a red
+         * row and a false blocker on the readiness card while production push
+         * was working perfectly. isReady() initialises on demand and answers the
+         * question that actually matters: can this deployment send a push.
+         */
         try {
-            const configured = admin.apps.length > 0;
+            const { NotificationService } = await import('./notification_service');
+            const ready = NotificationService.isReady();
+            const credentialsPresent = Boolean(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
             out.push({
                 name: 'Firebase (FCM)',
                 group: 'infrastructure',
                 sharedWithOperational: true,
-                state: configured ? 'healthy' : 'offline',
-                detail: configured
-                    ? 'Credentials loaded. Shared by operational and marketing push.'
-                    : 'No Firebase credentials — operational push is also affected.',
+                state: ready ? 'healthy' : credentialsPresent ? 'degraded' : 'offline',
+                detail: ready
+                    ? 'Initialised and ready. Shared by operational and marketing push.'
+                    : credentialsPresent
+                        ? 'Credentials are set but the SDK would not initialise — check they are valid base64 JSON.'
+                        : 'No Firebase credentials — operational push is also affected.',
             });
-        } catch {
+        } catch (err: any) {
             out.push({
                 name: 'Firebase (FCM)', group: 'infrastructure', sharedWithOperational: true,
-                state: 'offline', detail: 'Firebase Admin failed to initialise.',
+                state: 'offline',
+                detail: `Firebase Admin failed to initialise: ${String(err?.message ?? err).slice(0, 120)}`,
             });
         }
 

@@ -104,9 +104,21 @@ http {
             try_files $uri $uri/ /index.html;
         }
 
-        # Ensure correct mime types for assets
-        location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg)$ {
+        # Images may be cached hard: they are replaced by adding a new file,
+        # not by editing an existing one.
+        location ~* \.(png|jpg|jpeg|gif|ico|svg|woff2?)$ {
             expires max;
+            log_not_found off;
+        }
+
+        # app.js, styles.css and index.html are edited in place under fixed
+        # names, so caching them by name caches them forever. Under the
+        # previous `expires max` every dashboard change shipped invisibly:
+        # the files reached the droplet and no admin's browser ever asked for
+        # them again. Revalidate instead — the ETag makes the usual answer a
+        # 304, so this costs one round trip, not a re-download.
+        location ~* \.(js|css|html)$ {
+            add_header Cache-Control "no-cache";
             log_not_found off;
         }
     }

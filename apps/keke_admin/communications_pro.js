@@ -904,6 +904,13 @@ async function ccRenderLibrary(body) {
         return;
     }
 
+    // The stored value is a camelCase key; the pill should read as English.
+    const CATEGORY_LABEL = {
+        promotionalOffers: 'Promotional',
+        productUpdates: 'Product update',
+        safetyAnnouncements: 'Safety / service',
+    };
+
     const CATEGORY_NOTE = {
         promotionalOffers: 'Requires promotional consent. Withdrawable at any time.',
         productUpdates: 'Requires product-update consent.',
@@ -911,18 +918,27 @@ async function ccRenderLibrary(body) {
             + 'Never carry an offer on this.',
     };
 
+    /*
+     * Fixed order, not insertion order. Promotions first because that is what
+     * most campaigns are; Service last because those are the ones nobody should
+     * be reaching for casually.
+     */
+    const GROUP_ORDER = ['Promotions', 'Lifecycle', 'Community', 'Service', 'Other'];
     const groups = {};
     for (const t of templates) {
         const g = t.group || 'Other';
         (groups[g] = groups[g] || []).push(t);
     }
+    const orderedGroups = GROUP_ORDER
+        .filter((g) => groups[g])
+        .map((g) => [g, groups[g]]);
 
     body.innerHTML = `
         <h2 class="cc-h2">Template library</h2>
         <p class="section-note">${templates.length} templates. The consent category is a property of the
         template, not a choice made per campaign — a discount cannot be sent under safety consent.</p>
 
-        ${Object.entries(groups).map(([group, list]) => `
+        ${orderedGroups.map(([group, list]) => `
             <h3 class="cc-h3">${escapeHtml(group)}</h3>
             <div class="cp-templates">
                 ${list.map((t) => `
@@ -936,8 +952,9 @@ async function ccRenderLibrary(body) {
                         ${t.whenToUse ? `<p class="cp-template-when"><i class="fas fa-lightbulb"></i>
                             ${escapeHtml(t.whenToUse)}</p>` : ''}
                         <div class="cp-template-foot">
-                            <span class="cc-pill cc-pill-muted" title="${escapeHtml(CATEGORY_NOTE[t.category] || '')}">
-                                ${escapeHtml(t.category)}</span>
+                            <span class="cc-pill ${t.category === 'safetyAnnouncements' ? 'cc-pill-warn' : 'cc-pill-muted'}"
+                                  title="${escapeHtml(CATEGORY_NOTE[t.category] || '')}">
+                                ${escapeHtml(CATEGORY_LABEL[t.category] || t.category)}</span>
                             <code>${escapeHtml(t.key)}</code>
                         </div>
                     </div>`).join('')}

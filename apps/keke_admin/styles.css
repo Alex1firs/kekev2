@@ -2035,3 +2035,4 @@ body.authenticated .admin-container { display: flex; }
     .cp-cal-dayname { display: none; }
     .cp-frame-mobile { max-width: 100%; }
 }
+.cc-pill-warn { background: rgba(251,191,36,0.16); color: #fbbf24; }

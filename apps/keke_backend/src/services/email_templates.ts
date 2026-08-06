@@ -247,6 +247,9 @@ export const TEMPLATES: EmailTemplate[] = [
         key: 'promotional_offer',
         name: 'Promotional offer',
         description: 'A discount or promo code.',
+        group: 'Promotions',
+        audience: 'passenger',
+        whenToUse: 'A discount with a code. Say what it applies to and when it ends.',
         category: 'promotionalOffers',
         defaults: {
             headline: 'Your next ride is on us',
@@ -259,6 +262,9 @@ export const TEMPLATES: EmailTemplate[] = [
         key: 'welcome',
         name: 'Welcome to KekeRide',
         description: 'Sent after a passenger joins.',
+        group: 'Lifecycle',
+        audience: 'passenger',
+        whenToUse: 'Sent once, soon after signup. One action, not a tour of the app.',
         category: 'productUpdates',
         defaults: {
             headline: 'Welcome to KekeRide',
@@ -270,6 +276,9 @@ export const TEMPLATES: EmailTemplate[] = [
         key: 'service_area_launch',
         name: 'Service-area launch',
         description: 'KekeRide is now running somewhere new.',
+        group: 'Lifecycle',
+        audience: 'passenger',
+        whenToUse: 'Only to passengers who could actually use it — filter by area first.',
         category: 'productUpdates',
         defaults: {
             headline: 'KekeRide is now in {{city}}',
@@ -281,6 +290,9 @@ export const TEMPLATES: EmailTemplate[] = [
         key: 'app_update',
         name: 'App update',
         description: 'What has changed in the passenger app.',
+        group: 'Lifecycle',
+        audience: 'passenger',
+        whenToUse: 'Worth sending when the update fixes something people complained about.',
         category: 'productUpdates',
         defaults: {
             headline: "What's new in the app",
@@ -292,6 +304,9 @@ export const TEMPLATES: EmailTemplate[] = [
         key: 'reactivation',
         name: 'We miss you',
         description: 'For passengers who have not ridden in a while.',
+        group: 'Lifecycle',
+        audience: 'passenger',
+        whenToUse: 'Pair with the inactive filter. Never send it to someone who has never ridden.',
         category: 'promotionalOffers',
         defaults: {
             headline: 'It has been a while',
@@ -303,6 +318,9 @@ export const TEMPLATES: EmailTemplate[] = [
         key: 'referral',
         name: 'Referral campaign',
         description: 'Invite friends.',
+        group: 'Promotions',
+        audience: 'passenger',
+        whenToUse: 'Works best right after a good trip, not as a standalone blast.',
         category: 'promotionalOffers',
         defaults: {
             headline: 'Bring a friend along',
@@ -314,6 +332,9 @@ export const TEMPLATES: EmailTemplate[] = [
         key: 'announcement',
         name: 'General announcement',
         description: 'Company or service news.',
+        group: 'Lifecycle',
+        audience: 'passenger',
+        whenToUse: 'The fallback. If a more specific template fits, use that instead.',
         category: 'productUpdates',
         defaults: {
             headline: 'An update from KekeRide',
@@ -325,6 +346,9 @@ export const TEMPLATES: EmailTemplate[] = [
         key: 'safety_notice',
         name: 'Safety or service notice',
         description: 'Something a passenger needs to know. Not marketing.',
+        group: 'Service',
+        audience: 'passenger',
+        whenToUse: 'Safety consent cannot be withdrawn. Never carry an offer on it.',
         category: 'safetyAnnouncements',
         defaults: {
             headline: 'An important service notice',

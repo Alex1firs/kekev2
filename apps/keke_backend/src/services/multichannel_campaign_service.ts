@@ -442,6 +442,13 @@ export class MultiChannelCampaignService {
         };
     }
 
+    /** Record that a test was sent. Approval requires one. */
+    static async markTested(campaignId: string): Promise<void> {
+        const campaign = await this.get(campaignId);
+        campaign.lastTestSentAt = new Date();
+        await this.repo.save(campaign);
+    }
+
     static async requestApproval(actor: AuditActor, id: string, ctx: Record<string, unknown> = {}) {
         const campaign = await this.get(id);
         if (campaign.status !== CampaignStatus.DRAFT) {
@@ -476,6 +483,15 @@ export class MultiChannelCampaignService {
         if (campaign.createdByStaffId === actor.staffUserId) {
             throw new AppError(403, ErrorCode.FORBIDDEN,
                 'A campaign must be approved by somebody other than its author.');
+        }
+        /*
+         * Somebody has to have read the real thing in a real inbox. A preview
+         * in the admin screen is rendered by our own code; a test send is the
+         * only way to see what a mail client actually does with it.
+         */
+        if (!campaign.lastTestSentAt) {
+            throw new AppError(400, ErrorCode.VALIDATION_ERROR,
+                'Send a test and read it before approving this campaign.');
         }
 
         campaign.status = CampaignStatus.APPROVED;

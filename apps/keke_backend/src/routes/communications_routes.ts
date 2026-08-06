@@ -13,6 +13,8 @@
 import { Router, Response } from 'express';
 import { CampaignService } from '../services/campaign_service';
 import { MultiChannelCampaignService } from '../services/multichannel_campaign_service';
+import { CampaignSimulator } from '../services/campaign_simulator';
+import { CampaignTestSend } from '../services/campaign_test_send';
 import { channelBlockers, loadCommunicationsConfig } from '../config/communications_config';
 import { AudienceService, AudienceDefinition } from '../services/audience_service';
 import { MarketingConsentService, SuppressionService } from '../services/marketing_consent_service';
@@ -531,6 +533,37 @@ router.get('/communications/audience-presets',
                 highValueSpendThreshold: cfg.highValueSpendThreshold,
             },
         });
+    });
+
+/** The simulator: what a release would actually do, before anybody approves it. */
+router.get('/communications/mc/campaigns/:id/simulate',
+    requireStaffPermission(StaffPermission.COMMUNICATIONS_VIEW),
+    async (req: StaffRequest, res: Response) => {
+        try {
+            return res.json(await CampaignSimulator.run(String(req.params.id)));
+        } catch (err: any) {
+            return fail(res, err, "We couldn't simulate this campaign.");
+        }
+    });
+
+/**
+ * Test send — staff addresses only.
+ *
+ * Refuses any address belonging to a passenger, whoever asked for it, and has
+ * no access to the audience at all.
+ */
+router.post('/communications/mc/campaigns/:id/test',
+    requireRealStaff, requireStaffPermission(StaffPermission.COMMUNICATIONS_CREATE),
+    async (req: StaffRequest, res: Response) => {
+        try {
+            const addresses = Array.isArray(req.body?.addresses)
+                ? req.body.addresses
+                : [req.body?.to].filter(Boolean);
+            return res.json(await CampaignTestSend.send(
+                auditActorOf(req.actor), String(req.params.id), addresses, ctxOf(req)));
+        } catch (err: any) {
+            return fail(res, err, "We couldn't send the test.");
+        }
     });
 
 export default router;

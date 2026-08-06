@@ -42,6 +42,12 @@ services:
       ADMIN_RATE_LIMIT_MAX: 100
       ONBOARDING_RATE_LIMIT_MAX: 5
       RESEND_API_KEY: ${RESEND_API_KEY}
+      # Svix signing secret for Resend delivery events. Without it the webhook
+      # endpoint returns 503 and refuses every event — deliberately, because
+      # verification must never fall through to "accept". `environment:` is an
+      # explicit allow-list here, so adding a variable to .env alone does NOT
+      # reach the container.
+      RESEND_WEBHOOK_SECRET: ${RESEND_WEBHOOK_SECRET}
       SMTP_FROM: ${SMTP_FROM}
       SMILE_ID_PARTNER_ID: ${SMILE_ID_PARTNER_ID}
       SMILE_ID_API_KEY: ${SMILE_ID_API_KEY}

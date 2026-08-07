@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import '../domain/booking_notice.dart';
 import '../domain/booking_state.dart';
+import '../domain/live_trip_diagnostics.dart';
 import 'active_ride_recovery.dart';
 import '../../../core/services/ride_status_notification.dart';
 import '../domain/nearby_keke.dart';
@@ -80,7 +81,15 @@ class BookingController extends StateNotifier<BookingState> {
      * forgotten. show() is idempotent on unchanged copy, so the frequent writes
      * (driver location, ETA) cost a string comparison.
      */
-    addListener((_) => _syncRideNotification(), fireImmediately: false);
+    addListener((_) {
+      _syncRideNotification();
+      // The live-trip monitor's lifetime follows the ride, not any one event.
+      if (_isTrackingRide) {
+        _startLiveTripMonitor();
+      } else {
+        _stopLiveTripMonitor();
+      }
+    }, fireImmediately: false);
   }
 
   /// Cold start: settle the ride question before anything else is drawn.
@@ -273,6 +282,11 @@ class BookingController extends StateNotifier<BookingState> {
           _handleRideCancelled(data);
           break;
         case 'ride:finished':
+          _analytics.log('passenger_trip_completion_received', {
+            'rideId': state.rideId,
+            'via': 'socket',
+          });
+          _stopLiveTripMonitor();
           print('[PASSENGER_SYNC] Ride finished. Showing receipt.');
           _searchTimeoutTimer?.cancel();
           _stopWatchdog();
@@ -343,6 +357,11 @@ class BookingController extends StateNotifier<BookingState> {
           );
           break;
         case 'driver:location_update':
+          _markLiveEvent(location: true);
+          _analytics.log('passenger_live_location_received', {
+            'rideId': state.rideId,
+            'step': state.step.name,
+          });
           try {
             final driverLoc = LatLng(
               (data['lat'] as num?)?.toDouble() ?? 0.0,
@@ -908,7 +927,18 @@ class BookingController extends StateNotifier<BookingState> {
      * discard the server's authoritative fare and put a red error banner over a
      * trip that is proceeding perfectly well.
      */
-    _restoreRoutePolyline();
+    /*
+     * Redraw the route only when it is actually missing or the ride has moved
+     * to a new stage.
+     *
+     * The live-trip monitor reconciles every 20 seconds while a ride is
+     * running, and this method runs on every one of those. Refetching
+     * directions each time would mean three paid Directions calls a minute,
+     * per passenger, for a line that has not changed.
+     */
+    if (state.activeRoutePolyline.isEmpty || previousStep != snap.step) {
+      _restoreRoutePolyline();
+    }
 
     // Reconciliation is worth its own event: it is the proof that the app
     // caught up with something that happened while it was dead.
@@ -994,6 +1024,165 @@ class BookingController extends StateNotifier<BookingState> {
       if (!_activeRideUnresolved && !state.rideRestoreFailed) return;
       recoverActiveRide(RecoverySource.manualRetry);
     });
+  }
+
+
+  // ═══════════════════════════════════════════════════════════════════
+  //  Live-trip monitor
+  // ═══════════════════════════════════════════════════════════════════
+  //
+  //  ── The failure this exists for ──────────────────────────────────
+  //  Socket.IO rooms are per-CONNECTION. Every reconnect drops them. The
+  //  passenger joins `ride:<id>` once, when the ride is requested; a single
+  //  network blip — a cell handover on a moving Keke, a screen lock, a WiFi
+  //  switch — silently removes them from that room for the rest of the trip.
+  //
+  //  `driver:location_update` and `ride:finished` are both broadcast to that
+  //  room. So the marker freezes, the ETA stops falling, and the completion
+  //  event never lands: the passenger sits on an in-progress screen for a trip
+  //  that ended. Restarting the app fixes it, because a fresh socket rejoins.
+  //
+  //  Room membership is now re-asserted, but "the rejoin worked" is not
+  //  something a client can assume. This watches the stream and repairs it.
+  //
+  //  ── Why the old watchdog did not catch it ────────────────────────
+  //  It ran only while `searching`, and `_stopWatchdog()` fires on
+  //  `ride:assigned`. From assignment to completion there was no
+  //  reconciliation of any kind.
+
+  Timer? _liveTripTimer;
+  DateTime? _lastDriverLocationAt;
+  DateTime? _lastRideEventAt;
+
+  /// How often the authoritative state is re-read during a live ride.
+  ///
+  /// 20s: frequent enough that a missed completion is corrected before a
+  /// passenger notices, infrequent enough to be three requests a minute for a
+  /// passenger who is, by definition, in a Keke. The socket remains primary;
+  /// this is the safety net.
+  static const Duration liveReconcileInterval = Duration(seconds: 20);
+
+  /// No driver location for this long during a moving trip means the stream is
+  /// broken, not quiet. Drivers publish on every heartbeat.
+  static const Duration liveLocationStaleAfter = Duration(seconds: 30);
+
+  /// Steps during which the live stream must be flowing.
+  static const _trackingSteps = {
+    BookingStep.confirmed, BookingStep.arrived, BookingStep.started,
+  };
+
+  bool get _isTrackingRide => _trackingSteps.contains(state.step);
+
+  void _startLiveTripMonitor() {
+    if (_liveTripTimer != null) return;
+    _lastRideEventAt = DateTime.now();
+    _analytics.log('passenger_ride_room_joined', {
+      'rideId': state.rideId,
+      'step': state.step.name,
+    });
+    _liveTripTimer = Timer.periodic(liveReconcileInterval, (_) => _liveTripTick());
+  }
+
+  void _stopLiveTripMonitor() {
+    _liveTripTimer?.cancel();
+    _liveTripTimer = null;
+    _lastDriverLocationAt = null;
+    _lastRideEventAt = null;
+  }
+
+  /// Age of the live stream, or null if nothing has arrived yet.
+  Duration? get _sinceLastLocation => _lastDriverLocationAt == null
+      ? null
+      : DateTime.now().difference(_lastDriverLocationAt!);
+
+  Future<void> _liveTripTick() async {
+    if (!mounted || !_isTrackingRide) {
+      _stopLiveTripMonitor();
+      return;
+    }
+
+    final socketDown = !(_socketService?.isConnected ?? false);
+    final since = _sinceLastLocation;
+    // Only the moving stages expect a location stream. A driver waiting at the
+    // pickup point may legitimately not move, but their heartbeat still runs,
+    // so the check holds for `arrived` too.
+    final locationStale = since != null && since > liveLocationStaleAfter;
+
+    if (socketDown || locationStale) {
+      _analytics.log('passenger_live_location_stale', {
+        'rideId': state.rideId,
+        'step': state.step.name,
+        'socketConnected': !socketDown,
+        'secondsSinceLocation': since?.inSeconds,
+      });
+
+      // 1. Get the link back. 2. Re-assert the rooms on it — a reconnect the
+      // client never noticed leaves it in no room at all.
+      _socketService?.reconnect();
+      _socketService?.rejoinRooms();
+      _analytics.log('passenger_ride_room_rejoined', {'rideId': state.rideId});
+
+      if (!state.liveStreamStale) {
+        state = state.copyWith(liveStreamStale: true);
+      }
+    }
+
+    // The reconciliation heartbeat. Runs every tick, stale or not: this is what
+    // catches a completion event that was broadcast to a room we had silently
+    // left, which is the symptom that left passengers on a finished trip.
+    final result = await recoverActiveRide(RecoverySource.liveTripReconcile);
+    if (!mounted) return;
+
+    if (result.resolved) {
+      state = state.copyWith(
+        liveStreamStale: false,
+        lastReconciledAt: DateTime.now(),
+      );
+      _analytics.log('passenger_trip_reconciled', {
+        'rideId': state.rideId,
+        'step': state.step.name,
+        'outcome': result.outcome.name,
+        // Lets operations separate a stale passenger socket from a driver
+        // whose phone stopped publishing. Both freeze the same map.
+        'driverGpsAgeSeconds': result.snapshot?.driverGpsAgeSeconds,
+      });
+    }
+  }
+
+  /// Everything a field tester needs to explain a stuck screen, in one object.
+  ///
+  /// Read by the diagnostics overlay, which is compiled in only when
+  /// `--dart-define=FIELD_TEST=true`. Contains no passenger identity: a rideId,
+  /// coordinates and timings, nothing that names a person.
+  LiveTripDiagnostics get liveDiagnostics => LiveTripDiagnostics(
+        rideId: state.rideId,
+        step: state.step.name,
+        socketConnected: _socketService?.isConnected ?? false,
+        joinedRideRoom: _socketService?.activeRideRoom,
+        driverLocation: state.assignedDriverLocation,
+        lastLocationAt: _lastDriverLocationAt,
+        lastRideEventAt: _lastRideEventAt,
+        lastReconciledAt: state.lastReconciledAt,
+        remainingMeters: state.step == BookingStep.started
+            ? state.distanceToDestinationMeters
+            : state.distanceToPickupMeters,
+        etaMinutes: state.step == BookingStep.started
+            ? state.etaToDestinationMinutes
+            : state.etaMinutes,
+        streamStale: state.liveStreamStale,
+        monitorRunning: _liveTripTimer != null,
+      );
+
+  /// Record that something arrived on the live stream.
+  void _markLiveEvent({bool location = false}) {
+    final now = DateTime.now();
+    _lastRideEventAt = now;
+    if (location) {
+      _lastDriverLocationAt = now;
+      if (state.liveStreamStale) {
+        state = state.copyWith(liveStreamStale: false);
+      }
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════════

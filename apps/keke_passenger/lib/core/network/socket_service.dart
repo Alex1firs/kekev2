@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:socket_io_client/socket_io_client.dart' as IO;
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../config/env_config.dart';
 
 class SocketService {
@@ -106,6 +105,41 @@ class SocketService {
       }
     });
   }
+
+  /// Force a reconnect when the link looks dead.
+  ///
+  /// Socket.IO reconnects on its own, but a socket that has been suspended by
+  /// the OS can sit in a stuck "connecting" state indefinitely. Disconnecting
+  /// first clears that. Mirrors the driver app, which has had this since the
+  /// resume-handling work.
+  void reconnect() {
+    final s = _socket;
+    if (s == null) return;
+    if (s.connected) return;
+    print('[SOCKET] Forcing reconnect.');
+    s.disconnect();
+    s.connect();
+  }
+
+  /// Re-assert room membership on the CURRENT connection.
+  ///
+  /// Rooms are per-connection: a reconnect drops every one of them. The
+  /// onConnect handler re-joins automatically, but an explicit call is needed
+  /// when the client discovers it has gone stale without the socket ever having
+  /// reported a disconnect — which is exactly what a suspended phone produces.
+  void rejoinRooms() {
+    if (!isConnected) return;
+    emit('join', {'userId': _userId, 'role': _role});
+    final rideId = _activeRideId;
+    if (rideId != null) emit('join', {'userId': rideId, 'role': 'ride'});
+  }
+
+  /// The ride room this client believes it is in.
+  ///
+  /// Read by the field-test diagnostics overlay. Null while a ride is live is
+  /// the single most diagnostic value available — it is exactly the state that
+  /// produced the frozen-marker reports.
+  String? get activeRideRoom => _activeRideId;
 
   void emit(String event, dynamic data) {
     if (_forcedConnected != null) {

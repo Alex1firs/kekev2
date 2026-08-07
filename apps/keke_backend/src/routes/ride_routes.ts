@@ -14,6 +14,8 @@ import { coordinationSnapshot, coordinationCopy, CoordinationStage } from "../se
 import { loadStaleRideConfig } from "../config/stale_ride_config";
 import { ContactAccessService } from "../services/contact_access_service";
 import { AppError } from "../utils/errors";
+import { redis } from '../config/redis';
+import { DispatchService } from '../services/dispatch_service';
 
 
 const router = Router();
@@ -45,6 +47,30 @@ function driverAverage(driver: { ratingSum?: number; ratingCount?: number }): nu
     const count = driver.ratingCount ?? 0;
     if (count <= 0) return 0;
     return Number(((driver.ratingSum ?? 0) / count).toFixed(2));
+}
+
+
+/**
+ * How long ago this driver's GPS last reached us, in seconds.
+ *
+ * Lets a passenger app tell two very different failures apart: "my socket is
+ * stale" and "the driver's phone stopped publishing". They look identical on a
+ * frozen map, and the remedies are opposite — one is a reconnect, the other is
+ * a call to the driver.
+ *
+ * Null when unknown. Never throws: a diagnostics field must not be able to
+ * break active-ride recovery.
+ */
+async function driverGpsAgeSeconds(driverId: string | null | undefined): Promise<number | null> {
+    if (!driverId) return null;
+    try {
+        const raw = await redis.get(`${DispatchService.DRIVER_LASTSEEN_PREFIX}${driverId}`);
+        if (!raw) return null;
+        const age = Math.round((Date.now() - Number(raw)) / 1000);
+        return Number.isFinite(age) && age >= 0 ? age : null;
+    } catch {
+        return null;
+    }
 }
 
 router.get("/active/passenger", authMiddleware, async (req: AuthRequest, res: Response) => {
@@ -120,7 +146,13 @@ router.get("/active/passenger", authMiddleware, async (req: AuthRequest, res: Re
             passengerId: req.user!.userId,
         }));
 
-        return res.status(200).json({ ...ride, driverDetails, coordination });
+        return res.status(200).json({
+            ...ride,
+            driverDetails,
+            coordination,
+            // Diagnostics, not ride state. See driverGpsAgeSeconds.
+            driverGpsAgeSeconds: await driverGpsAgeSeconds(ride.driverId),
+        });
     } catch (err: any) {
         console.error(JSON.stringify({
             level: 'error', scope: 'active_ride_recovery',

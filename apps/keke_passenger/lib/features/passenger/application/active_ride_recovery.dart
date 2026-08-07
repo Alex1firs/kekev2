@@ -35,6 +35,8 @@ enum RecoverySource {
   loginSuccess,
   notificationTap,
   activeRideExistsFallback,
+  /// The 20-second heartbeat that runs for the whole of a live trip.
+  liveTripReconcile,
   manualRetry,
 }
 
@@ -48,6 +50,7 @@ extension RecoverySourceWire on RecoverySource {
       case RecoverySource.loginSuccess: return 'login_success';
       case RecoverySource.notificationTap: return 'notification_tap';
       case RecoverySource.activeRideExistsFallback: return 'active_ride_exists_fallback';
+      case RecoverySource.liveTripReconcile: return 'live_trip_reconcile';
       case RecoverySource.manualRetry: return 'manual_retry';
     }
   }
@@ -86,6 +89,7 @@ class ActiveRideSnapshot {
     this.coordination,
     this.pickupCode,
     this.paymentMode,
+    this.driverGpsAgeSeconds,
   });
 
   final String rideId;
@@ -106,6 +110,12 @@ class ActiveRideSnapshot {
   final Map<String, dynamic>? coordination;
   final String? pickupCode;
   final String? paymentMode;
+
+  /// How long ago the driver's GPS last reached the server.
+  ///
+  /// Distinguishes "our socket is stale" from "the driver's phone stopped
+  /// publishing" — identical on a frozen map, opposite remedies.
+  final int? driverGpsAgeSeconds;
 
   /// Ride states the server treats as live. Mirrors the `In([...])` in
   /// `ride_routes.ts` — if one side gains a state the other must too, so the
@@ -165,6 +175,7 @@ class ActiveRideSnapshot {
       coordination: m('coordination'),
       pickupCode: data['pickupCode']?.toString(),
       paymentMode: data['paymentMode']?.toString(),
+      driverGpsAgeSeconds: (data['driverGpsAgeSeconds'] as num?)?.round(),
     );
   }
 

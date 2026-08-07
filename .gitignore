@@ -33,3 +33,6 @@ GoogleService-Info.plist
 # Deployed artifact — the source of truth is infra/nginx/nginx.conf.
 # Present only on the droplet, where the gateway bind-mounts it.
 /nginx.conf
+
+# Field-test APKs. Built artifacts, not source.
+/build_output/

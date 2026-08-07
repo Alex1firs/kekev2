@@ -33,6 +33,15 @@ class BookingState {
   /// Distinct from "no ride": we do not know. The UI says so plainly and
   /// booking stays blocked until we do.
   final bool rideRestoreFailed;
+
+  /// The live stream has gone quiet during a moving ride.
+  ///
+  /// Drives a subtle "Updating your trip…" line — never an error. The ride is
+  /// fine; our link to it is not, and the monitor is already repairing it.
+  final bool liveStreamStale;
+
+  /// When the authoritative state was last confirmed with the server.
+  final DateTime? lastReconciledAt;
   
   final LatLng? mapCenter; 
   final bool isCameraMoving;
@@ -123,6 +132,8 @@ class BookingState {
     this.step = BookingStep.loading,
     this.isRestoringRide = false,
     this.rideRestoreFailed = false,
+    this.liveStreamStale = false,
+    this.lastReconciledAt,
     this.mapCenter,
     this.isCameraMoving = false,
     this.pickupLocation,
@@ -172,6 +183,8 @@ class BookingState {
     BookingStep? step,
     bool? isRestoringRide,
     bool? rideRestoreFailed,
+    bool? liveStreamStale,
+    DateTime? lastReconciledAt,
     LatLng? mapCenter,
     bool? isCameraMoving,
     LatLng? pickupLocation,
@@ -233,6 +246,8 @@ class BookingState {
       step: step ?? this.step,
       isRestoringRide: isRestoringRide ?? this.isRestoringRide,
       rideRestoreFailed: rideRestoreFailed ?? this.rideRestoreFailed,
+      liveStreamStale: liveStreamStale ?? this.liveStreamStale,
+      lastReconciledAt: lastReconciledAt ?? this.lastReconciledAt,
       mapCenter: mapCenter ?? this.mapCenter,
       isCameraMoving: isCameraMoving ?? this.isCameraMoving,
       pickupLocation: pickupLocation ?? this.pickupLocation,

@@ -3,7 +3,13 @@ import { redis } from '../config/redis';
 export class DispatchService {
   private static readonly DRIVER_GEO_KEY = 'drivers:locations';
   private static readonly DRIVER_AVAILABILITY_PREFIX = 'driver:available:';
-  private static readonly DRIVER_LASTSEEN_PREFIX = 'driver:lastseen:';
+  /*
+   * Public so the active-ride endpoints can report GPS freshness. Exposing the
+   * key rather than duplicating the string keeps one definition — a second copy
+   * would drift the first time the prefix changed and would fail silently, as a
+   * lookup that always returns null.
+   */
+  static readonly DRIVER_LASTSEEN_PREFIX = 'driver:lastseen:';
   // Tombstone written when a driver DELIBERATELY goes offline (or is ejected),
   // so admin tooling can show them as Offline immediately instead of lingering
   // as "recently seen". Cleared on the next heartbeat.

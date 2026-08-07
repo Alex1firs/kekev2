@@ -16,6 +16,7 @@ import 'trip_history_screen.dart';
 import 'profile_screen.dart';
 import 'saved_locations_manager_screen.dart';
 import 'widgets/communication_opt_in_prompt.dart';
+import 'widgets/field_test_overlay.dart';
 
 class HomeMapScreen extends ConsumerStatefulWidget {
   const HomeMapScreen({super.key});
@@ -369,6 +370,14 @@ class _HomeMapScreenState extends ConsumerState<HomeMapScreen> {
 
           // ── Booking sheet
           const BookingSheet(),
+
+          // ── Field-test diagnostics
+          //
+          // Last in the stack so it sits above the sheet. Compiled out of
+          // ordinary builds: FieldTestOverlay.enabled is a const
+          // bool.fromEnvironment, so the tree-shaker removes this entirely
+          // unless the APK was built with --dart-define=FIELD_TEST=true.
+          if (FieldTestOverlay.enabled) const FieldTestOverlay(),
         ],
       ),
     );

@@ -9,6 +9,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:keke_driver/features/driver/application/active_ride_recovery.dart';
+import 'package:keke_driver/features/driver/application/driver_controller.dart';
 import 'package:keke_driver/features/driver/domain/driver_profile.dart';
 
 class _StubAdapter implements HttpClientAdapter {
@@ -286,6 +287,71 @@ void main() {
       final all = params.expand((m) => m.values).map((v) => '$v').join(' ');
       expect(all.contains('08031234567'), isFalse);
       expect(all.contains('Ada Obi'), isFalse);
+    });
+  });
+  _foregroundCopyTests();
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  The persistent foreground notification
+// ══════════════════════════════════════════════════════════════════
+
+void _foregroundCopyTests() {
+  group('the notification a driver reads while carrying a passenger', () {
+    test('en route to pickup names the pickup', () {
+      final c = DriverController.foregroundCopy(
+        OperationStatus.busy, TripStep.accepted,
+        pickupAddress: 'Main Market, Onitsha',
+      );
+      expect(c.title, 'On the way to pick up');
+      expect(c.text, contains('Main Market'));
+    });
+
+    test('arrived tells the driver the passenger knows', () {
+      final c = DriverController.foregroundCopy(
+          OperationStatus.busy, TripStep.arrived);
+      expect(c.title, 'Waiting at pickup');
+    });
+
+    test('in progress names the destination', () {
+      final c = DriverController.foregroundCopy(
+        OperationStatus.busy, TripStep.started,
+        destinationAddress: 'UNIZIK Gate',
+      );
+      expect(c.title, 'Trip in progress');
+      expect(c.text, contains('UNIZIK Gate'));
+    });
+
+    /*
+     * The original text. Accurate when the driver is online and free, and it
+     * must come back when a trip ends — a notification still claiming "trip in
+     * progress" after drop-off is worse than the generic line.
+     */
+    test('online but free returns to the generic line', () {
+      for (final step in [TripStep.none, TripStep.completed]) {
+        final c = DriverController.foregroundCopy(
+            OperationStatus.available, step);
+        expect(c.title, 'KekeRide is online');
+      }
+    });
+
+    test('a missing address never renders as null or an empty phrase', () {
+      for (final step in [TripStep.accepted, TripStep.started]) {
+        final c = DriverController.foregroundCopy(OperationStatus.busy, step);
+        expect(c.text, isNot(contains('null')));
+        expect(c.text.trim(), isNotEmpty);
+        expect(c.text, matches(RegExp(r'[a-z]')));
+      }
+    });
+
+    test('every status/step pair produces usable copy', () {
+      for (final status in OperationStatus.values) {
+        for (final step in TripStep.values) {
+          final c = DriverController.foregroundCopy(status, step);
+          expect(c.title.trim(), isNotEmpty);
+          expect(c.text.trim(), isNotEmpty);
+        }
+      }
     });
   });
 }

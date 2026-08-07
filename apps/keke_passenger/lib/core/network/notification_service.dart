@@ -5,6 +5,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'api_client.dart';
+import '../services/ride_status_notification.dart';
 
 /// Background message handler.
 ///
@@ -37,6 +38,21 @@ class NotificationService {
   Future<void> initialize() async {
     try {
       await Firebase.initializeApp();
+
+      /*
+       * The persistent active-ride notification.
+       *
+       * Its tap handler pushes into the SAME intentStream that FCM taps use, so
+       * the BookingController treats it identically: re-read the server, then
+       * render. The notification payload carries no ride state on purpose —
+       * it cannot be stale if it never claims anything.
+       */
+      await RideStatusNotification.instance.initialize(
+        onTap: (_) => injectIntent({
+          'type': 'ACTIVE_RIDE_NOTIFICATION',
+          'source': 'ride_status_notification',
+        }),
+      );
 
       final messaging = FirebaseMessaging.instance;
 

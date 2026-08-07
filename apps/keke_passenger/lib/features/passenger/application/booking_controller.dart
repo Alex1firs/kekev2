@@ -5,6 +5,7 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import '../domain/booking_notice.dart';
 import '../domain/booking_state.dart';
 import 'active_ride_recovery.dart';
+import '../../../core/services/ride_status_notification.dart';
 import '../domain/nearby_keke.dart';
 import '../domain/ride_coordination.dart';
 import '../data/map_repository.dart';
@@ -69,6 +70,17 @@ class BookingController extends StateNotifier<BookingState> {
      * and kept seeing it if the recovery call happened to fail.
      */
     _bootstrap();
+
+    /*
+     * Keep the status-bar entry in step with the ride, from one place.
+     *
+     * A listener rather than calls scattered through the twenty-odd sites that
+     * change the ride: recovery, every socket event, cancellation, completion
+     * and terminal cleanup all write `state`, and any of them could have been
+     * forgotten. show() is idempotent on unchanged copy, so the frequent writes
+     * (driver location, ETA) cost a string comparison.
+     */
+    addListener((_) => _syncRideNotification(), fireImmediately: false);
   }
 
   /// Cold start: settle the ride question before anything else is drawn.
@@ -982,6 +994,27 @@ class BookingController extends StateNotifier<BookingState> {
       if (!_activeRideUnresolved && !state.rideRestoreFailed) return;
       recoverActiveRide(RecoverySource.manualRetry);
     });
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  //  Persistent ride notification
+  // ═══════════════════════════════════════════════════════════════════
+
+  /// Keep the Android status-bar entry in step with the ride.
+  ///
+  /// Called from exactly one place — [_afterStateChanged] — so the notification
+  /// cannot drift from the state. Every path that changes the ride goes through
+  /// the same funnel, including recovery, socket events and terminal cleanup.
+  ///
+  /// Fire-and-forget: a notification that fails to post must never interrupt a
+  /// ride.
+  void _syncRideNotification() {
+    final driver = state.assignedDriver;
+    unawaited(RideStatusNotification.instance.show(
+      state.step,
+      driverName: driver?['name']?.toString(),
+      destination: state.destinationAddress,
+    ));
   }
 
   /// The app came back to the foreground. Called by the lifecycle observer.

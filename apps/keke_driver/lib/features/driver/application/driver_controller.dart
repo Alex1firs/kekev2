@@ -89,6 +89,14 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
     }
     if (_socketService != null) _listenToSocket();
     _startHeartbeat();
+
+    /*
+     * Keep the persistent notification in step with the trip, from one place.
+     * It previously said "KekeRide is online / Sharing location for ride
+     * requests" for the entire journey, which tells a driver nothing about the
+     * ride they are on and nothing a passenger-facing screenshot could confirm.
+     */
+    addListener((_) => _syncForegroundNotification(), fireImmediately: false);
     _listenToNotifications();
     WidgetsBinding.instance.addObserver(this);
   }
@@ -1135,6 +1143,79 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
 
   Future<void> onNetworkRestored() =>
       recoverActiveRide(DriverRecoverySource.networkReconnect);
+
+
+  // ═══════════════════════════════════════════════════════════════════
+  //  Foreground-service notification text
+  // ═══════════════════════════════════════════════════════════════════
+
+  /// What the persistent notification should say for a driver state.
+  ///
+  /// Pure and public so the wording — the part a driver reads on a lock screen
+  /// while carrying a passenger — is testable without a platform channel.
+  ///
+  /// Reuses the EXISTING foreground service rather than posting a second
+  /// notification. The service is already required and already justified: the
+  /// driver app shares location for dispatch, which is genuine background work.
+  /// A second entry for the same ride would be noise.
+  @visibleForTesting
+  static ({String title, String text}) foregroundCopy(
+    OperationStatus status,
+    TripStep step, {
+    String? pickupAddress,
+    String? destinationAddress,
+  }) {
+    String to(String? v) => (v != null && v.trim().isNotEmpty) ? v.trim() : 'your destination';
+    String at(String? v) => (v != null && v.trim().isNotEmpty) ? v.trim() : 'the pickup point';
+
+    if (status == OperationStatus.busy) {
+      switch (step) {
+        case TripStep.accepted:
+          return (title: 'On the way to pick up', text: 'Heading to ${at(pickupAddress)}.');
+        case TripStep.arrived:
+          return (title: 'Waiting at pickup', text: 'Your passenger has been told you are here.');
+        case TripStep.started:
+          return (title: 'Trip in progress', text: 'Driving to ${to(destinationAddress)}.');
+        case TripStep.none:
+        case TripStep.completed:
+          break;
+      }
+    }
+    // Online but not on a trip — the original text, which is accurate then.
+    return (
+      title: 'KekeRide is online',
+      text: 'Sharing location for ride requests.',
+    );
+  }
+
+  /// Keep the foreground notification in step with the trip.
+  ///
+  /// Called from one listener so no state path can forget it. Failures are
+  /// swallowed: the service may not be running (driver offline), and a
+  /// notification update must never disturb a ride.
+  Future<void> _syncForegroundNotification() async {
+    final copy = foregroundCopy(
+      state.operationStatus,
+      state.tripStep,
+      pickupAddress: state.activeRequest?.pickupAddress,
+      destinationAddress: state.activeRequest?.destinationAddress,
+    );
+    final key = '${copy.title}|${copy.text}';
+    if (key == _foregroundCopyKey) return;
+    _foregroundCopyKey = key;
+
+    try {
+      if (!await FlutterForegroundTask.isRunningService) return;
+      await FlutterForegroundTask.updateService(
+        notificationTitle: copy.title,
+        notificationText: copy.text,
+      );
+    } catch (_) {
+      // Offline, or the platform refused. The ride is unaffected.
+    }
+  }
+
+  String? _foregroundCopyKey;
 
   Future<void> _maybeAutoResumeOnline() async {
     if (_autoResumeAttempted) return;

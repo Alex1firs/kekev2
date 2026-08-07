@@ -16,6 +16,10 @@ dependencies:
   flutter_secure_storage: ^9.2.2
   firebase_core: ^3.0.0
   firebase_messaging: ^15.0.0
+  # Persistent active-ride notification. Same major version as the driver app,
+  # which has shipped with it — this is a known-good pairing with the desugaring
+  # runtime pinned in android/app/build.gradle.kts.
+  flutter_local_notifications: ^17.2.2
   audioplayers: ^6.1.0
   google_maps_flutter: ^2.5.3
   geolocator: ^11.1.0

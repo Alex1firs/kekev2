@@ -121,15 +121,31 @@ class BookingSheet extends ConsumerWidget {
               const SizedBox(height: 6),
               Text(
                 state.rideRestoreFailed
-                    // Said plainly. The passenger may be standing at a kerb with
-                    // a driver approaching; "something went wrong" would be both
-                    // wrong and frightening.
-                    ? 'We can\'t reach KekeRide right now. Your ride is safe — '
-                      'this screen will update as soon as you are back online.'
+                    // Said plainly, and WITHOUT claiming to know why. The old
+                    // copy asserted the passenger was offline; it was shown for
+                    // an expired session on a phone with full signal, which sent
+                    // a field test looking at the network for an hour.
+                    ? 'Still checking. Your ride is safe — this screen will '
+                      'update as soon as we reach KekeRide.'
                     : 'One moment while we check whether you already have a ride.',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 12.5, color: Colors.grey.shade600, height: 1.4),
               ),
+
+              /*
+               * A way out. Automatic retry continues regardless, but a
+               * passenger watching a spinner needs something to press — and a
+               * manual attempt also clears a stuck in-flight lock.
+               */
+              if (state.rideRestoreFailed) ...[
+                const SizedBox(height: 14),
+                TextButton(
+                  onPressed: () => ref
+                      .read(bookingControllerProvider.notifier)
+                      .retryActiveRideRecovery(),
+                  child: const Text('Try again'),
+                ),
+              ],
             ],
           ),
         );

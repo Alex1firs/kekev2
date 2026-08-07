@@ -5,6 +5,7 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import '../domain/booking_notice.dart';
 import '../domain/booking_state.dart';
 import '../domain/live_trip_diagnostics.dart';
+import '../../../core/diagnostics/boot_trace.dart';
 import 'active_ride_recovery.dart';
 import '../../../core/services/ride_status_notification.dart';
 import '../domain/nearby_keke.dart';
@@ -806,29 +807,59 @@ class BookingController extends StateNotifier<BookingState> {
     }
 
     if (_recoveryInFlight) {
-      return const ActiveRideRecoveryResult(RecoveryOutcome.failed, error: 'in_flight');
-    }
-    _recoveryInFlight = true;
-
-    // A cold start shows a restoring state rather than the booking screen. Any
-    // later trigger leaves the current screen alone — the passenger is already
-    // looking at something real.
-    if (source == RecoverySource.coldStart && state.step == BookingStep.loading) {
-      state = state.copyWith(isRestoringRide: true);
+      /*
+       * A concurrent attempt holds the lock. This used to return immediately
+       * WITHOUT scheduling anything — so if the winning attempt had already
+       * finished scheduling, this call silently dropped out of the retry chain
+       * and nothing ever asked again. Guarantee a follow-up instead.
+       */
+      _ensureRetryScheduled();
+      return const ActiveRideRecoveryResult(
+        RecoveryOutcome.failed,
+        failure: RecoveryFailure.inFlight,
+        error: 'in_flight',
+      );
     }
 
     try {
+      /*
+       * The flag is set INSIDE the try.
+       *
+       * It used to be set before it, with a `state = ...` write in between. A
+       * StateNotifier write after disposal throws — and the throw skipped the
+       * finally, leaving _recoveryInFlight latched true for the life of the
+       * controller. Every later attempt then returned `in_flight` immediately
+       * and the passenger sat on "Reconnecting to your ride…" for ever.
+       */
+      _recoveryInFlight = true;
+      _recoveryAttempts += 1;
+      BootTrace.instance.start(BootStage.activeRideCheck,
+          detail: '${source.wire} #$_recoveryAttempts');
+      _startRecoveryWatchdog();
+
+      // A cold start shows a restoring state rather than the booking screen.
+      // Later triggers leave the current screen alone.
+      if (source == RecoverySource.coldStart && state.step == BookingStep.loading) {
+        state = state.copyWith(isRestoringRide: true);
+      }
+
       final result = await service.fetch(source: source);
       if (!mounted) return result;
 
       switch (result.outcome) {
         case RecoveryOutcome.found:
+          _lastRecoveryFailure = null;
+          _lastRecoveryStatus = result.statusCode;
+          BootTrace.instance.success(BootStage.activeRideCheck,
+              detail: 'found ${result.snapshot!.status}');
+          BootTrace.instance.start(BootStage.hydration);
           _applyRecoveredRide(result.snapshot!, source);
           _activeRideUnresolved = false;
           _recoveryRetryTimer?.cancel();
           break;
 
         case RecoveryOutcome.none:
+          BootTrace.instance.success(BootStage.activeRideCheck, detail: 'none');
           _activeRideUnresolved = false;
           /*
            * A ride we were TRACKING has ended while we were away — clear it.
@@ -851,6 +882,11 @@ class BookingController extends StateNotifier<BookingState> {
           break;
 
         case RecoveryOutcome.failed:
+          _lastRecoveryFailure = result.failure;
+          _lastRecoveryStatus = result.statusCode;
+          BootTrace.instance.failure(BootStage.activeRideCheck,
+              detail: '${result.failure?.wire ?? 'unknown'}'
+                  '${result.statusCode == null ? '' : ' http ${result.statusCode}'}');
           /*
            * We could not ask. Deliberately NOT treated as "no ride": the old
            * code wrote a generic failure notice here and dropped the passenger
@@ -870,6 +906,8 @@ class BookingController extends StateNotifier<BookingState> {
       return result;
     } finally {
       _recoveryInFlight = false;
+      _recoveryWatchdog?.cancel();
+      _recoveryWatchdog = null;
     }
   }
 
@@ -882,6 +920,15 @@ class BookingController extends StateNotifier<BookingState> {
       step: snap.step,
       rideId: snap.rideId,
       isRestoringRide: false,
+      /*
+       * Clear the failure flag too.
+       *
+       * Leaving it set after a SUCCESSFUL recovery kept the retry timer's guard
+       * (`!rideRestoreFailed`) permanently true, so the retry loop carried on
+       * firing for the rest of the ride — re-querying the server every few
+       * seconds forever.
+       */
+      rideRestoreFailed: false,
       // Never carry a stale error into a restored ride.
       clearNotice: true,
       pickupLocation: (snap.pickupLat != null && snap.pickupLng != null)
@@ -900,7 +947,24 @@ class BookingController extends StateNotifier<BookingState> {
       paymentMethod: snap.paymentMode ?? state.paymentMethod,
     );
 
-    _applyRecoveredCoordination(snap.coordination);
+    /*
+     * ── Layered hydration ────────────────────────────────────────────
+     * Everything above is LEVEL 1 — rideId, status, pickup, destination,
+     * driver identity. It is already applied, so the ride screen can render
+     * from here whatever happens next.
+     *
+     * Everything below is Level 2 and 3: coordination, the route line, the
+     * socket room. Each is wrapped, because one optional field must never cost
+     * the passenger the ride. A coordination block the parser cannot read used
+     * to throw out of this method with the ride only half applied.
+     */
+    try {
+      _applyRecoveredCoordination(snap.coordination);
+    } catch (e) {
+      _analytics.log('active_ride_hydration_partial', {
+        'rideId': snap.rideId, 'level': 2, 'field': 'coordination',
+      });
+    }
 
     /*
      * Join the ride room.
@@ -910,7 +974,18 @@ class BookingController extends StateNotifier<BookingState> {
      * inside SocketService could never fire — it was guarding a field nothing
      * ever set. Driver location updates and chat both broadcast to that room.
      */
-    _socketService?.updateActiveRide(snap.rideId);
+    /*
+     * Level 3. The socket is an ENHANCEMENT: the ride screen is already
+     * rendered from the REST snapshot above and must never wait for a
+     * connection, a room join, the map, directions, GPS or Firebase.
+     */
+    try {
+      _socketService?.updateActiveRide(snap.rideId);
+    } catch (e) {
+      _analytics.log('active_ride_hydration_partial', {
+        'rideId': snap.rideId, 'level': 3, 'field': 'socket_room',
+      });
+    }
 
     if (snap.step == BookingStep.searching) {
       _startWatchdog();
@@ -936,12 +1011,16 @@ class BookingController extends StateNotifier<BookingState> {
      * directions each time would mean three paid Directions calls a minute,
      * per passenger, for a line that has not changed.
      */
+    // Level 3. Fire-and-forget and already silent on failure.
     if (state.activeRoutePolyline.isEmpty || previousStep != snap.step) {
-      _restoreRoutePolyline();
+      unawaited(_restoreRoutePolyline());
     }
 
     // Reconciliation is worth its own event: it is the proof that the app
     // caught up with something that happened while it was dead.
+    BootTrace.instance.success(BootStage.hydration,
+        detail: 'level1 ok, step ${snap.step.name}');
+
     if (previousRideId == snap.rideId && previousStep != snap.step) {
       _analytics.log('active_ride_recovery_reconciled', {
         'source': source.wire,
@@ -1011,20 +1090,78 @@ class BookingController extends StateNotifier<BookingState> {
   }
 
   Timer? _recoveryRetryTimer;
+  Timer? _recoveryWatchdog;
+  int _recoveryAttempts = 0;
+  RecoveryFailure? _lastRecoveryFailure;
+  int? _lastRecoveryStatus;
+
+  /// Attempts made since launch. Shown on the field-test strip.
+  int get recoveryAttempts => _recoveryAttempts;
+  RecoveryFailure? get lastRecoveryFailure => _lastRecoveryFailure;
+  int? get lastRecoveryStatus => _lastRecoveryStatus;
+
+  /// The recovery question has been open for too long.
+  ///
+  /// A request that never completes — a socket held open by a captive portal,
+  /// a TLS handshake that stalls — leaves the passenger on the restoring screen
+  /// with no error and no retry, because the `finally` that schedules the next
+  /// attempt never runs. The watchdog breaks that.
+  static const Duration recoveryWatchdogTimeout = Duration(seconds: 12);
+
+  void _startRecoveryWatchdog() {
+    _recoveryWatchdog?.cancel();
+    _recoveryWatchdog = Timer(recoveryWatchdogTimeout, () {
+      if (!mounted) return;
+      _analytics.log('active_ride_recovery_stuck', {
+        'attempt': _recoveryAttempts,
+        'step': state.step.name,
+        'seconds': recoveryWatchdogTimeout.inSeconds,
+      });
+      /*
+       * Release the lock and try again. Deliberately does NOT send the
+       * passenger to "Where to?" — an unresolved recovery is not the same as
+       * no active ride, and that mistake is the whole bug this system exists
+       * to prevent.
+       */
+      _recoveryInFlight = false;
+      _ensureRetryScheduled(immediate: true);
+    });
+  }
+
+  /// Guarantee that another attempt is coming.
+  ///
+  /// Idempotent: if a retry is already armed it is left alone, so overlapping
+  /// callers cannot cancel each other's timer and leave the chain dead.
+  void _ensureRetryScheduled({bool immediate = false}) {
+    if (_recoveryRetryTimer?.isActive == true && !immediate) return;
+    _recoveryRetryTimer?.cancel();
+    // Bounded backoff: 2s, 4s, 8s… capped at 15s. A phone that has just woken
+    // often has no usable network for a few seconds, and hammering it helps
+    // nobody.
+    final seconds = immediate
+        ? 1
+        : (2 << (_recoveryAttempts.clamp(0, 3))).clamp(2, 15);
+    _recoveryRetryTimer = Timer(Duration(seconds: seconds), () {
+      if (!mounted) return;
+      if (!_activeRideUnresolved && !state.rideRestoreFailed) return;
+      recoverActiveRide(RecoverySource.manualRetry);
+    });
+  }
+
+  /// The passenger pressed "Try again".
+  Future<void> retryActiveRideRecovery() async {
+    _recoveryRetryTimer?.cancel();
+    // A manual press must never be swallowed by a stuck lock.
+    if (_recoveryWatchdog?.isActive != true) _recoveryInFlight = false;
+    await recoverActiveRide(RecoverySource.manualRetry);
+  }
 
   /// Retry a failed check on a short backoff.
   ///
   /// A phone that has just woken up frequently has no usable network for a few
   /// seconds. Retrying quietly is far better than asking the passenger to do
   /// anything, and far better than guessing that they have no ride.
-  void _scheduleRecoveryRetry() {
-    _recoveryRetryTimer?.cancel();
-    _recoveryRetryTimer = Timer(const Duration(seconds: 4), () {
-      if (!mounted) return;
-      if (!_activeRideUnresolved && !state.rideRestoreFailed) return;
-      recoverActiveRide(RecoverySource.manualRetry);
-    });
-  }
+  void _scheduleRecoveryRetry() => _ensureRetryScheduled(immediate: true);
 
 
   // ═══════════════════════════════════════════════════════════════════

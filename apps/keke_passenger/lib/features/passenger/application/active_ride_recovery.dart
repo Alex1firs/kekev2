@@ -151,7 +151,19 @@ class ActiveRideSnapshot {
     // tracking screen for a trip that has ended.
     if (!nonTerminalStatuses.contains(status)) return null;
 
-    double? d(String key) => (data[key] as num?)?.toDouble();
+    /*
+     * Tolerant, not a cast.
+     *
+     * `(data[key] as num?)` THROWS on a String — so a single coordinate that
+     * arrived as text discarded the entire ride and reported it as a malformed
+     * response. One optional field must never cost the passenger the ride.
+     */
+    double? d(String key) {
+      final v = data[key];
+      if (v == null) return null;
+      if (v is num) return v.toDouble();
+      return double.tryParse(v.toString());
+    }
     Map<String, dynamic>? m(String key) {
       final v = data[key];
       if (v is Map) return v.map((k, val) => MapEntry(k.toString(), val));
@@ -187,15 +199,105 @@ class ActiveRideSnapshot {
   }
 }
 
+/// Why a recovery attempt failed.
+///
+/// The passenger-facing copy stays simple, but the reason must survive
+/// internally: "we can't reach KekeRide" was shown for an expired session on a
+/// phone with perfect signal, which sent everyone looking at the wrong thing.
+enum RecoveryFailure {
+  /// No usable network interface.
+  offline,
+
+  /// DNS or TCP could not reach the host.
+  unreachable,
+
+  /// Connected, but the server did not answer in time.
+  timeout,
+
+  /// 401/403. The session is the problem, not the network.
+  unauthorised,
+
+  /// 5xx.
+  serverError,
+
+  /// A 4xx that is not an auth failure.
+  badRequest,
+
+  /// 200, but the body could not be understood.
+  malformedResponse,
+
+  /// The server answered correctly and applying it threw.
+  hydrationError,
+
+  /// A concurrent attempt held the lock.
+  inFlight,
+
+  unknown,
+}
+
+extension RecoveryFailureWire on RecoveryFailure {
+  String get wire => name;
+
+  /// Is retrying likely to help on its own?
+  ///
+  /// `unauthorised` is false: retrying the same expired token forever is what
+  /// leaves a passenger on a spinner. It needs the session refreshed first.
+  bool get retryable => this != RecoveryFailure.unauthorised;
+}
+
 class ActiveRideRecoveryResult {
-  const ActiveRideRecoveryResult(this.outcome, {this.snapshot, this.error});
+  const ActiveRideRecoveryResult(
+    this.outcome, {
+    this.snapshot,
+    this.error,
+    this.failure,
+    this.statusCode,
+    this.elapsed,
+  });
 
   final RecoveryOutcome outcome;
   final ActiveRideSnapshot? snapshot;
   final String? error;
 
+  /// Present when [outcome] is failed.
+  final RecoveryFailure? failure;
+
+  /// HTTP status, when the server answered at all.
+  final int? statusCode;
+
+  final Duration? elapsed;
+
   bool get found => outcome == RecoveryOutcome.found;
   bool get resolved => outcome != RecoveryOutcome.failed;
+}
+
+/// Map a thrown error onto a reason. Never throws.
+RecoveryFailure classifyRecoveryError(Object e) {
+  if (e is! DioException) return RecoveryFailure.unknown;
+  switch (e.type) {
+    case DioExceptionType.connectionTimeout:
+    case DioExceptionType.sendTimeout:
+    case DioExceptionType.receiveTimeout:
+      return RecoveryFailure.timeout;
+    case DioExceptionType.connectionError:
+      // Dio reports the same type for "no interface" and "host unreachable".
+      // The message is the only discriminator available.
+      final msg = (e.message ?? '').toLowerCase();
+      if (msg.contains('failed host lookup') || msg.contains('no address')) {
+        return RecoveryFailure.unreachable;
+      }
+      if (msg.contains('network is unreachable') || msg.contains('no route')) {
+        return RecoveryFailure.offline;
+      }
+      return RecoveryFailure.unreachable;
+    case DioExceptionType.badResponse:
+      final code = e.response?.statusCode ?? 0;
+      if (code == 401 || code == 403) return RecoveryFailure.unauthorised;
+      if (code >= 500) return RecoveryFailure.serverError;
+      return RecoveryFailure.badRequest;
+    default:
+      return RecoveryFailure.unknown;
+  }
 }
 
 /// Asks the server, and reports what it said.
@@ -213,34 +315,65 @@ class ActiveRideRecoveryService {
   static const endpoint = '/rides/active/passenger';
 
   Future<ActiveRideRecoveryResult> fetch({required RecoverySource source}) async {
+    final started = DateTime.now();
     _analytics.log('active_ride_recovery_started', {'source': source.wire});
 
     try {
-      // The source travels with the request so the backend log can attribute a
-      // pattern of failures to a trigger. It is a hint only; the server logs it
-      // and never acts on it.
       final response = await _dio.get(
         endpoint,
         queryParameters: {'source': source.wire},
       );
+      final elapsed = DateTime.now().difference(started);
       final raw = response.data;
 
-      // `{}` is the server's "no live ride" answer — a 200, not a 404, so an
-      // ordinary absence never looks like a failure to Dio.
+      // `{}` with a 200 is the server's "no live ride", so an ordinary absence
+      // never looks like a transport failure.
       if (raw is! Map || raw['rideId'] == null) {
-        _analytics.log('active_ride_recovery_none', {'source': source.wire});
-        return const ActiveRideRecoveryResult(RecoveryOutcome.none);
+        _analytics.log('active_ride_recovery_none', {
+          'source': source.wire,
+          'status': response.statusCode,
+          'ms': elapsed.inMilliseconds,
+        });
+        return ActiveRideRecoveryResult(
+          RecoveryOutcome.none,
+          statusCode: response.statusCode,
+          elapsed: elapsed,
+        );
       }
 
-      final snapshot = ActiveRideSnapshot.fromWire(
-        raw.map((k, v) => MapEntry(k.toString(), v)),
-      );
+      final ActiveRideSnapshot? snapshot;
+      try {
+        snapshot = ActiveRideSnapshot.fromWire(
+          raw.map((k, v) => MapEntry(k.toString(), v)),
+        );
+      } catch (e) {
+        // A 200 we could not understand. Distinct from a network failure: the
+        // server is fine and retrying the same body will fail identically.
+        _analytics.log('active_ride_recovery_failed', {
+          'source': source.wire,
+          'failure': RecoveryFailure.malformedResponse.wire,
+          'ms': elapsed.inMilliseconds,
+        });
+        return ActiveRideRecoveryResult(
+          RecoveryOutcome.failed,
+          failure: RecoveryFailure.malformedResponse,
+          statusCode: response.statusCode,
+          elapsed: elapsed,
+          error: e.toString(),
+        );
+      }
+
       if (snapshot == null) {
         _analytics.log('active_ride_recovery_none', {
           'source': source.wire,
           'reason': 'terminal_or_unparseable',
+          'ms': elapsed.inMilliseconds,
         });
-        return const ActiveRideRecoveryResult(RecoveryOutcome.none);
+        return ActiveRideRecoveryResult(
+          RecoveryOutcome.none,
+          statusCode: response.statusCode,
+          elapsed: elapsed,
+        );
       }
 
       _analytics.log('active_ride_recovery_found', {
@@ -249,21 +382,39 @@ class ActiveRideRecoveryService {
         'status': snapshot.status,
         'hasDriver': snapshot.driverDetails != null,
         'hasCoordination': snapshot.coordination != null,
+        'ms': elapsed.inMilliseconds,
       });
-      return ActiveRideRecoveryResult(RecoveryOutcome.found, snapshot: snapshot);
+      return ActiveRideRecoveryResult(
+        RecoveryOutcome.found,
+        snapshot: snapshot,
+        statusCode: response.statusCode,
+        elapsed: elapsed,
+      );
     } catch (e) {
       /*
-       * Failure is NOT absence. The caller must keep whatever it was showing
-       * and retry — never fall through to the booking screen, and never show a
-       * destructive error, because the most likely cause is a phone that has
-       * just woken up with no network yet.
+       * Failure is NOT absence. The caller keeps whatever it was showing and
+       * retries — never falls through to the booking screen.
+       *
+       * The REASON is preserved. Reporting every failure as "we can't reach
+       * KekeRide" is what sent a field test looking at the network when the
+       * session had expired.
        */
-      final kind = e is DioException ? (e.type.name) : e.runtimeType.toString();
+      final elapsed = DateTime.now().difference(started);
+      final failure = classifyRecoveryError(e);
+      final status = e is DioException ? e.response?.statusCode : null;
       _analytics.log('active_ride_recovery_failed', {
         'source': source.wire,
-        'error': kind,
+        'failure': failure.wire,
+        'status': status,
+        'ms': elapsed.inMilliseconds,
       });
-      return ActiveRideRecoveryResult(RecoveryOutcome.failed, error: kind);
+      return ActiveRideRecoveryResult(
+        RecoveryOutcome.failed,
+        failure: failure,
+        statusCode: status,
+        elapsed: elapsed,
+        error: e is DioException ? e.type.name : e.runtimeType.toString(),
+      );
     }
   }
 }

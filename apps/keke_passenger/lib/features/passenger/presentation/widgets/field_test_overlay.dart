@@ -3,7 +3,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/diagnostics/boot_trace.dart';
+import '../../application/active_ride_recovery.dart';
 import '../../application/booking_controller.dart';
+import '../../domain/booking_state.dart';
 
 /// A live readout of the trip stream, for field testing on a real road.
 ///
@@ -60,7 +63,15 @@ class _FieldTestOverlayState extends ConsumerState<FieldTestOverlay> {
     ref.watch(bookingControllerProvider);
     final d = ref.read(bookingControllerProvider.notifier).liveDiagnostics;
 
-    if (d.rideId == null) return const SizedBox.shrink();
+    // Deliberately NOT gated on having a ride any more. The failure being
+    // hunted happens while recovery is still deciding whether a ride exists,
+    // so hiding the panel until a ride is known hid it exactly when it was
+    // needed.
+    final booking = ref.read(bookingControllerProvider.notifier);
+    final st = ref.read(bookingControllerProvider);
+    final recovering =
+        st.step == BookingStep.loading || st.rideRestoreFailed;
+    if (d.rideId == null && !recovering) return const SizedBox.shrink();
 
     Color tone(bool ok) => ok ? const Color(0xFF34D399) : const Color(0xFFF87171);
     final locAge = d.secondsSinceLocation;
@@ -105,6 +116,19 @@ class _FieldTestOverlayState extends ConsumerState<FieldTestOverlay> {
                   ),
                   if (_expanded) ...[
                     const SizedBox(height: 4),
+                    // ── Recovery diagnostics. The stuck-on-reconnecting case.
+                    _row('auth', _stage(BootStage.authRestore)),
+                    _row('token', _stage(BootStage.tokenAvailable)),
+                    _row('api', _stage(BootStage.activeRideCheck)),
+                    _row('attempt', '#${booking.recoveryAttempts}'),
+                    _row('last error',
+                        booking.lastRecoveryFailure?.wire ??
+                            (booking.lastRecoveryStatus == null
+                                ? '—'
+                                : 'http ${booking.lastRecoveryStatus}')),
+                    _row('ride?',
+                        d.rideId != null ? 'found' : (recovering ? 'unknown' : 'none')),
+                    const SizedBox(height: 4),
                     _row('ride', d.rideId ?? '—'),
                     _row('status', d.step),
                     _row('room', d.joinedRideRoom ?? 'NOT JOINED'),
@@ -133,6 +157,15 @@ class _FieldTestOverlayState extends ConsumerState<FieldTestOverlay> {
         ),
       ),
     );
+  }
+
+  /// Latest status of a boot stage, compactly.
+  String _stage(BootStage stage) {
+    final r = BootTrace.instance.latest(stage);
+    if (r == null) return '—';
+    final ms = r.elapsed == null ? '' : ' ${r.elapsed!.inMilliseconds}ms';
+    final d = r.detail == null ? '' : ' ${r.detail}';
+    return '${r.status.name}$ms$d';
   }
 
   Widget _dot(Color c) => Container(

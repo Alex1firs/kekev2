@@ -4,6 +4,7 @@ import '../config/env_config.dart';
 import '../storage/secure_storage.dart';
 import 'notification_service.dart';
 import 'retry_interceptor.dart';
+import '../diagnostics/boot_trace.dart';
 
 class ApiClient {
   final Dio _dio;
@@ -37,10 +38,23 @@ final dioProvider = Provider<Dio>((ref) {
         if (token != null) {
           options.headers['Authorization'] = 'Bearer $token';
         }
+        /*
+         * Record PRESENCE only, never the token. "Was the request even
+         * authenticated?" was unanswerable during the field test, and an
+         * unauthenticated active-ride call is a 401 that looks exactly like a
+         * network failure from the outside.
+         */
+        if (options.path.contains('/rides/active/')) {
+          BootTrace.instance.skipped(
+            BootStage.tokenAvailable,
+            detail: token == null ? 'absent' : 'present',
+          );
+        }
         return handler.next(options);
       },
       onError: (DioException e, handler) async {
         if (e.response?.statusCode == 401 && !e.requestOptions.path.contains('/auth/')) {
+          BootTrace.instance.failure(BootStage.apiReady, detail: '401 session cleared');
           // Deregister FCM device token before clearing auth so the old token
           // is marked inactive and won't deliver notifications to the next user.
           try {

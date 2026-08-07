@@ -3,17 +3,28 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/routing/app_router.dart';
 import 'core/theme/app_theme.dart';
 import 'core/network/notification_service.dart';
+import 'core/diagnostics/boot_trace.dart';
 import 'features/auth/application/auth_controller.dart';
 import 'features/auth/domain/auth_state.dart';
 import 'features/passenger/application/booking_controller.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  BootTrace.instance.start(BootStage.appStart);
   
   final container = ProviderContainer();
   // Initialize Push Notifications (Basic init)
   final notificationService = container.read(notificationServiceProvider('passenger'));
-  await notificationService.initialize();
+  BootTrace.instance.start(BootStage.firebaseInit);
+  try {
+    await notificationService.initialize();
+    BootTrace.instance.success(BootStage.firebaseInit);
+  } catch (e) {
+    // Push is an enhancement. It must never hold up the ride the passenger is
+    // already on.
+    BootTrace.instance.failure(BootStage.firebaseInit, detail: e.runtimeType.toString());
+  }
+  BootTrace.instance.success(BootStage.appStart);
 
   runApp(
     UncontrolledProviderScope(

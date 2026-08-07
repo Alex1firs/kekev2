@@ -5,6 +5,7 @@ import '../../../core/network/api_client.dart';
 import '../../../core/network/notification_service.dart';
 import '../data/auth_repository.dart';
 import '../domain/auth_state.dart';
+import '../../../core/diagnostics/boot_trace.dart';
 
 class AuthController extends StateNotifier<AuthState> {
   final AuthRepository _authRepository;
@@ -17,20 +18,31 @@ class AuthController extends StateNotifier<AuthState> {
   }
 
   Future<void> _restoreSession() async {
+    BootTrace.instance.start(BootStage.authRestore);
     try {
       final token = await _secureStorage.readToken();
       if (token != null && token.isNotEmpty) {
         if (JwtDecoder.isExpired(token)) {
+          /*
+           * There is no refresh token in this app: expiry IS logout. Recorded
+           * explicitly because "stuck on the restoring screen" and "session
+           * expired" produce completely different screens, and knowing which
+           * happened is the difference between a network hunt and an auth one.
+           */
+          BootTrace.instance.failure(BootStage.authRestore, detail: 'token_expired');
           await _secureStorage.clearAll();
           state = AuthState.unauthenticated();
           return;
         }
+        BootTrace.instance.success(BootStage.authRestore, detail: 'token_valid');
         state = AuthState.authenticated(token);
         _notificationService.registerDeviceToken();
       } else {
+        BootTrace.instance.success(BootStage.authRestore, detail: 'no_token');
         state = AuthState.unauthenticated();
       }
-    } catch (_) {
+    } catch (e) {
+      BootTrace.instance.failure(BootStage.authRestore, detail: e.runtimeType.toString());
       await _secureStorage.clearAll();
       state = AuthState.unauthenticated();
     }

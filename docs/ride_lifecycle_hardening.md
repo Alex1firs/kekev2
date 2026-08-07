@@ -167,6 +167,11 @@ These cannot be fixed in application code and are listed separately, as asked.
 
 ### Android
 
+- **The persistent ride notification cannot update while the process is dead.**
+  Android owns the posted notification, so it survives a force-close and stays
+  tappable — but its text freezes at the last state the app knew. An FCM
+  lifecycle push corrects it; otherwise it is corrected the moment the passenger
+  opens the app. Treat it as a way back in, never as truth.
 - **A backgrounded app can be killed at any time.** No amount of application
   code prevents it. What is guaranteed is that reopening restores the ride from
   the server. A driver killed while Online stops sending heartbeats; their Redis
@@ -250,7 +255,15 @@ arbitrated by a conditional `UPDATE` in Postgres, and double-dispatch by
 | `keke_driver/test/driver_lifecycle_recovery_test.dart` | New — 9 tests |
 | `keke_backend/test/unit/ride_lifecycle_contract.test.ts` | New — 7 tests |
 
-**Tests added this pass: 38.** Cumulative for lifecycle recovery: **76**.
+**Tests added: 38 (lifecycle) + 51 (notifications).** Cumulative: **127**.
+
+**Android persistent notification — DONE.** Passenger: a new ongoing
+notification on the silent `keke_ride_status` channel, deliberately not a
+foreground service (see `ride_status_notification.dart` for the reasoning).
+Driver: the existing, already-justified foreground service now reflects the trip
+instead of reading "KekeRide is online" throughout. Both APKs verified to build;
+plugin confirmed compiled into the passenger dex and its manifest merged; no
+foreground-service permission added to the passenger app.
 
 **Production safety:** the only backend change is one array entry that makes an
 existing exclusion stricter. No migration, no schema change, no change to

@@ -327,15 +327,18 @@ AppDataSource.initialize()
   .then(async () => {
     console.log(JSON.stringify({ level: 'info', message: 'PostgreSQL initialized' }));
     
-    // Auto-run migrations on startup to ensure production DB is up-to-date
-    try {
-      const migrations = await AppDataSource.runMigrations();
-      if (migrations.length > 0) {
-        console.log(JSON.stringify({ level: 'info', message: `Executed ${migrations.length} migrations` }));
-      }
-    } catch (e: any) {
-      console.error(JSON.stringify({ level: 'error', message: 'Failed to run migrations on startup', error: e.message }));
-    }
+    /*
+     * Migrations are NOT run here.
+     *
+     * This used to call runMigrations() on every boot. Under blue-green that is
+     * a race: two colours start against one database and both try to apply the
+     * same migration, which TypeORM does not arbitrate. Worse, it was silent —
+     * removing it from the Dockerfile CMD changed nothing, because the app was
+     * migrating itself.
+     *
+     * infra/deploy.sh applies migrations exactly once, before either colour
+     * starts. The pending-migration check below reports anything outstanding.
+     */
 
     NotificationService.initialize();
 

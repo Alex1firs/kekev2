@@ -24,11 +24,116 @@ services:
       timeout: 5s
       retries: 5
 
-  api_prod:
+  # ═══════════════════════════════════════════════════════════════════
+  #  Production API — blue and green
+  #
+  #  Only ONE of these receives traffic at a time. nginx points at a colour
+  #  and the cutover is a config reload, not a restart, which is what makes a
+  #  deploy free of dropped requests.
+  #
+  #  They are identical apart from DEPLOY_COLOUR, which /health reports so a
+  #  cutover can be confirmed from outside the droplet. Both must never be in
+  #  front of traffic simultaneously: SocketHandler holds live dispatch state
+  #  in process memory, and splitting it across two processes is the thing
+  #  blue-green exists to avoid. See docs/zero_downtime_deploys.md.
+  # ═══════════════════════════════════════════════════════════════════
+  api_prod_blue:
     build: .
+    container_name: api_prod_blue
     restart: always
     mem_limit: 250m
     environment:
+      DEPLOY_COLOUR: blue
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres_shared:5432/keke_prod_db
+      REDIS_URL: redis://redis_shared:6379/0
+      NODE_OPTIONS: "--max-old-space-size=200"
+      ADMIN_API_KEY: ${ADMIN_API_KEY}
+      JWT_SECRET: ${JWT_SECRET}
+      PAYSTACK_SECRET_KEY: ${PAYSTACK_SECRET_KEY}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
+      RATE_LIMIT_WINDOW: 900000
+      ADMIN_RATE_LIMIT_MAX: 100
+      ONBOARDING_RATE_LIMIT_MAX: 5
+      RESEND_API_KEY: ${RESEND_API_KEY}
+      # Svix signing secret for Resend delivery events. Without it the webhook
+      # endpoint returns 503 and refuses every event — deliberately, because
+      # verification must never fall through to "accept". `environment:` is an
+      # explicit allow-list here, so adding a variable to .env alone does NOT
+      # reach the container.
+      RESEND_WEBHOOK_SECRET: ${RESEND_WEBHOOK_SECRET}
+      SMTP_FROM: ${SMTP_FROM}
+      SMILE_ID_PARTNER_ID: ${SMILE_ID_PARTNER_ID}
+      SMILE_ID_API_KEY: ${SMILE_ID_API_KEY}
+      SMILE_ID_USE_SANDBOX: ${SMILE_ID_USE_SANDBOX}
+      # Base64-encoded Firebase service-account JSON. Without this, push is disabled.
+      FIREBASE_SERVICE_ACCOUNT_JSON: ${FIREBASE_SERVICE_ACCOUNT_JSON}
+
+      # ── Park Dispatch ────────────────────────────────────────────────
+      # Signs staff tokens. Falls back to a key derived from JWT_SECRET if
+      # unset, which works but keeps staff and customer tokens related.
+      STAFF_JWT_SECRET: ${STAFF_JWT_SECRET}
+      # Defaults to true in code; stated here so it is visible in the
+      # deployment rather than only in a source file. Set false to restore
+      # exactly the pre-Park behaviour (needs a container restart — for an
+      # incident use the Redis switch instead, which is immediate).
+      PARK_DISPATCH_ENABLED: ${PARK_DISPATCH_ENABLED:-true}
+
+      # ── Dispatcher Web Push ──────────────────────────────────────────
+      # Public browser identifiers. The Admin service account above stays
+      # server-only and is unrelated to these.
+      FIREBASE_WEB_API_KEY: ${FIREBASE_WEB_API_KEY}
+      FIREBASE_WEB_AUTH_DOMAIN: ${FIREBASE_WEB_AUTH_DOMAIN}
+      FIREBASE_WEB_PROJECT_ID: ${FIREBASE_WEB_PROJECT_ID}
+      FIREBASE_WEB_MESSAGING_SENDER_ID: ${FIREBASE_WEB_MESSAGING_SENDER_ID}
+      FIREBASE_WEB_APP_ID: ${FIREBASE_WEB_APP_ID}
+      FIREBASE_VAPID_PUBLIC_KEY: ${FIREBASE_VAPID_PUBLIC_KEY}
+      # Where a dispatcher actually opens the app. Used to build activation
+      # links — it cannot be derived from the request, because an operations
+      # admin may create an account from a different host than the dispatcher
+      # who has to open the link.
+      #
+      # Per-environment, and NOT a bare ${DISPATCH_PUBLIC_URL}: both api_prod
+      # and api_staging read the one shared .env, so a single variable meant
+      # production minted activation links pointing at staging. Those links are
+      # single-use — spending one on the wrong environment burns it against an
+      # account that does not exist there, and the person is simply stuck.
+      DISPATCH_PUBLIC_URL: ${DISPATCH_PUBLIC_URL_PROD:-https://api.kekeride.ng/dispatch}
+    depends_on:
+      postgres_shared:
+        condition: service_healthy
+      redis_shared:
+        condition: service_healthy
+    healthcheck:
+      # node:20-alpine ships no curl — the old `curl -f` check could never pass,
+      # so the container reported "unhealthy" from the day it was written.
+      # Node 20 has global fetch, so use the runtime that is guaranteed present.
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 20s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - uploads_data:/app/uploads
+      # The Park Dispatch PWA.
+      #
+      # It lives in apps/keke_dispatcher, a sibling of this service, so the
+      # Docker build context (apps/keke_backend) cannot see it and the image
+      # does not contain it — /dispatch would 404.
+      #
+      # Mounted read-only at /keke_dispatcher because that is exactly where
+      # src/index.ts already looks: __dirname is /app/dist, and its first
+      # candidate is ../../keke_dispatcher. No code change, and the same
+      # pattern nginx_gateway already uses for the admin dashboard.
+      - /opt/kekev2/apps/keke_dispatcher:/keke_dispatcher:ro
+
+  api_prod_green:
+    build: .
+    container_name: api_prod_green
+    restart: always
+    mem_limit: 250m
+    environment:
+      DEPLOY_COLOUR: green
       NODE_ENV: production
       PORT: 4000
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres_shared:5432/keke_prod_db
@@ -196,7 +301,10 @@ services:
       - "80:80"
       - "443:443"
     depends_on:
-      - api_prod
+      # Neither colour is required to be up for the gateway to start: nginx
+      # resolves the upstream per request through Docker DNS, so it tolerates a
+      # colour being absent. Listing both would make the gateway wait for a
+      # container that is deliberately stopped between deploys.
       - api_staging
 
   adminer:

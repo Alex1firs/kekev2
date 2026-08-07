@@ -7,6 +7,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import dotenv from 'dotenv';
 import { SocketHandler } from './sockets/socket_handler';
+import { installRedisAdapter } from './sockets/redis_adapter';
 import { AppDataSource } from './config/data_source';
 import { Ride } from './models/Ride';
 import financeRoutes from './routes/finance_routes';
@@ -259,11 +260,25 @@ app.use((req, res, next) => {
   next();
 });
 
+/** Fixed at module load, so it identifies this process for its whole life. */
+const STARTED_AT = new Date().toISOString();
+
 app.get('/health', async (req, res) => {
   try {
     await AppDataSource.query('SELECT 1');
     await redis.ping();
-    res.status(200).json({ status: 'ok', db: 'up', redis: 'up', timestamp: new Date().toISOString() });
+    /*
+     * `colour` and `startedAt` are what make a blue-green cutover verifiable
+     * from outside: without them there is no way to tell, from the public URL,
+     * which process just answered.
+     */
+    res.status(200).json({
+      status: 'ok', db: 'up', redis: 'up',
+      colour: process.env.DEPLOY_COLOUR ?? 'unset',
+      startedAt: STARTED_AT,
+      uptimeSeconds: Math.round(process.uptime()),
+      timestamp: new Date().toISOString(),
+    });
   } catch (err: any) {
     res.status(503).json({ status: 'degraded', error: err.message });
   }
@@ -290,6 +305,13 @@ const io = new Server(httpServer, {
 });
 
 new SocketHandler(io);
+
+/*
+ * Room broadcasts cross process boundaries during a blue-green deploy.
+ * Installed on the Server, so no emit call site changes. Fails soft and is
+ * switchable with SOCKET_REDIS_ADAPTER=false. See sockets/redis_adapter.ts.
+ */
+void installRedisAdapter(io);
 
 const PORT = process.env.PORT || 3000;
 
@@ -354,8 +376,36 @@ AppDataSource.initialize()
       console.error(JSON.stringify({ level: 'error', message: 'Failed to start park job sweeper', error: e.message }));
     }
 
+    /*
+     * Migrations are applied by infra/deploy.sh, not at boot. Report anything
+     * outstanding loudly — but start anyway. A container that refuses to start
+     * because of a pending migration turns a bookkeeping problem into an
+     * outage, and during a blue-green deploy the old colour is deliberately
+     * running against a newer schema.
+     */
+    try {
+      const pending = await AppDataSource.showMigrations();
+      console.log(JSON.stringify({
+        level: pending ? 'warn' : 'info',
+        scope: 'migrations',
+        message: pending
+          ? 'PENDING MIGRATIONS: this process is running against an older schema than the code expects. Run infra/deploy.sh, or `npm run migration:run`.'
+          : 'Schema is up to date.',
+        pending,
+      }));
+    } catch (e: any) {
+      console.log(JSON.stringify({
+        level: 'warn', scope: 'migrations',
+        message: 'Could not check for pending migrations.', error: e?.message,
+      }));
+    }
+
     const server = httpServer.listen(PORT, () => {
-      console.log(JSON.stringify({ level: 'info', message: `Keke Backend running on port ${PORT}` }));
+      console.log(JSON.stringify({
+        level: 'info',
+        message: `Keke Backend running on port ${PORT}`,
+        colour: process.env.DEPLOY_COLOUR ?? 'unset',
+      }));
     });
 
     const shutdown = async (signal: string) => {

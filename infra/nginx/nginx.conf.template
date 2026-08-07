@@ -1,9 +1,13 @@
 # ─────────────────────────────────────────────────────────────────────────
-#  MANAGED BY GIT — infra/nginx/nginx.conf
+#  MANAGED BY GIT — infra/nginx/nginx.conf.template
 #
-#  Do not edit /opt/kekev2/nginx.conf by hand. That path is a deployed
-#  artifact; edits there are overwritten by the next deploy and are invisible
-#  to everyone reading the repository.
+#  This is a TEMPLATE. `__PROD_COLOUR__` is substituted at deploy time with the
+#  live API colour (blue or green), and the result is written to
+#  /opt/kekev2/nginx.conf on the droplet.
+#
+#  Do not edit /opt/kekev2/nginx.conf by hand: it is a rendered artifact, it is
+#  overwritten by the next deploy, and it is invisible to everyone reading the
+#  repository.
 #
 #  Edit this file, commit, then run:  infra/nginx/deploy.sh
 #  Compare without changing anything: infra/nginx/deploy.sh --check
@@ -57,7 +61,13 @@ http {
         ssl_certificate_key /etc/letsencrypt/live/api.kekeride.ng/privkey.pem;
 
         location / {
-            set $prod_app http://api_prod:4000;
+            # Rendered by infra/deploy.sh from __PROD_COLOUR__.
+            #
+            # Assigned to a variable first so nginx resolves the container name
+            # through Docker DNS on every request rather than caching an IP at
+            # startup. An `upstream` block would cache, and a colour that
+            # restarts gets a new IP — which nginx would then proxy past.
+            set $prod_app http://api_prod___PROD_COLOUR__:4000;
             proxy_pass $prod_app;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;

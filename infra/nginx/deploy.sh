@@ -29,16 +29,25 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-SOURCE="$REPO_ROOT/infra/nginx/nginx.conf"
+TEMPLATE="$REPO_ROOT/infra/nginx/nginx.conf.template"
+SOURCE="$(mktemp)"
 DEPLOYED="/opt/kekev2/nginx.conf"
 CONTAINER="keke_backend-nginx_gateway-1"
 CHECK_ONLY="${1:-}"
 
-[[ -f "$SOURCE" ]] || { echo "missing tracked config: $SOURCE" >&2; exit 1; }
+[[ -f "$TEMPLATE" ]] || { echo "missing template: $TEMPLATE" >&2; exit 1; }
+
+# The template is rendered against whichever colour is currently live, so a
+# --check compares like with like. Changing the live colour is a deploy
+# (infra/deploy.sh), never this script.
+COLOUR="$(grep -oE 'api_prod_(blue|green):' "$DEPLOYED" 2>/dev/null | grep -oE '(blue|green)' | head -1)"
+COLOUR="${COLOUR:-blue}"
+sed "s/__PROD_COLOUR__/$COLOUR/g" "$TEMPLATE" > "$SOURCE"
+echo "rendered for colour: $COLOUR"
 
 sum() { sha256sum "$1" | awk '{print $1}'; }
 
-echo "tracked:  $(sum "$SOURCE")  $SOURCE"
+echo "tracked:  $(sum "$SOURCE")  $TEMPLATE (rendered)"
 if [[ -f "$DEPLOYED" ]]; then
     echo "deployed: $(sum "$DEPLOYED")  $DEPLOYED"
 else

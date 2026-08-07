@@ -37,4 +37,11 @@ EXPOSE 4000
 # prevents "column does not exist" 5xx errors when code is deployed ahead of its
 # schema (e.g. the driver status endpoint failing after the NIN columns were
 # added but the migration hadn't been run).
-CMD ["sh", "-c", "npm run migration:run && node dist/index.js"]
+# Migrations are NOT run here.
+#
+# With blue-green deploys two colours start against one database, and both
+# running `migration:run` is a race. Migrations are an explicit step in
+# infra/deploy.sh, executed once before the new colour starts. The app logs
+# loudly at boot if any are pending but still starts — refusing to start would
+# turn a bookkeeping problem into an outage.
+CMD ["node", "dist/index.js"]

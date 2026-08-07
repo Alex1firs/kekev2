@@ -20,6 +20,19 @@ enum BookingStep {
 
 class BookingState {
   final BookingStep step;
+
+  /// True while the authoritative active-ride check is still in flight.
+  ///
+  /// Distinct from `step == loading`: the check also runs on resume and on
+  /// reconnect, when a real screen is already showing and must stay showing.
+  /// The UI uses this for a quiet "restoring" affordance, never a blank screen.
+  final bool isRestoringRide;
+
+  /// The authoritative check could not be completed — offline, timeout, 5xx.
+  ///
+  /// Distinct from "no ride": we do not know. The UI says so plainly and
+  /// booking stays blocked until we do.
+  final bool rideRestoreFailed;
   
   final LatLng? mapCenter; 
   final bool isCameraMoving;
@@ -108,6 +121,8 @@ class BookingState {
 
   const BookingState({
     this.step = BookingStep.loading,
+    this.isRestoringRide = false,
+    this.rideRestoreFailed = false,
     this.mapCenter,
     this.isCameraMoving = false,
     this.pickupLocation,
@@ -155,6 +170,8 @@ class BookingState {
 
   BookingState copyWith({
     BookingStep? step,
+    bool? isRestoringRide,
+    bool? rideRestoreFailed,
     LatLng? mapCenter,
     bool? isCameraMoving,
     LatLng? pickupLocation,
@@ -214,6 +231,8 @@ class BookingState {
   }) {
     return BookingState(
       step: step ?? this.step,
+      isRestoringRide: isRestoringRide ?? this.isRestoringRide,
+      rideRestoreFailed: rideRestoreFailed ?? this.rideRestoreFailed,
       mapCenter: mapCenter ?? this.mapCenter,
       isCameraMoving: isCameraMoving ?? this.isCameraMoving,
       pickupLocation: pickupLocation ?? this.pickupLocation,

@@ -41,10 +41,18 @@ class SocketService {
 
   bool get isConnected => _forcedConnected ?? (_socket?.connected == true);
 
+  /// Remember which ride room this client belongs in, and join it now.
+  ///
+  /// Remembering is the important half: [_initSocket] re-joins [_activeRideId]
+  /// on every reconnect, and until this method had a caller that field was
+  /// always null — so the auto-rejoin was guarding a value nothing ever set.
+  ///
+  /// Routed through [emit] rather than touching `_socket` directly so the
+  /// offline test double records it like any other outbound event.
   void updateActiveRide(String? rideId) {
     _activeRideId = rideId;
-    if (rideId != null && _socket?.connected == true) {
-      _socket!.emit('join', {'userId': rideId, 'role': 'ride'});
+    if (rideId != null && isConnected) {
+      emit('join', {'userId': rideId, 'role': 'ride'});
     }
   }
 

@@ -122,6 +122,13 @@ void main() {
     return ApiClient(dio);
   }
 
+  /// Give the cold-start recovery round trip time to complete.
+  Future<void> pumpRecovery() async {
+    for (var i = 0; i < 8; i++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+  }
+
   /// Builds a controller sitting on the fare screen with a priced route, i.e.
   /// exactly where a passenger is when they tap "Request Keke".
   Future<void> arrangeAtFareScreen({bool connected = true}) async {
@@ -139,8 +146,14 @@ void main() {
       'Ada',
       'Obi',
     );
-    // let _initializeMap() settle
-    await Future<void>.delayed(Duration.zero);
+    /*
+     * Let the cold-start active-ride check settle before arranging the screen.
+     * The controller now asks the server whether this passenger already has a
+     * ride BEFORE laying out the booking flow, and blocks new requests until it
+     * has an answer — so a test that does not wait is testing the restoring
+     * state, not the booking flow.
+     */
+    await pumpRecovery();
     controller.setDestination('Shoprite Onitsha', _destination);
     await Future<void>.delayed(Duration.zero);
   }
@@ -326,10 +339,15 @@ void main() {
         'code': 'ACTIVE_RIDE_EXISTS',
         'message': 'You already have an active ride in progress.',
       });
-      await Future<void>.delayed(Duration.zero);
+      /*
+       * ACTIVE_RIDE_EXISTS is now a recovery signal first: the app re-reads the
+       * server to find the ride it has forgotten. Here the stub reports no
+       * active ride, so the two answers disagree and the informative notice is
+       * the correct fallback. The restoration path is covered in
+       * active_ride_recovery_test.dart and in the recovery group below.
+       */
+      await pumpRecovery();
 
-      // Previously this event was ignored and the passenger watched the search
-      // animation for 90s before being told "no drivers available".
       expect(controller.state.step, BookingStep.previewEstimate);
       final notice = controller.state.notice!;
       expect(notice.outcome, RideOutcome.activeRideExists);
@@ -349,7 +367,7 @@ void main() {
         'code': 'ACTIVE_RIDE_EXISTS',
         'message': 'You already have an active ride in progress.',
       });
-      await Future<void>.delayed(Duration.zero);
+      await pumpRecovery();
 
       expect(controller.state.step, BookingStep.previewEstimate);
       expect(controller.state.notice!.outcome, RideOutcome.activeRideExists);

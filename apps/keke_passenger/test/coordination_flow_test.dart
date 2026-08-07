@@ -129,7 +129,15 @@ void main() {
       'Ada',
       'Obi',
     );
-    await Future<void>.delayed(Duration.zero);
+    /*
+     * Let the cold-start active-ride check settle first. The controller now
+     * asks the server whether this passenger already has a ride before laying
+     * out the booking flow, and refuses to create a new one until it has an
+     * answer — so requesting a ride on the next microtask would be blocked.
+     */
+    for (var i = 0; i < 8; i++) {
+      await Future<void>.delayed(Duration.zero);
+    }
     controller.setDestination('Shoprite Onitsha', _destination);
     await Future<void>.delayed(Duration.zero);
     controller.requestRide();
@@ -140,6 +148,26 @@ void main() {
       'pickupCode': '4821',
     });
     await Future<void>.delayed(Duration.zero);
+
+    /*
+     * The server must agree that this ride exists.
+     *
+     * Reconnect and resume now re-read `/rides/active/passenger` and treat a
+     * "no active ride" answer as authoritative — clearing the local ride. That
+     * is the correct behaviour and the point of the fix, so a stub that says
+     * nothing is live would (rightly) wipe the ride these tests are about.
+     */
+    api.activeRide = {
+      'rideId': controller.state.rideId,
+      'status': 'accepted',
+      'pickupLat': _pickup.latitude,
+      'pickupLng': _pickup.longitude,
+      'destinationLat': _destination.latitude,
+      'destinationLng': _destination.longitude,
+      'driverDetails': const {'name': 'Chidi Okeke', 'phone': '08031234567'},
+      'pickupCode': '4821',
+    };
+
     // Requests emitted while arranging are not the subject of any test.
     socket.sentEvents.clear();
     events.clear();

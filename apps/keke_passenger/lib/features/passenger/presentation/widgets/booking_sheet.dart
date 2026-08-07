@@ -95,10 +95,43 @@ class BookingSheet extends ConsumerWidget {
   Widget _buildPanel(BuildContext context, WidgetRef ref, BookingState state) {
     switch (state.step) {
       case BookingStep.loading:
-        return const SizedBox(
-          height: 120,
-          child: Center(
-              child: CircularProgressIndicator(color: AppColors.primary)),
+        /*
+         * The cold-start window, before the server has told us whether this
+         * passenger is already on a ride. Never "Where to?" — showing the
+         * booking screen here is what made a passenger with a driver en route
+         * believe their ride had vanished.
+         */
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(
+                height: 26, width: 26,
+                child: CircularProgressIndicator(
+                    color: AppColors.primary, strokeWidth: 2.6),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                state.rideRestoreFailed
+                    ? 'Reconnecting to your ride…'
+                    : 'Checking for an active ride…',
+                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                state.rideRestoreFailed
+                    // Said plainly. The passenger may be standing at a kerb with
+                    // a driver approaching; "something went wrong" would be both
+                    // wrong and frightening.
+                    ? 'We can\'t reach KekeRide right now. Your ride is safe — '
+                      'this screen will update as soon as you are back online.'
+                    : 'One moment while we check whether you already have a ride.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 12.5, color: Colors.grey.shade600, height: 1.4),
+              ),
+            ],
+          ),
         );
       case BookingStep.idle:
       case BookingStep.selectingDestination:

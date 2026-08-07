@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import '../domain/booking_notice.dart';
 import '../domain/booking_state.dart';
+import 'active_ride_recovery.dart';
 import '../domain/nearby_keke.dart';
 import '../domain/ride_coordination.dart';
 import '../data/map_repository.dart';
@@ -55,16 +56,38 @@ class BookingController extends StateNotifier<BookingState> {
 
   BookingController(this._mapRepo, SocketService? initialSocket, this._apiClient, this._notificationService, this._soundService, this._analytics, this.passengerId, this.firstName, this.lastName) : super(const BookingState()) {
     _socketService = initialSocket;
-    _initializeMap();
     if (_socketService != null) _listenToSocket();
     _listenToNotifications();
     _startNearbyPolling();
+
+    /*
+     * Recovery first, map second.
+     *
+     * The old order awaited the device location, painted the booking screen,
+     * and only then asked whether the passenger was already on a ride — so a
+     * passenger with a driver en route saw "Where to?" every single cold start,
+     * and kept seeing it if the recovery call happened to fail.
+     */
+    _bootstrap();
   }
+
+  /// Cold start: settle the ride question before anything else is drawn.
+  ///
+  /// Laying out the booking flow is the `none` branch's job inside
+  /// [recoverActiveRide] — doing it here on `!found` would also do it when the
+  /// check FAILED, which is how a passenger with no network would still end up
+  /// staring at "Where to?" while their driver approached.
+  Future<void> _bootstrap() => recoverActiveRide(RecoverySource.coldStart);
 
   void _listenToNotifications() {
     _notificationSubscription = _notificationService.intentStream.listen((data) {
-      print('[PASSENGER_SYNC] Notification intent received: $data. Triggering sync...');
-      syncStatus();
+      print('[PASSENGER_SYNC] Notification intent received: $data. Verifying with server...');
+      /*
+       * The payload is a hint, never the state. A push saying "driver arrived"
+       * may be minutes old by the time it is tapped, and the ride may since have
+       * started or been cancelled. Always re-read the server.
+       */
+      syncStatus(source: RecoverySource.notificationTap);
 
       // A coordination push and the socket event that accompanies it describe the
       // SAME question. The server sends a matching `eventId` on both, so marking
@@ -159,8 +182,8 @@ class BookingController extends StateNotifier<BookingState> {
           _fetchSearchingKekes();
           break;
         case 'socket:reconnected':
-          print('[PASSENGER_SYNC] Socket reconnected. Triggering redundant healing...');
-          syncStatus();
+          print('[PASSENGER_SYNC] Socket reconnected. Re-reading server truth...');
+          syncStatus(source: RecoverySource.socketReconnect);
           // Whatever prompt we were showing may have been answered, expired or
           // superseded while we were offline. The server is the only authority on
           // that, so throw ours away and re-read.
@@ -438,58 +461,18 @@ class BookingController extends StateNotifier<BookingState> {
       pickupAddress: 'Locating...',
     );
 
-    // Phase 2: Active Ride Recovery
-    if (_apiClient != null && passengerId != 'unknown') {
-      try {
-        final response = await _apiClient!.dio.get('/rides/active/passenger');
-        if (!mounted) return;
-        final data = response.data;
-        if (data != null && data['rideId'] != null) {
-          final rideId = data['rideId'];
-          final status = data['status'];
-          
-          BookingStep restoredStep = BookingStep.searching;
-          if (status == 'accepted') restoredStep = BookingStep.confirmed;
-          else if (status == 'arrived') restoredStep = BookingStep.arrived;
-          else if (status == 'in_progress' || status == 'started') restoredStep = BookingStep.started;
-
-          state = state.copyWith(
-            step: restoredStep,
-            rideId: rideId,
-            pickupLocation: LatLng(
-                (data['pickupLat'] as num?)?.toDouble() ?? 0.0,
-                (data['pickupLng'] as num?)?.toDouble() ?? 0.0,
-            ),
-            pickupAddress: data['pickupAddress']?.toString(),
-            destinationLocation: LatLng(
-                (data['destinationLat'] as num?)?.toDouble() ?? 0.0,
-                (data['destinationLng'] as num?)?.toDouble() ?? 0.0,
-            ),
-            destinationAddress: data['destinationAddress']?.toString(),
-            estimatedFareAmount: int.tryParse(data['fare']?.toString() ?? ''),
-          );
-          
-          // Re-calculate route to show polyline on map
-          if (state.pickupLocation != null && state.destinationLocation != null) {
-            _calculateFare();
-          }
-          // A recovered still-searching ride gets its marker feed back too
-          // (cold start from a notification, or app relaunch mid-search).
-          if (restoredStep == BookingStep.searching) {
-            _startWatchdog();
-            _startSearchingKekeFeed();
-          }
-          return; // Skip default search if recovered
-        }
-      } catch (e) {
-        print('Active ride recovery failed: $e');
-        if (!mounted) return;
-        state = state.copyWith(
-          notice: BookingNotice.of(RideOutcome.serverFailed,
-              dispatchResult: 'active_ride_recovery_failed'),
-        );
-      }
-    }
+    /*
+     * Active-ride recovery is NOT done here any more.
+     *
+     * It used to be: a partial restore wedged into the middle of map setup,
+     * after an `await getCurrentLocation()` — so "Where to?" was painted before
+     * the ride was even asked about — and it dropped the driver details and the
+     * coordination block that `syncStatus()` knew how to restore. On any error
+     * it replaced the screen with a generic failure notice.
+     *
+     * recoverActiveRide() now runs BEFORE map setup, from the constructor, and
+     * again on resume, reconnect and login. See active_ride_recovery.dart.
+     */
 
     if (!mounted) return;
     _triggerReverseGeocode(center, isPickup: true);
@@ -658,6 +641,30 @@ class BookingController extends StateNotifier<BookingState> {
   }
 
   void _dispatchRequest({required bool isRetry}) {
+    /*
+     * Never request a ride while the active-ride question is unresolved.
+     *
+     * If the passenger already has a live ride, the server will refuse with
+     * ACTIVE_RIDE_EXISTS — correctly — and the passenger sees a failure for
+     * something that was never their mistake. Settle the question first.
+     */
+    if (_activeRideUnresolved) {
+      _analytics.log('stale_home_active_ride_detected', {
+        'step': state.step.name,
+        'reason': 'booking_attempted_before_recovery_resolved',
+      });
+      /*
+       * Settle it now rather than swallowing the tap. If the answer is "no live
+       * ride" the request continues by itself, so the passenger sees a normal
+       * booking with a short pause instead of a button that did nothing. If
+       * there IS a ride, recovery routes them into it.
+       */
+      unawaited(recoverActiveRide(RecoverySource.manualRetry).then((r) {
+        if (!mounted) return;
+        if (r.outcome == RecoveryOutcome.none) _dispatchRequest(isRetry: isRetry);
+      }));
+      return;
+    }
     if (_socketService == null) {
       _showRequestBlocked(RideOutcome.serverFailed);
       return;
@@ -673,8 +680,10 @@ class BookingController extends StateNotifier<BookingState> {
 
     final rideId = 'RIDE-${DateTime.now().millisecondsSinceEpoch}';
     
-    // Join the ride room BEFORE emitting the request so no early broadcasts are missed
-    _socketService!.emit('join', {'userId': rideId, 'role': 'ride'});
+    // Join the ride room BEFORE emitting the request so no early broadcasts are
+    // missed. Registered with the service too, so an auto-reconnect rejoins it —
+    // the emit alone is forgotten the moment the socket drops.
+    _socketService!.updateActiveRide(rideId);
 
     _socketService!.emit('ride:request', {
       'rideId': rideId,
@@ -727,61 +736,274 @@ class BookingController extends StateNotifier<BookingState> {
     );
   }
 
-  Future<void> syncStatus() async {
-    if (_apiClient == null || passengerId == 'unknown' || state.rideId == null) return;
-    if (state.step == BookingStep.completed) return; // receipt is showing, don't disturb
+
+  // ═══════════════════════════════════════════════════════════════════
+  //  Active-ride recovery — the single authoritative path
+  // ═══════════════════════════════════════════════════════════════════
+
+  ActiveRideRecoveryService? _recoveryService;
+  bool _recoveryInFlight = false;
+
+  /// True until the first recovery attempt resolves.
+  ///
+  /// Booking is blocked while this holds, so a passenger cannot create a second
+  /// ride in the window before we know whether they already have one.
+  bool _activeRideUnresolved = true;
+  bool get activeRideUnresolved => _activeRideUnresolved;
+
+  ActiveRideRecoveryService? get _recovery {
+    if (_apiClient == null) return null;
+    return _recoveryService ??= ActiveRideRecoveryService(_apiClient!.dio, _analytics);
+  }
+
+  /// Ask the server whether this passenger has a live ride, and make the app
+  /// agree with the answer.
+  ///
+  /// Every trigger funnels through here — cold start, resume, socket reconnect,
+  /// network reconnect, login, notification tap and the ACTIVE_RIDE_EXISTS
+  /// fallback. One implementation, so the restored state cannot depend on which
+  /// event happened to fire.
+  ///
+  /// Reentrancy is guarded: a resume that lands at the same moment as a socket
+  /// reconnect must not produce two calls racing to write state.
+  Future<ActiveRideRecoveryResult> recoverActiveRide(RecoverySource source) async {
+    final service = _recovery;
+    if (service == null || passengerId == 'unknown') {
+      // Not signed in yet. Not a failure — there is nobody to recover for.
+      _activeRideUnresolved = false;
+      return const ActiveRideRecoveryResult(RecoveryOutcome.none);
+    }
+
+    if (_recoveryInFlight) {
+      return const ActiveRideRecoveryResult(RecoveryOutcome.failed, error: 'in_flight');
+    }
+    _recoveryInFlight = true;
+
+    // A cold start shows a restoring state rather than the booking screen. Any
+    // later trigger leaves the current screen alone — the passenger is already
+    // looking at something real.
+    if (source == RecoverySource.coldStart && state.step == BookingStep.loading) {
+      state = state.copyWith(isRestoringRide: true);
+    }
+
     try {
-      final response = await _apiClient!.dio.get('/rides/active/passenger');
-      final data = response.data;
-      if (data != null && data['rideId'] == state.rideId) {
-        final status = data['status'];
-        print('[PASSENGER_SYNC] Redundant healing caught status: $status');
-        
-        BookingStep targetStep = state.step;
-        if (status == 'accepted') targetStep = BookingStep.confirmed;
-        else if (status == 'arrived') targetStep = BookingStep.arrived;
-        else if (status == 'in_progress' || status == 'started') targetStep = BookingStep.started;
-        
-        if (targetStep != state.step || state.assignedDriver == null) {
-          print('[PASSENGER_SYNC] Healing state to $targetStep with driver: ${data['driverDetails']}');
-          state = state.copyWith(
-            step: targetStep,
-            assignedDriver: data['driverDetails'],
-          );
-        }
+      final result = await service.fetch(source: source);
+      if (!mounted) return result;
 
-        if (targetStep != BookingStep.searching) {
-          _stopWatchdog();
-        }
+      switch (result.outcome) {
+        case RecoveryOutcome.found:
+          _applyRecoveredRide(result.snapshot!, source);
+          _activeRideUnresolved = false;
+          _recoveryRetryTimer?.cancel();
+          break;
 
-        // Restore or discard the coordination card from the same payload, so a
-        // cold start does not flash the ordinary tracking screen and then jump.
-        final block = data['coordination'];
-        if (block is Map) {
-          final parsed = RideCoordination.fromWire(
-            block.map((k, v) => MapEntry(k.toString(), v)),
-            role: 'passenger',
-          );
-          if (parsed != null) {
-            _rememberCoordinationEvent(parsed.eventId);
-            state = state.copyWith(
-              coordination: parsed.copyWith(
-                answered: !parsed.decisionOpen && parsed.decidedByMe,
-              ),
-            );
-          } else if (state.coordination != null) {
-            state = state.copyWith(clearCoordination: true);
+        case RecoveryOutcome.none:
+          _activeRideUnresolved = false;
+          /*
+           * A ride we were TRACKING has ended while we were away — clear it.
+           *
+           * Deliberately limited to the tracking states. A rideId also exists
+           * while searching (the client mints one before the server accepts
+           * the request), and clearing there would throw away the passenger's
+           * chosen pickup and destination the moment a booking was refused.
+           */
+          const tracking = {
+            BookingStep.confirmed, BookingStep.arrived, BookingStep.started,
+          };
+          if (state.rideId != null && tracking.contains(state.step)) {
+            _clearRecoveredRide();
           }
-        } else if (state.coordination != null) {
-          // The server says there is nothing to coordinate. A prompt we still
-          // remember is obsolete — do not replay it.
-          state = state.copyWith(clearCoordination: true);
-        }
+          _recoveryRetryTimer?.cancel();
+          state = state.copyWith(isRestoringRide: false, rideRestoreFailed: false);
+          // Nothing to restore: let the map lay out the booking flow.
+          if (state.step == BookingStep.loading) _initializeMap();
+          break;
+
+        case RecoveryOutcome.failed:
+          /*
+           * We could not ask. Deliberately NOT treated as "no ride": the old
+           * code wrote a generic failure notice here and dropped the passenger
+           * on the booking screen, which is how somebody with a driver on the
+           * way ended up being told "Something went wrong on our end".
+           *
+           * Keep whatever is on screen, stay unresolved so booking stays
+           * blocked, and let the retry triggers handle it.
+           */
+          state = state.copyWith(
+            isRestoringRide: false,
+            rideRestoreFailed: true,
+          );
+          _scheduleRecoveryRetry();
+          break;
       }
-    } catch (e) {
-      print('Status sync failed: $e');
+      return result;
+    } finally {
+      _recoveryInFlight = false;
     }
   }
+
+  /// Make the app agree with a ride the server says is live.
+  void _applyRecoveredRide(ActiveRideSnapshot snap, RecoverySource source) {
+    final previousStep = state.step;
+    final previousRideId = state.rideId;
+
+    state = state.copyWith(
+      step: snap.step,
+      rideId: snap.rideId,
+      isRestoringRide: false,
+      // Never carry a stale error into a restored ride.
+      clearNotice: true,
+      pickupLocation: (snap.pickupLat != null && snap.pickupLng != null)
+          ? LatLng(snap.pickupLat!, snap.pickupLng!)
+          : state.pickupLocation,
+      pickupAddress: snap.pickupAddress ?? state.pickupAddress,
+      destinationLocation: (snap.destinationLat != null && snap.destinationLng != null)
+          ? LatLng(snap.destinationLat!, snap.destinationLng!)
+          : state.destinationLocation,
+      destinationAddress: snap.destinationAddress ?? state.destinationAddress,
+      estimatedFareAmount: snap.fare ?? state.estimatedFareAmount,
+      // Driver details come from the same payload. The old recovery ignored
+      // them, so a restored ride showed a tracking screen with no driver on it.
+      assignedDriver: snap.driverDetails ?? state.assignedDriver,
+      pickupCode: snap.pickupCode ?? state.pickupCode,
+      paymentMethod: snap.paymentMode ?? state.paymentMethod,
+    );
+
+    _applyRecoveredCoordination(snap.coordination);
+
+    /*
+     * Join the ride room.
+     *
+     * updateActiveRide() had zero callers anywhere in the app, so the socket
+     * never subscribed to `ride:<id>` and the auto-rejoin-on-reconnect logic
+     * inside SocketService could never fire — it was guarding a field nothing
+     * ever set. Driver location updates and chat both broadcast to that room.
+     */
+    _socketService?.updateActiveRide(snap.rideId);
+
+    if (snap.step == BookingStep.searching) {
+      _startWatchdog();
+      _startSearchingKekeFeed();
+    } else {
+      _stopWatchdog();
+    }
+
+    /*
+     * Draw the route, but do NOT call _calculateFare().
+     *
+     * That method clears estimatedFareAmount before it starts and raises an
+     * `invalidRoute` notice if routing fails — so on a restored ride it would
+     * discard the server's authoritative fare and put a red error banner over a
+     * trip that is proceeding perfectly well.
+     */
+    _restoreRoutePolyline();
+
+    // Reconciliation is worth its own event: it is the proof that the app
+    // caught up with something that happened while it was dead.
+    if (previousRideId == snap.rideId && previousStep != snap.step) {
+      _analytics.log('active_ride_recovery_reconciled', {
+        'source': source.wire,
+        'rideId': snap.rideId,
+        'from': previousStep.name,
+        'to': snap.step.name,
+        'status': snap.status,
+      });
+    }
+  }
+
+  /// Redraw the route line for a restored ride. Cosmetic, and silent on
+  /// failure: the fare and the ride state came from the server and must not be
+  /// disturbed by a map lookup that did not work.
+  Future<void> _restoreRoutePolyline() async {
+    final from = state.pickupLocation;
+    final to = state.destinationLocation;
+    if (from == null || to == null) return;
+    try {
+      final estimate = await _mapRepo.calculateRouteAndFare(from, to);
+      if (!mounted) return;
+      state = state.copyWith(
+        activeRoutePolyline: List<LatLng>.from(estimate['polyline']),
+        estimatedDistance: estimate['distance'] as String?,
+        estimatedTime: estimate['time'] as String?,
+      );
+    } catch (_) {
+      // No route line. The ride is unaffected.
+    }
+  }
+
+  void _applyRecoveredCoordination(Map<String, dynamic>? block) {
+    if (block == null) {
+      if (state.coordination != null) state = state.copyWith(clearCoordination: true);
+      return;
+    }
+    final parsed = RideCoordination.fromWire(block, role: 'passenger');
+    if (parsed == null) {
+      if (state.coordination != null) state = state.copyWith(clearCoordination: true);
+      return;
+    }
+    _rememberCoordinationEvent(parsed.eventId);
+    state = state.copyWith(
+      coordination: parsed.copyWith(
+        answered: !parsed.decisionOpen && parsed.decidedByMe,
+      ),
+    );
+  }
+
+  /// A ride that has become terminal while we were away. Idempotent.
+  void _clearRecoveredRide() {
+    _stopWatchdog();
+    _socketService?.updateActiveRide(null);
+    /*
+     * There is no persistent local ride notification to clear: the app depends
+     * on firebase_messaging only and has no local-notification plugin. When one
+     * is added, cancelling it belongs here — this is the single terminal-cleanup
+     * path and it is already idempotent.
+     */
+    state = state.copyWith(
+      step: BookingStep.idle,
+      clearRideId: true,
+      clearAssignedDriver: true,
+      clearCoordination: true,
+      isRestoringRide: false,
+    );
+  }
+
+  Timer? _recoveryRetryTimer;
+
+  /// Retry a failed check on a short backoff.
+  ///
+  /// A phone that has just woken up frequently has no usable network for a few
+  /// seconds. Retrying quietly is far better than asking the passenger to do
+  /// anything, and far better than guessing that they have no ride.
+  void _scheduleRecoveryRetry() {
+    _recoveryRetryTimer?.cancel();
+    _recoveryRetryTimer = Timer(const Duration(seconds: 4), () {
+      if (!mounted) return;
+      if (!_activeRideUnresolved && !state.rideRestoreFailed) return;
+      recoverActiveRide(RecoverySource.manualRetry);
+    });
+  }
+
+  /// The app came back to the foreground. Called by the lifecycle observer.
+  Future<void> onAppResumed() => recoverActiveRide(RecoverySource.appResume);
+
+  /// Connectivity returned.
+  Future<void> onNetworkRestored() => recoverActiveRide(RecoverySource.networkReconnect);
+
+  /// Re-read the server and heal whatever drifted.
+  ///
+  /// Delegates to [recoverActiveRide] rather than carrying its own copy of the
+  /// parsing and mapping. It used to be a second, subtly different
+  /// implementation — and critically it began with
+  /// `if (state.rideId == null) return;`, which made it a no-op in the one
+  /// situation that matters most: after process death, when there is no local
+  /// rideId to check against.
+  Future<void> syncStatus({RecoverySource source = RecoverySource.socketReconnect}) async {
+    // A receipt is showing. The ride is over; do not disturb it.
+    if (state.step == BookingStep.completed) return;
+    await recoverActiveRide(source);
+  }
+
 
   /// Controlled refresh cadence for nearby-Keke markers while a ride is
   /// searching. Deliberately NOT per-heartbeat: before a driver has accepted,
@@ -1531,6 +1753,51 @@ class BookingController extends StateNotifier<BookingState> {
         RideOutcomeWire.fromCode(code) ?? RideOutcome.serverFailed;
     print('[PASSENGER] Server error: code=$code message=$message '
         '→ ${outcome.code}');
+
+    /*
+     * ACTIVE_RIDE_EXISTS is not an error to show the passenger — it is the
+     * server telling us we have forgotten a ride the passenger is still on.
+     * The guard is correct; our screen was stale.
+     *
+     * Recover into the real ride instead of rendering "Something went wrong".
+     * This is a safety net: proper cold-start recovery should mean the
+     * passenger never reaches a booking screen with a live ride outstanding,
+     * and `stale_home_active_ride_detected` exists so we can tell whether that
+     * is actually holding in the field.
+     */
+    if (outcome == RideOutcome.activeRideExists) {
+      _analytics.log('stale_home_active_ride_detected', {
+        'step': state.step.name,
+        'hadLocalRideId': state.rideId != null,
+      });
+      _searchTimeoutTimer?.cancel();
+      _stopWatchdog();
+      unawaited(recoverActiveRide(RecoverySource.activeRideExistsFallback).then((r) {
+        if (!mounted) return;
+        if (r.found) return; // routed into the real ride; nothing to report
+
+        /*
+         * The two answers disagree: the dispatcher refused because a ride
+         * exists, but the active-ride endpoint says there is none. Rare — a
+         * ride ending in the moment between the two calls does it — and we
+         * cannot restore something the server will not describe.
+         *
+         * Fall back to the honest, informative notice rather than leaving the
+         * passenger on a spinner. It is not the generic "something went wrong":
+         * it says a ride is already in progress, which is what the server just
+         * told us.
+         */
+        _reportOutcome(outcome, dispatchResult: 'server_rejected');
+        state = state.copyWith(
+          step: state.step == BookingStep.searching
+              ? BookingStep.previewEstimate
+              : state.step,
+          notice: BookingNotice.of(outcome, dispatchResult: 'server_rejected'),
+        );
+        _scheduleNoticeClear();
+      }));
+      return;
+    }
 
     if (state.step == BookingStep.searching) {
       _searchTimeoutTimer?.cancel();

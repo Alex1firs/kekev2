@@ -58,7 +58,29 @@ router.get("/active/passenger", authMiddleware, async (req: AuthRequest, res: Re
             order: { createdAt: "DESC" }
         });
 
-        if (!ride) return res.status(200).json({});
+        /*
+         * Recovery telemetry.
+         *
+         * Every active-ride recovery in the passenger app IS a call to this
+         * endpoint, so this is the one place that sees all of them. The app's
+         * own analytics only reach a device console; operations needs the
+         * server view to answer "are passengers repeatedly failing to recover
+         * their rides".
+         *
+         * `source` is a hint from the client (cold_start, app_resume, …). It is
+         * logged, never trusted, and never used to change behaviour.
+         */
+        const source = String(req.query.source ?? 'unspecified').slice(0, 40);
+
+        if (!ride) {
+            console.log(JSON.stringify({
+                level: 'info', scope: 'active_ride_recovery',
+                event: 'active_ride_recovery_none', source,
+                // The passenger id only. No name, phone or email.
+                passengerId: req.user!.userId,
+            }));
+            return res.status(200).json({});
+        }
 
         let driverDetails = null;
         if (ride.driverId) {
@@ -89,9 +111,23 @@ router.get("/active/passenger", authMiddleware, async (req: AuthRequest, res: Re
         // ordinary tracking screen in between.
         const coordination = buildCoordination(ride, 'passenger', driverDetails?.phone != null);
 
+        console.log(JSON.stringify({
+            level: 'info', scope: 'active_ride_recovery',
+            event: 'active_ride_recovery_found', source,
+            rideId: ride.rideId, status: ride.status,
+            hasDriver: driverDetails != null,
+            hasCoordination: coordination != null,
+            passengerId: req.user!.userId,
+        }));
+
         return res.status(200).json({ ...ride, driverDetails, coordination });
     } catch (err: any) {
-        console.error('[RIDES] Active passenger ride error:', err?.message);
+        console.error(JSON.stringify({
+            level: 'error', scope: 'active_ride_recovery',
+            event: 'active_ride_recovery_failed',
+            source: String(req.query.source ?? 'unspecified').slice(0, 40),
+            error: err?.message,
+        }));
         return res.status(500).json(errBody(ErrorCode.INTERNAL_ERROR, "We couldn't load your active ride. Please try again."));
     }
 });

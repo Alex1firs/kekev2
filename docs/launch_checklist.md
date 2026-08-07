@@ -85,8 +85,8 @@ Then:
 ```bash
 cd /opt/kekev2/apps/keke_backend
 docker compose up -d api_staging      # staging first
-# later, for production:
-docker compose up -d api_prod
+# later, for production — blue-green, zero downtime:
+cd /opt/kekev2 && ./infra/deploy.sh
 ```
 
 Confirm it took (should print `"available": true`):
@@ -226,11 +226,18 @@ cd /opt/kekev2 && git pull --ff-only
 docker compose -f apps/keke_backend/docker-compose.yml exec -T postgres_shared \
   pg_dump -U postgres keke_prod_db | gzip > /root/keke_prod_pre_park_$(date +%F-%H%M).sql.gz
 
-# 2. Build, migrate, restart (~10s of 502s)
-cd apps/keke_backend
-docker compose build api_prod
-docker compose run --rm api_prod npm run migration:run
-docker compose up -d api_prod
+# 2. Deploy — blue-green, zero downtime.
+#
+# Builds, checks migration compatibility, migrates once, starts the idle
+# colour, proves it healthy, then moves nginx with a graceful reload and
+# drains the old colour. Measured at zero failed requests.
+#
+# The old `docker compose up -d api_prod` sequence cost ~40 seconds of 502s
+# and no longer works: there is no api_prod service, only api_prod_blue and
+# api_prod_green. See docs/zero_downtime_deploys.md.
+./infra/deploy.sh
+
+# Rollback, if needed:  ./infra/rollback.sh
 
 # 3. Smoke test
 curl -s https://api.kekeride.ng/health

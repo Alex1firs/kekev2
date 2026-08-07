@@ -348,9 +348,11 @@ In order of cost. Try them in this order.
 # 1. Suspend (seconds, no deploy). Rides already assigned are untouched.
 #    See §2a — needs a staff login, not the admin key.
 
-# 2. Environment off (one restart, ~10s of 502s).
-PARK_DISPATCH_ENABLED=false
-docker compose up -d api_prod
+# 2. Environment off. A deploy, so no downtime — but it is NOT immediate:
+#    it costs a build and a drain. For an incident use the Redis switch above,
+#    which takes effect at once.
+PARK_DISPATCH_ENABLED=false        # in .env
+cd /opt/kekev2 && ./infra/deploy.sh
 
 # 3. Roll the code back (a deploy).
 git revert -m 1 <merge-commit> && git push origin main

@@ -44,6 +44,9 @@ services:
     mem_limit: 250m
     environment:
       DEPLOY_COLOUR: blue
+      # Shared with green so emits cross during a deploy; never shared with
+      # staging, which runs against the same Redis.
+      SOCKET_ADAPTER_NAMESPACE: prod
       NODE_ENV: production
       PORT: 4000
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres_shared:5432/keke_prod_db
@@ -134,6 +137,7 @@ services:
     mem_limit: 250m
     environment:
       DEPLOY_COLOUR: green
+      SOCKET_ADAPTER_NAMESPACE: prod
       NODE_ENV: production
       PORT: 4000
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres_shared:5432/keke_prod_db
@@ -222,6 +226,9 @@ services:
     restart: always
     mem_limit: 270m
     environment:
+      # Deliberately NOT 'prod': staging shares this Redis, and an identical
+      # key would put staging sockets in production's broadcast fabric.
+      SOCKET_ADAPTER_NAMESPACE: staging
       NODE_ENV: staging
       PORT: 3000
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres_shared:5432/keke_staging_db

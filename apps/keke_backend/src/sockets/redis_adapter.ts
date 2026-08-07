@@ -37,6 +37,8 @@ import { redis } from '../config/redis';
 export interface AdapterResult {
     enabled: boolean;
     reason?: string;
+    /** The pub/sub key namespace. Shared by blue and green, never with staging. */
+    key?: string;
 }
 
 function log(level: 'info' | 'warn' | 'error', message: string, extra: Record<string, unknown> = {}) {
@@ -67,9 +69,21 @@ export async function installRedisAdapter(io: Server): Promise<AdapterResult> {
         pubClient.on('error', (e: Error) => log('warn', 'adapter pub client error', { error: e.message }));
         subClient.on('error', (e: Error) => log('warn', 'adapter sub client error', { error: e.message }));
 
-        io.adapter(createAdapter(pubClient, subClient));
-        log('info', 'Redis adapter installed; room broadcasts now cross processes.');
-        return { enabled: true };
+        /*
+         * ── The key is not optional ──────────────────────────────────
+         * Production and staging share one Redis. Without a distinct key both
+         * environments join the SAME pub/sub channels, and every room name they
+         * have in common becomes a cross-environment leak. `admin` is common by
+         * construction: a staging broadcast would land in production admin
+         * dashboards and vice versa.
+         *
+         * Blue and green must share a key — carrying emits between them is the
+         * entire point. Staging must not share theirs with either.
+         */
+        const key = `socket.io-${process.env.SOCKET_ADAPTER_NAMESPACE ?? 'default'}`;
+        io.adapter(createAdapter(pubClient, subClient, { key }));
+        log('info', 'Redis adapter installed; room broadcasts now cross processes.', { key });
+        return { enabled: true, key };
     } catch (err: any) {
         log('error', 'Could not install the Redis adapter; continuing in-process.', {
             error: String(err?.message ?? err),

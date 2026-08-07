@@ -17,6 +17,7 @@ import '../domain/chat_message.dart';
 import '../domain/driver_profile.dart';
 import '../domain/driver_state.dart';
 import '../domain/trip_request.dart';
+import 'active_ride_recovery.dart';
 import '../domain/ride_coordination.dart';
 import '../../../core/services/analytics_service.dart';
 import '../../../core/network/socket_service.dart';
@@ -69,6 +70,19 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
         )) {
     _socketService = initialSocket;
     if (_userId != 'guest' && _userId != 'session_invalid') {
+      /*
+       * Recovery is NOT nested inside the profile fetch.
+       *
+       * It used to be, and a profile fetch that failed — a slow network, a 500,
+       * anything — meant no ride recovery at all. A driver mid-trip whose app
+       * restarted on a bad connection lost the ride entirely, because the code
+       * that would have restored it lived inside the success branch of an
+       * unrelated request.
+       *
+       * The two are independent questions: "who is this driver" and "is this
+       * driver on a ride". They are now asked independently.
+       */
+      recoverActiveRide(DriverRecoverySource.coldStart);
       _initDriver();
     } else {
       state = state.copyWith(isLoading: false);
@@ -96,7 +110,7 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
     if (!mounted) return;
     print('[LIFECYCLE] App resumed — forcing socket reconnect + sync.');
     _socketService?.reconnect();
-    syncStatus();
+    syncStatus(source: DriverRecoverySource.appResume);
     if (state.operationStatus == OperationStatus.available) {
       _sendHeartbeat();
       _refreshBatteryWarning();
@@ -105,8 +119,10 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
 
   void _listenToNotifications() {
     _notificationSubscription = _notificationService.intentStream.listen((data) {
-      print('[DRIVER_SYNC] Notification intent received: $data. Triggering sync...');
-      syncStatus();
+      print('[DRIVER_SYNC] Notification intent received: $data. Verifying with server...');
+      // The payload is a hint. The ride may have moved on — or been cancelled —
+      // between the push being sent and the driver tapping it.
+      syncStatus(source: DriverRecoverySource.notificationTap);
 
       // A coordination push and the socket event that accompanies it describe the
       // SAME question. The server sends a matching `eventId` on both, so marking
@@ -620,77 +636,14 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
           profileLoaded: true,
         );
 
-        // Phase 2: Active Ride Recovery
-        try {
-          final rideResponse = await _apiClient.dio.get('/rides/active/driver');
-          final rideData = rideResponse.data;
-          if (rideData != null && rideData['rideId'] != null) {
-            final rideId = rideData['rideId'];
-            final status = rideData['status'];
-            
-            TripStep step = TripStep.accepted;
-            if (status == 'arrived') step = TripStep.arrived;
-            else if (status == 'in_progress' || status == 'started') step = TripStep.started;
-
-            final recoveredRequest = TripRequest(
-              id: rideData['rideId'],
-              passengerId: rideData['passengerId'],
-              isCash: rideData['paymentMode'] == 'cash',
-              passengerName: 'User', // Generic placeholder for recovery
-              pickupAddress: rideData['pickupAddress'] ?? '',
-              pickupLocation: LatLng(
-                  double.parse(rideData['pickupLat'].toString()), 
-                  double.parse(rideData['pickupLng'].toString())
-              ),
-              destinationAddress: rideData['destinationAddress'] ?? '',
-              destinationLocation: LatLng(
-                  double.parse(rideData['destinationLat'].toString()), 
-                  double.parse(rideData['destinationLng'].toString())
-              ),
-              fare: double.parse(rideData['fare'].toString()),
-              distance: 0,
-              pickupCode: rideData['pickupCode']?.toString(),
-            );
-
-            // Restore the delayed-ride card from the SAME payload. A driver whose
-            // app was killed mid-conversation comes back to the question still in
-            // front of them, with the countdown where it actually is — the whole
-            // point of the server sending an absolute deadline.
-            RideCoordination? recoveredCoordination;
-            final block = rideData['coordination'];
-            if (block is Map && step == TripStep.accepted) {
-              recoveredCoordination = RideCoordination.fromWire(
-                block.map((k, v) => MapEntry(k.toString(), v)),
-                role: 'driver',
-              );
-              if (recoveredCoordination != null) {
-                _rememberCoordinationEvent(recoveredCoordination.eventId);
-                recoveredCoordination = recoveredCoordination.copyWith(
-                  // An answer already on record must not be presented as an open
-                  // question — the driver already said their piece.
-                  answered: !recoveredCoordination.decisionOpen &&
-                      recoveredCoordination.decidedByMe,
-                );
-              }
-            }
-
-            state = state.copyWith(
-              operationStatus: OperationStatus.busy,
-              tripStep: step,
-              activeRequest: recoveredRequest,
-              coordination: recoveredCoordination,
-            );
-            print('[DRIVER_INIT] Recovered ride $rideId'
-                '${recoveredCoordination != null ? ' with an open coordination prompt' : ''}');
-            _startWatchdog();
-          }
-        } catch (e) {
-          print('Active ride recovery failed for driver: $e');
-          if (mounted) {
-            state = state.copyWith(
-              errorMessage: 'Could not restore your active ride. Please check your connection.',
-            );
-          }
+        /*
+         * Active-ride recovery is started from the constructor, independently
+         * of this fetch — see the note there. Awaited here only so that
+         * _maybeAutoResumeOnline() below cannot run before the ride question is
+         * settled.
+         */
+        while (_recoveryInFlight) {
+          await Future<void>.delayed(const Duration(milliseconds: 20));
         }
 
         // Auto-resume Online if the driver had chosen to stay online and isn't
@@ -1023,10 +976,182 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
   /// chosen to stay online — so they never have to re-toggle. Runs once, and
   /// only when the driver is genuinely eligible AND location is usable (we
   /// never fake "Online" without a working location source).
+
+  // ═══════════════════════════════════════════════════════════════════
+  //  Active-ride recovery — the single authoritative path
+  // ═══════════════════════════════════════════════════════════════════
+
+  DriverActiveRideRecoveryService? _recoveryService;
+  bool _recoveryInFlight = false;
+  Timer? _recoveryRetryTimer;
+
+  /// True until the first recovery attempt resolves.
+  ///
+  /// Going Online is blocked while this holds. A driver who is secretly still
+  /// on a ride must not advertise themselves as available — the server would
+  /// refuse to dispatch to them anyway (DriverEligibilityService excludes
+  /// `already_on_active_ride`), so the only thing an optimistic Online achieves
+  /// is a driver who believes they are working and receives nothing.
+  bool _activeRideUnresolved = true;
+  bool get activeRideUnresolved => _activeRideUnresolved;
+
+  DriverActiveRideRecoveryService get _recovery =>
+      _recoveryService ??= DriverActiveRideRecoveryService(
+        _apiClient.dio,
+        log: (event, params) => print('[DRIVER_RECOVERY] $event $params'),
+      );
+
+  /// Ask the server whether this driver is on a ride, and make the app agree.
+  ///
+  /// Every trigger funnels through here: cold start, resume, socket reconnect,
+  /// network reconnect, notification tap, and the guard in front of Go Online.
+  Future<DriverRecoveryResult> recoverActiveRide(DriverRecoverySource source) async {
+    if (_recoveryInFlight) {
+      return const DriverRecoveryResult(
+          DriverRecoveryOutcome.failed, error: 'in_flight');
+    }
+    _recoveryInFlight = true;
+    try {
+      final result = await _recovery.fetch(source: source);
+      if (!mounted) return result;
+
+      switch (result.outcome) {
+        case DriverRecoveryOutcome.found:
+          _applyRecoveredRide(result.snapshot!, source);
+          _activeRideUnresolved = false;
+          _recoveryRetryTimer?.cancel();
+          break;
+
+        case DriverRecoveryOutcome.none:
+          _activeRideUnresolved = false;
+          _recoveryRetryTimer?.cancel();
+          /*
+           * "No active ride" does NOT mean "nothing on screen is real".
+           *
+           * A pending offer the driver has not accepted yet is still
+           * `searching` server-side and is invisible to /rides/active/driver.
+           * Clearing on a null here would wipe a freshly-arrived offer — the
+           * driver hears the alert and no screen appears. That race is why the
+           * three cases below are distinguished rather than collapsed.
+           */
+          if (state.tripStep != TripStep.none) {
+            // We believed we were on an accepted trip; the server says we are
+            // not. It ended while we were away.
+            _clearRecoveredRide();
+          } else if (state.activeRequest != null &&
+              _offerReceivedAt != null &&
+              DateTime.now().difference(_offerReceivedAt!) >
+                  const Duration(seconds: 40)) {
+            // A pending offer past its 30s lifetime: its countdown froze while
+            // backgrounded and it can never be accepted. Clear it so the driver
+            // returns to `available` and can receive new requests.
+            print('[DRIVER_SYNC] Clearing stale pending offer.');
+            _resetToAvailable();
+          }
+          // Otherwise: a fresh pending offer. Leave it alone.
+          break;
+
+        case DriverRecoveryOutcome.failed:
+          /*
+           * Could not ask. Stay unresolved: Go Online remains blocked and the
+           * current screen is left alone. The old code showed an error banner
+           * and left the driver `offline`, which auto-resume then read as
+           * "free to go Online".
+           */
+          /*
+           * Deliberately silent. Writing errorMessage here clobbered more
+           * specific messages the driver was already reading — a refused
+           * coordination answer, a debt warning — with a generic reconnect
+           * notice about a background check they never asked for.
+           *
+           * The consequence that matters is already covered: staying
+           * unresolved keeps Go Online blocked, and _maybeAutoResumeOnline()
+           * surfaces its own message at the moment it actually matters.
+           */
+          _scheduleRecoveryRetry();
+          break;
+      }
+      return result;
+    } finally {
+      _recoveryInFlight = false;
+    }
+  }
+
+  void _applyRecoveredRide(
+      DriverActiveRideSnapshot snap, DriverRecoverySource source) {
+    final previousStep = state.tripStep;
+    final previousId = state.activeRequest?.id;
+
+    RideCoordination? coordination;
+    if (snap.coordination != null && snap.step == TripStep.accepted) {
+      coordination = RideCoordination.fromWire(snap.coordination!, role: 'driver');
+      if (coordination != null) {
+        _rememberCoordinationEvent(coordination.eventId);
+        coordination = coordination.copyWith(
+          answered: !coordination.decisionOpen && coordination.decidedByMe,
+        );
+      }
+    }
+
+    state = state.copyWith(
+      operationStatus: OperationStatus.busy,
+      tripStep: snap.step,
+      activeRequest: snap.request,
+      coordination: coordination,
+      clearErrorMessage: true,
+    );
+
+    /*
+     * Join the ride room. The old recovery never did, so a restarted driver
+     * received no passenger chat, no cancellation broadcast and no coordination
+     * event for the rest of the trip — the socket was in the driver room only.
+     */
+    _socketService?.updateActiveRide(snap.request.id);
+    _startWatchdog();
+
+    if (previousId == snap.request.id && previousStep != snap.step) {
+      print('[DRIVER_RECOVERY] active_ride_recovery_reconciled '
+          '${{'from': previousStep.name, 'to': snap.step.name}}');
+    }
+  }
+
+  /// The ride ended while we were away. Idempotent.
+  ///
+  /// Delegates to the existing teardown so there is one definition of "this
+  /// driver is free again" — it already clears the request, the coordination
+  /// card, the socket ride room and the watchdog.
+  void _clearRecoveredRide() {
+    _stopWatchdog();
+    finishAndGoAvailable();
+  }
+
+  void _scheduleRecoveryRetry() {
+    _recoveryRetryTimer?.cancel();
+    _recoveryRetryTimer = Timer(const Duration(seconds: 4), () {
+      if (!mounted || !_activeRideUnresolved) return;
+      recoverActiveRide(DriverRecoverySource.manualRetry);
+    });
+  }
+
+  Future<void> onNetworkRestored() =>
+      recoverActiveRide(DriverRecoverySource.networkReconnect);
+
   Future<void> _maybeAutoResumeOnline() async {
     if (_autoResumeAttempted) return;
     _autoResumeAttempted = true;
     if (!mounted) return;
+    /*
+     * Never resume Online while we do not know whether this driver is on a
+     * ride. A failed recovery used to leave operationStatus `offline`, which
+     * this method read as "free" and acted on — putting a driver who was still
+     * carrying a passenger back into the available pool.
+     */
+    if (_activeRideUnresolved) {
+      state = state.copyWith(
+        errorMessage: 'Checking for an active ride before going Online…',
+      );
+      return;
+    }
     if (state.operationStatus != OperationStatus.offline) return; // already on a ride
     if (state.profile.status != DriverStatus.approved) return;
     if (state.profile.debtAmount >= 5000) return;
@@ -1229,6 +1354,22 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
   ///
   /// Only the fields the coordination flow reads are set — this is not a
   /// substitute for the real acceptance path.
+  /// Place a PENDING offer — one the driver has not accepted.
+  ///
+  /// Distinct from [debugSetActiveRide]: an unaccepted offer leaves tripStep at
+  /// `none` and the ride is still `searching` server-side, so it is invisible to
+  /// /rides/active/driver. That difference is what the stale-offer handling in
+  /// [recoverActiveRide] turns on, and it needs to be reachable from a test.
+  @visibleForTesting
+  void debugSetOffer(TripRequest request, {DateTime? receivedAt}) {
+    _offerReceivedAt = receivedAt ?? DateTime.now();
+    state = state.copyWith(
+      activeRequest: request,
+      tripStep: TripStep.none,
+      isLoading: false,
+    );
+  }
+
   @visibleForTesting
   void debugSetActiveRide(TripRequest request, TripStep step) {
     state = state.copyWith(
@@ -1863,87 +2004,19 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
     }
   }
 
-  Future<void> syncStatus() async {
-    try {
-      final response = await _apiClient.dio.get('/rides/active/driver');
-      final data = response.data;
-      
-      if (data != null && data['rideId'] != null) {
-        final status = data['status'];
-        print('[DRIVER_SYNC] Redundant healing caught status: $status');
-        
-        // If we don't have the request in memory, perform full recovery
-        if (state.activeRequest == null) {
-           print('[DRIVER_SYNC] Recovering active ride into memory...');
-           // Re-trigger the init logic which handles recovery
-           _initDriver();
-           return;
-        }
-
-        TripStep targetStep = state.tripStep;
-        if (status == 'arrived') targetStep = TripStep.arrived;
-        else if (status == 'in_progress' || status == 'started') targetStep = TripStep.started;
-
-        if (targetStep != state.tripStep) {
-          state = state.copyWith(
-            tripStep: targetStep,
-            // Arrival settles the driver-late question, and a trip under way is
-            // never in this conversation at all.
-            clearCoordination: targetStep != TripStep.accepted,
-          );
-        }
-
-        // Restore or discard the coordination card from the same payload, so a
-        // cold start does not flash the ordinary trip screen and then jump.
-        final block = data['coordination'];
-        if (block is Map) {
-          final parsed = RideCoordination.fromWire(
-            block.map((k, v) => MapEntry(k.toString(), v)),
-            role: 'driver',
-          );
-          if (parsed != null) {
-            _rememberCoordinationEvent(parsed.eventId);
-            state = state.copyWith(
-              coordination: parsed.copyWith(
-                answered: !parsed.decisionOpen && parsed.decidedByMe,
-              ),
-            );
-          } else if (state.coordination != null) {
-            state = state.copyWith(clearCoordination: true);
-          }
-        } else if (state.coordination != null) {
-          state = state.copyWith(clearCoordination: true);
-        }
-      } else if (data == null || data['rideId'] == null) {
-         // Server reports no ACTIVE (accepted) ride. Only force-reset if we
-         // believed we were on an accepted trip. A pending, not-yet-accepted
-         // OFFER is still 'searching' server-side and is INVISIBLE to
-         // /rides/active/driver — so a null here must NOT wipe it. Otherwise a
-         // sync racing a freshly-recovered ride:request clears the request
-         // screen (driver hears the sound but no screen appears).
-         if (state.tripStep != TripStep.none) {
-           print('[DRIVER_SYNC] Server says no active ride. Force resetting.');
-           _stopWatchdog();
-           finishAndGoAvailable();
-         } else if (state.activeRequest != null &&
-             _offerReceivedAt != null &&
-             DateTime.now().difference(_offerReceivedAt!) >
-                 const Duration(seconds: 40)) {
-           // A pending offer that's older than its 30s lifetime is stale — its
-           // countdown froze while backgrounded and it will never be accepted.
-           // Clear it so the driver returns to `available` and can receive new
-           // requests. (Fresh offers are < 40s old and are kept intact, so the
-           // recover-offer-on-reconnect race fix still holds.)
-           print('[DRIVER_SYNC] Clearing stale pending offer (countdown froze while backgrounded).');
-           _resetToAvailable();
-         } else {
-           print('[DRIVER_SYNC] No accepted ride server-side; keeping any fresh pending offer intact.');
-         }
-      }
-    } catch (e) {
-      print('Status sync failed: $e');
-    }
+  /// Re-read the server and heal whatever drifted.
+  ///
+  /// Delegates to [recoverActiveRide] rather than carrying a second copy of the
+  /// parsing and mapping. It previously had its own — and when the ride was not
+  /// in memory it called `_initDriver()`, re-running the whole profile fetch to
+  /// get at the recovery buried inside it.
+  Future<void> syncStatus({
+    DriverRecoverySource source = DriverRecoverySource.socketReconnect,
+  }) async {
+    if (state.tripStep == TripStep.completed) return; // receipt showing
+    await recoverActiveRide(source);
   }
+
 
   void _startWatchdog() {
     _watchdogTimer?.cancel();

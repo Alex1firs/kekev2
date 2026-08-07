@@ -41,10 +41,16 @@ class SocketService {
   @visibleForTesting
   void injectEvent(Map<String, dynamic> event) => _controller.add(event);
 
+  /// Remember which ride room this driver belongs in, and join it now.
+  ///
+  /// Remembering is the important half: [_initSocket] re-joins [_activeRideId]
+  /// on every reconnect. Routed through [emit] rather than touching `_socket`
+  /// directly so the offline test double records it like any other event —
+  /// otherwise "did recovery rejoin the ride room?" is untestable.
   void updateActiveRide(String? rideId) {
     _activeRideId = rideId;
-    if (rideId != null && _socket?.connected == true) {
-      _socket!.emit('join', {'userId': rideId, 'role': 'ride'});
+    if (rideId != null && isConnected) {
+      emit('join', {'userId': rideId, 'role': 'ride'});
     }
   }
 

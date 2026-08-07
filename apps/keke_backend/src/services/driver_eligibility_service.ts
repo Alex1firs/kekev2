@@ -15,7 +15,17 @@ import { DriverProfile } from '../models/DriverProfile';
 import { WalletService } from './wallet_service';
 
 /** Statuses that mean a driver is mid-ride and must not be offered another. */
-export const DRIVER_BUSY_RIDE_STATES = ['accepted', 'arrived', 'in_progress'] as const;
+/*
+ * Ride states in which a driver must not be offered another ride.
+ *
+ * `started` is included defensively. Nothing persists it today — trip-start
+ * writes `in_progress` and only BROADCASTS 'started' to match the passenger
+ * UI's expected string — but RideStatus.STARTED exists, several read paths
+ * accept it, and if anything ever writes it this exclusion would silently stop
+ * working and a driver could be offered a second ride mid-trip. Listing it
+ * costs one array entry.
+ */
+export const DRIVER_BUSY_RIDE_STATES = ['accepted', 'arrived', 'in_progress', 'started'] as const;
 
 export interface EligibilityContext {
   /** Cash rides additionally exclude debt-blocked drivers. */

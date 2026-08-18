@@ -75,14 +75,65 @@ export function maskEmail(email?: string | null): string | null {
 }
 
 /**
+ * Text the passenger app stores when it has no address at all. Not a place,
+ * and must not be rendered as one — the console says "Area not recorded"
+ * instead, which is the difference between missing data and a location called
+ * "Location selected".
+ */
+const ADDRESS_PLACEHOLDERS = new Set([
+    'location selected',
+    'selected location',
+    'current location',
+    'my location',
+    'unknown',
+    'unnamed road',
+]);
+
+/**
+ * An Open Location Code ("plus code") such as `4QHQ+3WF`. Google's geocoder
+ * returns these when a pin has no street address, and 211 of 824 production
+ * pickups start with one. It identifies a square on the earth precisely and
+ * tells an operator nothing, so it is stripped when anything human follows it
+ * and reported as unrecorded when it does not.
+ */
+const PLUS_CODE = /^[23456789CFGHJMPQRVWX]{4,8}\+[23456789CFGHJMPQRVWX]{2,3}$/i;
+
+/** Country suffix — every ride is in Nigeria, so it never distinguishes two. */
+const COUNTRY = /^nigeria$/i;
+
+/**
  * "Area" from a full address: the trailing locality, not the street.
+ *
  * Coarse on purpose — the list view is for supply patterns, not doorsteps.
+ * Operations needs to read "Awada" or "Upper Iweka" and know where to put
+ * drivers tomorrow.
+ *
+ * Real captured addresses are messy, because they come from whatever Google
+ * returned to the passenger's handset at request time. This drops the parts
+ * that cannot distinguish one Onitsha neighbourhood from another — the country,
+ * a bare plus code, a house number, a placeholder — and keeps the rest. It
+ * never invents a locality: when nothing meaningful survives, the answer is
+ * null and the console says so.
  */
 export function areaOf(address?: string | null): string | null {
     if (!address) return null;
-    const parts = address.split(',').map((p) => p.trim()).filter(Boolean);
+
+    const parts = address
+        .split(',')
+        .map((p) => p.trim())
+        .filter(Boolean)
+        // A leading "4QHQ+3WF" is noise when a street follows it, and the whole
+        // address when it does not — both handled by dropping it here and
+        // returning null below if nothing is left.
+        .filter((p) => !PLUS_CODE.test(p))
+        .filter((p) => !COUNTRY.test(p))
+        // Pure house/plot numbers ("109", "3 1") locate a doorstep, not an area.
+        .filter((p) => !/^[\d\s-]+$/.test(p));
+
     if (parts.length === 0) return null;
-    if (parts.length === 1) return parts[0];
+    if (parts.length === 1) {
+        return ADDRESS_PLACEHOLDERS.has(parts[0].toLowerCase()) ? null : parts[0];
+    }
     return parts.slice(-2).join(', ');
 }
 

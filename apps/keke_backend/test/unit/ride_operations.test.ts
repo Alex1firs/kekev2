@@ -440,3 +440,55 @@ describe('every dispatch scenario yields a distinguishable outcome', () => {
         expect(a).toEqual(b);
     });
 });
+
+// ══════════════════════════════════════════════════════════════════════
+//  Area extraction against REAL captured addresses
+// ══════════════════════════════════════════════════════════════════════
+
+describe('area extraction survives what the passenger app actually stores', () => {
+    // Every string below is a real production pickupAddress, or the shape of
+    // one. 211 of 824 production pickups begin with a plus code and some are
+    // nothing but a placeholder — an area column built for tidy addresses
+    // renders those as if they were places.
+    const { areaOf } = require('../../src/services/dispatch_monitor_query_service');
+
+    it('keeps the locality from a well-formed address', () => {
+        expect(areaOf('12 Zik Avenue, Aroma Junction, Awka')).toBe('Aroma Junction, Awka');
+        expect(areaOf('Awka')).toBe('Awka');
+        expect(areaOf(null)).toBeNull();
+    });
+
+    it('drops the country, which never distinguishes two Onitsha rides', () => {
+        expect(areaOf('Okpoko Police Station, Onitsha, Nigeria'))
+            .toBe('Okpoko Police Station, Onitsha');
+    });
+
+    it('strips a leading plus code but keeps the street behind it', () => {
+        expect(areaOf('4QGP+JPF, Nweweka Street')).toBe('Nweweka Street');
+    });
+
+    it('reports a bare plus code as no area at all', () => {
+        // "4QHQ+3WF" is a precise square on the earth and tells an operator
+        // nothing. Rendering it in the AREA column is worse than blank,
+        // because it looks like data.
+        expect(areaOf('4QHQ+3WF')).toBeNull();
+    });
+
+    it('treats the app\'s placeholder text as missing, not as a place', () => {
+        expect(areaOf('Location selected')).toBeNull();
+        expect(areaOf('Current Location')).toBeNull();
+        expect(areaOf('Unnamed Road')).toBeNull();
+    });
+
+    it('drops bare house numbers, which locate a doorstep not an area', () => {
+        expect(areaOf('109, Upper New Market Road')).toBe('Upper New Market Road');
+        expect(areaOf('SOPROM HOTEL & SUITES LTD, Ogbatuluenyi Drive, 3 1, Onitsha, Nigeria'))
+            .toBe('Ogbatuluenyi Drive, Onitsha');
+    });
+
+    it('never invents a locality when nothing meaningful survives', () => {
+        expect(areaOf('Nigeria')).toBeNull();
+        expect(areaOf('4QHQ+3WF, Nigeria')).toBeNull();
+        expect(areaOf('   ')).toBeNull();
+    });
+});

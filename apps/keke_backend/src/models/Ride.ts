@@ -185,6 +185,35 @@ export class Ride {
     @Column({ type: "varchar", length: 120, nullable: true })
     cancellationReason!: string | null;
 
+    // --- Terminal outcome, for Ride Operations -------------------------
+    // `status` says what happened; these say why. Denormalised onto the ride
+    // row on purpose: the operations table renders REASON for every row, and
+    // joining the event trail per row would be an N+1 across the console's
+    // primary query. The event trail remains authoritative — these are written
+    // from it, never instead of it. See services/ride_outcome.ts.
+
+    /**
+     * Stable machine-readable code from RideOutcomeCode. Null means the reason
+     * was never recorded (a ride predating this telemetry), which the console
+     * renders as "Reason unavailable — legacy ride" rather than a guess.
+     */
+    @Index()
+    @Column({ type: "varchar", length: 48, nullable: true })
+    outcomeReason!: string | null;
+
+    /**
+     * The finer dispatch discriminator when one exists — e.g.
+     * `offers_delivered_none_accepted` vs `no_eligible_drivers`. Kept separate
+     * from the code so reporting can group coarsely and investigate finely.
+     */
+    @Column({ type: "varchar", length: 64, nullable: true })
+    outcomeDetail!: string | null;
+
+    /** 'passenger' | 'driver' | 'admin' | 'system'. Null when nobody cancelled. */
+    @Index()
+    @Column({ type: "varchar", length: 16, nullable: true })
+    cancelledByRole!: string | null;
+
     /**
      * An in-progress trip far past its expected duration. Flagged for a human,
      * never auto-cancelled: a real trip happened and a real fare is owed.

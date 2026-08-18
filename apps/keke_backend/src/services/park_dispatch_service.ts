@@ -49,6 +49,7 @@ import { DriverPresenceService } from './driver_presence_service';
 import { DriverPresenceState, PresenceSource } from '../models/DriverPresence';
 import { ParkDispatchSwitch } from './park_dispatch_switch';
 import { StaffPushEscalation } from './staff_push_escalation';
+import { RideOutcomeCode } from './ride_outcome';
 
 export const ParkDispatchAuditAction = {
     PARK_JOB_CLAIMED: 'PARK_JOB_CLAIMED',
@@ -1041,7 +1042,15 @@ export class ParkDispatchService {
 
         await rideRepo.createQueryBuilder()
             .update()
-            .set({ status: 'failed' as any })
+            .set({
+                status: 'failed' as any,
+                // Park exhaustion is reached only after direct dispatch found
+                // nobody, so the supply story is the same one: there was no
+                // Keke to send. `outcomeDetail` records that the park fallback
+                // was tried and also came back empty.
+                outcomeReason: RideOutcomeCode.NO_ELIGIBLE_DRIVER,
+                outcomeDetail: 'park_dispatch_exhausted',
+            })
             .where('"rideId" = :rideId AND status = :searching', { rideId, searching: 'searching' })
             .execute();
 

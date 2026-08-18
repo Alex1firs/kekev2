@@ -114,7 +114,9 @@ async function init() {
     fetchActiveRides().catch(() => {});
     fetchFinanceSummary().catch(() => {});
     fetchDebtLeaderboard().catch(() => {});
-    fetchRideHistory().catch(() => {});
+    // Ride Operations is NOT prefetched. It now costs three queries (rows,
+    // summary, filter options) against the whole ride table, and the section
+    // switch below loads it on demand. Same reasoning as the overview poll.
     fetchPayouts().catch(() => {});
     fetchSosAlerts().catch(() => {});
 
@@ -166,7 +168,7 @@ function switchSection(id) {
     if (id === 'held-rides')    fetchHeldRides();
     if (id === 'finance')       { fetchFinanceSummary(); fetchDebtLeaderboard(); }
     if (id === 'payouts')       fetchPayouts();
-    if (id === 'history')       fetchRideHistory();
+    if (id === 'history')       enterRideOperations();
     if (id === 'live-riders')   { fetchLiveRiders(); toggleLiveAutoRefresh(); }
     if (id === 'live-requests')  enterLiveRequests();
     if (id === 'driver-dispatch-metrics') fetchDispatchMetrics();
@@ -629,19 +631,215 @@ async function fetchFinanceSummary() {
     if (platformEl) platformEl.innerText = `₦${Number(summary.platformRevenue).toLocaleString()}`;
 }
 
+// ===================== Ride Operations =====================
+// The investigation console. Every query is server-side: the browser holds one
+// page of rides and nothing more, however large the ride table becomes.
+
+let roState = { page: 1, pageSize: 25, total: 0 };
+let roDebounce = null;
+
+/** Read the filter controls into the query the API expects. */
+function roFilters() {
+    const v = (id) => (document.getElementById(id)?.value || '').trim();
+    const p = { page: roState.page, pageSize: roState.pageSize };
+    if (v('ro-q')) p.q = v('ro-q');
+    if (v('ro-from')) p.from = new Date(v('ro-from')).toISOString();
+    // Inclusive end-of-day: an operator picking "18 Aug" means all of the 18th,
+    // not everything before midnight as it began.
+    if (v('ro-to')) {
+        const d = new Date(v('ro-to'));
+        d.setHours(23, 59, 59, 999);
+        p.to = d.toISOString();
+    }
+    if (v('ro-status')) p.status = v('ro-status');
+    if (v('ro-outcome')) p.outcomeReason = v('ro-outcome');
+    if (v('ro-actor')) p.cancelledByRole = v('ro-actor');
+    if (v('ro-pickup')) p.pickupArea = v('ro-pickup');
+    if (v('ro-dest')) p.destinationArea = v('ro-dest');
+    return p;
+}
+
+const roQuery = (extra = {}) =>
+    '?' + new URLSearchParams({ ...roFilters(), ...extra }).toString();
+
+/** Outcome badge: colour carries the business meaning, not just the status. */
+function roOutcomeBadge(row) {
+    const cls = {
+        success: 'ro-b-ok',
+        supply: 'ro-b-supply',
+        behaviour: 'ro-b-behaviour',
+        technical: 'ro-b-tech',
+        intentional: 'ro-b-cancel',
+        unknown: 'ro-b-unknown',
+    }[row.outcomeClass] || 'ro-b-unknown';
+
+    const status = String(row.status || '').toUpperCase().replace('CANCELED', 'CANCELLED');
+    // Live rides have no outcome yet — that is not the same as an unrecorded
+    // one, and must not read as "we lost the reason".
+    const terminal = ['completed', 'failed', 'canceled'].includes(row.status);
+    if (!terminal) {
+        return `<span class="ro-badge ro-b-live">${escapeHtml(status.replace('_', ' '))}</span>`;
+    }
+    return `<span class="ro-badge ${cls}" title="${escapeHtml(row.outcomeReason || 'not recorded')}">
+                <strong>${escapeHtml(status)}</strong>
+                <span class="ro-badge-sep">·</span>${escapeHtml(row.outcomeLabel)}
+            </span>`;
+}
+
+function roTimeCell(iso) {
+    const d = new Date(iso);
+    const today = new Date();
+    const sameDay = d.toDateString() === today.toDateString();
+    return sameDay
+        ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        : d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
 async function fetchRideHistory() {
-    const history = await adminFetch('/rides/history');
     const list = document.getElementById('ride-history-list');
-    list.innerHTML = history.map(r => `
-        <tr>
-            <td>${new Date(r.createdAt).toLocaleDateString()}</td>
-            <td>${escapeHtml(r.rideId)}</td>
-            <td>${escapeHtml(r.status)}</td>
-            <td>${escapeHtml(r.paymentMode || 'cash').toUpperCase()}</td>
-            <td>₦${Number(r.fare).toLocaleString()}</td>
+    try {
+        const [data, summary] = await Promise.all([
+            adminFetch('/rides/operations' + roQuery()),
+            adminFetch('/rides/operations/summary' + roQuery()),
+        ]);
+        roState.total = data.total;
+        renderRideOpsCards(summary);
+        renderRideOpsRows(data.rows);
+        renderRideOpsPager(data);
+    } catch (e) {
+        list.innerHTML = `<tr><td colspan="8" class="ro-empty">Could not load rides: ${escapeHtml(e?.message || 'error')}</td></tr>`;
+    }
+    loadRideOpsFilterOptions();
+    loadRideOpsTelemetryState();
+}
+
+function renderRideOpsCards(s) {
+    const el = document.getElementById('ro-cards');
+    if (!el) return;
+    const card = (label, value, cls = '', hint = '') => `
+        <div class="ro-card ${cls}" ${hint ? `title="${escapeHtml(hint)}"` : ''}>
+            <div class="ro-card-v">${value}</div>
+            <div class="ro-card-l">${escapeHtml(label)}</div>
+        </div>`;
+    const secs = s.avgAcceptanceSeconds;
+    el.innerHTML = [
+        card('Requests', s.requests.toLocaleString()),
+        card('Completed', s.completed.toLocaleString(), 'ro-c-ok',
+             s.completionRate != null ? `${s.completionRate}% of requests` : ''),
+        card('Failed', s.failed.toLocaleString(), 'ro-c-bad'),
+        card('Cancelled', s.cancelled.toLocaleString(), 'ro-c-warn'),
+        card('No driver available', s.noDriverAvailable.toLocaleString(), 'ro-c-supply',
+             'Demand we could not serve — where to recruit drivers'),
+        card('Nobody accepted', s.noDriverAccepted.toLocaleString(), 'ro-c-behaviour',
+             'Drivers were there and did not take the trip'),
+        card('Avg acceptance', secs == null ? '—' : (secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m ${secs % 60}s`)),
+        // Shown deliberately: it is the honest measure of how far the trail
+        // reaches back, and it should visibly shrink over time.
+        card('Unexplained', s.unexplained.toLocaleString(), 'ro-c-unknown',
+             'Terminal rides with no recorded reason — these predate the dispatch trail'),
+    ].join('');
+}
+
+function renderRideOpsRows(rows) {
+    const list = document.getElementById('ride-history-list');
+    if (!rows.length) {
+        list.innerHTML = '<tr><td colspan="8" class="ro-empty">No rides match these filters.</td></tr>';
+        return;
+    }
+    list.innerHTML = rows.map(r => `
+        <tr class="ro-row" onclick="openRideInvestigation('${escapeHtml(r.rideId)}')">
+            <td class="ro-time">${escapeHtml(roTimeCell(r.requestedAt))}</td>
+            <td>
+                <div class="ro-name">${escapeHtml(r.passenger?.name || 'Unknown')}</div>
+                <div class="ro-sub">${escapeHtml(r.passenger?.phoneMasked || '')}</div>
+            </td>
+            <td><div class="ro-place">${escapeHtml(r.pickupArea || 'Area not recorded')}</div></td>
+            <td><div class="ro-place">${escapeHtml(r.destinationArea || 'Area not recorded')}</div></td>
+            <td>${roOutcomeBadge(r)}</td>
+            <td>${r.driver
+                    ? `<div class="ro-name">${escapeHtml(r.driver.name)}</div>
+                       <div class="ro-sub">${escapeHtml(r.driver.phoneMasked || '')}</div>`
+                    : '<span class="ro-none">No driver assigned</span>'}</td>
+            <td class="ro-num">${r.fare == null ? '—' : '₦' + Number(r.fare).toLocaleString()}</td>
+            <td class="ro-num"><span class="ro-view">View</span></td>
         </tr>
     `).join('');
-    if (!history.length) list.innerHTML = '<tr><td colspan="5">No ride history.</td></tr>';
+}
+
+function renderRideOpsPager(d) {
+    const el = document.getElementById('ro-pager');
+    if (!el) return;
+    const pages = Math.max(1, Math.ceil(d.total / d.pageSize));
+    const from = d.total === 0 ? 0 : (d.page - 1) * d.pageSize + 1;
+    const to = Math.min(d.page * d.pageSize, d.total);
+    el.innerHTML = `
+        <span class="ro-pager-info">${from.toLocaleString()}–${to.toLocaleString()} of ${d.total.toLocaleString()}</span>
+        <button class="ro-btn-ghost" ${d.page <= 1 ? 'disabled' : ''} onclick="rideOpsPage(${d.page - 1})">
+            <i class="fas fa-chevron-left"></i> Previous
+        </button>
+        <span class="ro-pager-info">Page ${d.page} of ${pages}</span>
+        <button class="ro-btn-ghost" ${d.page >= pages ? 'disabled' : ''} onclick="rideOpsPage(${d.page + 1})">
+            Next <i class="fas fa-chevron-right"></i>
+        </button>`;
+}
+
+window.rideOpsPage = function (p) {
+    roState.page = Math.max(1, p);
+    fetchRideHistory();
+};
+
+window.resetRideOpsFilters = function () {
+    ['ro-q', 'ro-from', 'ro-to', 'ro-status', 'ro-outcome', 'ro-actor', 'ro-pickup', 'ro-dest']
+        .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+    roState.page = 1;
+    fetchRideHistory();
+};
+
+/** Any filter change resets to page 1 — page 4 of a new filter is meaningless. */
+function bindRideOpsFilters() {
+    const rerun = () => { roState.page = 1; fetchRideHistory(); };
+    ['ro-status', 'ro-outcome', 'ro-actor', 'ro-from', 'ro-to'].forEach(id => {
+        document.getElementById(id)?.addEventListener('change', rerun);
+    });
+    ['ro-q', 'ro-pickup', 'ro-dest'].forEach(id => {
+        document.getElementById(id)?.addEventListener('input', () => {
+            clearTimeout(roDebounce);
+            // Debounced: a support agent typing a phone number should not fire
+            // eight queries against the ride table.
+            roDebounce = setTimeout(rerun, 350);
+        });
+    });
+}
+
+let roFilterOptionsLoaded = false;
+async function loadRideOpsFilterOptions() {
+    if (roFilterOptionsLoaded) return;
+    try {
+        const opts = await adminFetch('/rides/operations/filters');
+        const sel = document.getElementById('ro-outcome');
+        if (!sel) return;
+        const current = sel.value;
+        sel.innerHTML = '<option value="">Any reason</option>' + opts.outcomeReasons
+            .map(o => `<option value="${escapeHtml(o.code)}">${escapeHtml(o.label)} (${o.count})</option>`)
+            .join('');
+        sel.value = current;
+        roFilterOptionsLoaded = true;
+    } catch { /* the console still works without the dropdown */ }
+}
+
+async function loadRideOpsTelemetryState() {
+    const badge = document.getElementById('ro-telemetry-badge');
+    if (!badge) return;
+    try {
+        const s = await adminFetch('/rides/operations/telemetry');
+        // Surfaced because a thin timeline has two very different causes:
+        // nothing happened, or we were not recording.
+        badge.textContent = s.enabled ? 'Telemetry on' : 'Telemetry OFF';
+        badge.className = 'lr-role-badge ' + (s.enabled ? '' : 'ro-tel-off');
+        badge.title = s.enabled
+            ? 'Dispatch events are being recorded'
+            : `Dispatch telemetry is disabled${s.reason ? ': ' + s.reason : ''} — timelines will be incomplete`;
+    } catch { badge.textContent = '—'; }
 }
 
 // ===================== Live Riders (real-time driver monitoring) =====================
@@ -4203,3 +4401,243 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     init();
 });
+
+// ── Ride investigation drawer ──────────────────────────────────────────────
+// Everything an operations agent needs to answer "what happened to my ride?"
+// on one screen, and enough contact detail to ring the passenger back.
+
+let roDetail = null;
+
+/** Friendly sentence for one timeline entry. Falls back to the raw code. */
+function roTimelineLabel(e) {
+    const d = e.detail || {};
+    const who = e.driverName ? escapeHtml(e.driverName) : 'a driver';
+    switch (e.eventType) {
+        case 'ride_created':        return 'Ride requested';
+        case 'round_started':       return `Driver search started${e.radiusKm ? ` — ${e.radiusKm} km` : ''}`;
+        case 'round_transition':    return `Search widened to round ${d.toRound ?? '?'}`;
+        case 'candidate_discovered':return `${who} found nearby${e.distanceKm != null ? ` (${e.distanceKm.toFixed(1)} km)` : ''}`;
+        case 'eligibility_passed':  return `${who} eligible`;
+        case 'eligibility_rejected':return `${who} not eligible — ${escapeHtml(String(d.reason || 'reason not recorded'))}`;
+        case 'candidate_stale':     return `${who} skipped — location too old`;
+        case 'reservation_acquired':return `${who} reserved for this ride`;
+        case 'reservation_conflict':return `${who} already held by another ride`;
+        case 'notification_queued': return `Offer prepared for ${who}`;
+        case 'socket_offer_emitted':return `Offer sent to ${who}'s open app`;
+        case 'fcm_accepted_by_provider': return `Push notification accepted for ${who}`;
+        case 'offer_delivery_failed':return `Could not reach ${who} — ${escapeHtml(String(d.reason || 'no transport'))}`;
+        case 'device_offer_ack':    return `${who}'s phone confirmed the offer appeared`;
+        case 'driver_rejected':     return `${who} declined`;
+        case 'offer_expired':       return `${who} did not respond in time`;
+        case 'driver_accepted':     return `${who} accepted`;
+        case 'park_offered':        return 'Passed to park dispatch';
+        case 'park_claimed':        return 'A dispatcher took the request';
+        case 'park_driver_assigned':return `Dispatcher assigned ${who}`;
+        case 'park_dispatch_exhausted': return 'No park could supply a driver';
+        case 'dispatch_failed':     return `Search ended — ${escapeHtml(String(d.outcomeCode || 'no driver found'))}`;
+        case 'ride_cancelled':      return `Cancelled by ${escapeHtml(String(d.cancelledBy || 'unknown'))}`;
+        case 'driver_arrived':      return `Driver arrived at pickup${d.distanceFromPickupM != null ? ` (${d.distanceFromPickupM} m away)` : ''}`;
+        case 'trip_started':        return 'Trip started';
+        case 'trip_completed':      return `Trip completed${d.tripDurationSec ? ` — ${Math.round(d.tripDurationSec / 60)} min` : ''}`;
+        case 'stale_ride_detected': return 'Ride flagged as overdue';
+        case 'stale_auto_cancelled':return `Automatically cancelled — ${escapeHtml(String(d.reason || ''))}`;
+        default:                    return escapeHtml(e.eventType.replace(/_/g, ' '));
+    }
+}
+
+/** Milestones get emphasis; the rest is supporting detail. */
+function roTimelineTone(t) {
+    if (['ride_created', 'driver_accepted', 'driver_arrived', 'trip_started', 'trip_completed', 'park_driver_assigned'].includes(t)) return 'ro-tl-major';
+    if (['dispatch_failed', 'ride_cancelled', 'offer_delivery_failed', 'stale_auto_cancelled', 'park_dispatch_exhausted'].includes(t)) return 'ro-tl-bad';
+    if (['driver_rejected', 'offer_expired', 'eligibility_rejected', 'candidate_stale', 'reservation_conflict'].includes(t)) return 'ro-tl-warn';
+    return '';
+}
+
+const roTime = (iso) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+window.openRideInvestigation = async function (rideId) {
+    const drawer = document.getElementById('ro-drawer');
+    const body = document.getElementById('ro-d-body');
+    drawer.classList.remove('hidden');
+    document.getElementById('ro-d-title').textContent = 'Loading…';
+    document.getElementById('ro-d-sub').textContent = rideId;
+    body.innerHTML = '<div class="ro-loading">Loading ride…</div>';
+
+    try {
+        roDetail = await adminFetch('/rides/operations/' + encodeURIComponent(rideId));
+        renderRideInvestigation(roDetail);
+    } catch (e) {
+        body.innerHTML = `<div class="ro-empty">Could not load this ride: ${escapeHtml(e?.message || 'error')}</div>`;
+    }
+};
+
+window.closeRideInvestigation = function () {
+    document.getElementById('ro-drawer').classList.add('hidden');
+    roDetail = null;
+};
+
+function renderRideInvestigation(d) {
+    const r = d.ride;
+    const p = d.passenger;
+    const drv = d.driver;
+    const dispatch = d.dispatchSummary || {};
+
+    document.getElementById('ro-d-title').textContent = r.outcomeLabel;
+    document.getElementById('ro-d-sub').innerHTML =
+        `<span class="ro-mono">${escapeHtml(r.rideId)}</span> · ${escapeHtml(new Date(r.createdAt).toLocaleString())}`;
+
+    const dur = (a, b) => {
+        if (!a || !b) return null;
+        const s = Math.round((new Date(b) - new Date(a)) / 1000);
+        return s < 0 ? null : s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
+    };
+
+    const row = (label, value) =>
+        `<div class="ro-kv"><span>${escapeHtml(label)}</span><span>${value ?? '—'}</span></div>`;
+
+    // ── Summary ──────────────────────────────────────────────────────────
+    const summary = `
+      <section class="ro-panel">
+        <h4>Ride summary</h4>
+        ${row('Status', `<strong>${escapeHtml(String(r.status).toUpperCase())}</strong>`)}
+        ${row('Reason', r.outcomeRecorded
+            ? escapeHtml(r.outcomeLabel)
+            : `<span class="ro-none">${escapeHtml(r.outcomeLabel)}</span>`)}
+        ${r.outcomeDetail ? row('Detail', `<span class="ro-mono">${escapeHtml(r.outcomeDetail)}</span>`) : ''}
+        ${r.cancelledByRole ? row('Cancelled by', escapeHtml(r.cancelledByRole)) : ''}
+        ${row('Requested', escapeHtml(new Date(r.createdAt).toLocaleString()))}
+        ${row('Fare', r.finalFare != null ? `₦${Number(r.finalFare).toLocaleString()}`
+              : r.estimatedFare != null ? `₦${Number(r.estimatedFare).toLocaleString()} <span class="ro-sub">(estimated)</span>` : '—')}
+        ${row('Payment', escapeHtml(String(r.paymentMode || '—').toUpperCase()))}
+        ${row('Time to acceptance', dur(r.createdAt, r.acceptedAt) || '<span class="ro-none">Never accepted</span>')}
+        ${row('Pickup → arrival', dur(r.acceptedAt, r.arrivedAt))}
+        ${row('Trip duration', dur(r.startedAt, r.completedAt))}
+        ${r.dispatchMode && r.dispatchMode !== 'direct' ? row('Dispatch mode', escapeHtml(r.dispatchMode)) : ''}
+      </section>`;
+
+    // ── Passenger ────────────────────────────────────────────────────────
+    const passenger = `
+      <section class="ro-panel">
+        <h4>Passenger</h4>
+        ${row('Name', escapeHtml(p.name))}
+        ${row('Phone', `<span class="ro-mono">${escapeHtml(p.phoneMasked || '—')}</span>`)}
+        ${row('Email', `<span class="ro-mono">${escapeHtml(p.emailMasked || '—')}</span>`)}
+        ${row('Passenger ID', `<span class="ro-mono ro-sub">${escapeHtml(p.passengerId)}</span>`)}
+        ${row('History', `${p.completedRides} completed · ${p.cancelledRides} cancelled`)}
+        <div class="ro-actions">
+          <button class="ro-btn" onclick="revealRideContact('${escapeHtml(r.rideId)}')">
+            <i class="fas fa-phone"></i> Reveal &amp; call
+          </button>
+        </div>
+        <p class="ro-note">Contact details are masked. Revealing them is recorded in the audit log.</p>
+      </section>`;
+
+    // ── Driver ───────────────────────────────────────────────────────────
+    const driver = `
+      <section class="ro-panel">
+        <h4>Driver</h4>
+        ${drv ? `
+          ${row('Name', escapeHtml(drv.name))}
+          ${row('Phone', `<span class="ro-mono">${escapeHtml(drv.phoneMasked || '—')}</span>`)}
+          ${row('Driver ID', `<span class="ro-mono ro-sub">${escapeHtml(drv.driverId)}</span>`)}
+          ${row('Vehicle', escapeHtml([drv.vehicleModel, drv.vehiclePlate].filter(Boolean).join(' · ') || '—'))}
+          ${row('Driver status', escapeHtml(drv.driverStatus || '—'))}
+          ${row('Accepted at', drv.acceptedAt ? escapeHtml(new Date(drv.acceptedAt).toLocaleTimeString()) : '—')}
+        ` : `<div class="ro-none ro-none-block">No driver assigned</div>`}
+      </section>`;
+
+    // ── Journey ──────────────────────────────────────────────────────────
+    // Addresses come from the request itself — no geocoding call is made to
+    // open a ride, however many an operator opens.
+    const journey = `
+      <section class="ro-panel">
+        <h4>Journey</h4>
+        <div class="ro-journey">
+          <div class="ro-leg">
+            <span class="ro-dot ro-dot-pickup"></span>
+            <div>
+              <div class="ro-leg-area">${escapeHtml(r.pickupArea || 'Area not recorded')}</div>
+              <div class="ro-sub">${escapeHtml(r.pickupAddress || 'No address captured')}</div>
+            </div>
+          </div>
+          <div class="ro-leg">
+            <span class="ro-dot ro-dot-dest"></span>
+            <div>
+              <div class="ro-leg-area">${escapeHtml(r.destinationArea || 'Area not recorded')}</div>
+              <div class="ro-sub">${escapeHtml(r.destinationAddress || 'No address captured')}</div>
+            </div>
+          </div>
+        </div>
+        ${r.pickup ? `<a class="ro-btn-ghost ro-map-link" target="_blank" rel="noopener"
+              href="https://www.google.com/maps/dir/?api=1&origin=${r.pickup.lat},${r.pickup.lng}${r.destination ? `&destination=${r.destination.lat},${r.destination.lng}` : ''}">
+              <i class="fas fa-map-location-dot"></i> Open route in Maps</a>` : ''}
+      </section>`;
+
+    // ── Timeline ─────────────────────────────────────────────────────────
+    const tl = d.timeline || [];
+    const timeline = `
+      <section class="ro-panel">
+        <h4>Timeline <span class="ro-sub">${tl.length} events</span></h4>
+        ${tl.length ? `<ol class="ro-timeline">${tl.map(e => `
+            <li class="${roTimelineTone(e.eventType)}">
+              <span class="ro-tl-time">${escapeHtml(roTime(e.occurredAt))}</span>
+              <span class="ro-tl-text">${roTimelineLabel(e)}</span>
+            </li>`).join('')}</ol>`
+          : `<div class="ro-none ro-none-block">
+               No events recorded for this ride — it predates the dispatch trail.
+             </div>`}
+      </section>`;
+
+    // ── Dispatch diagnostics ─────────────────────────────────────────────
+    // The question this section answers: was it supply, behaviour, or us?
+    const diag = `
+      <section class="ro-panel">
+        <h4>Dispatch diagnostics</h4>
+        <div class="ro-diag">
+          ${[
+            ['Search rounds', dispatch.dispatchRound],
+            ['Widest radius', dispatch.radiusKm != null ? dispatch.radiusKm + ' km' : null],
+            ['Drivers found', dispatch.candidateCount],
+            ['Eligible', dispatch.eligibleDriverCount],
+            ['Offers sent', dispatch.notifiedDriverCount],
+            ['Confirmed on device', dispatch.acknowledgedCount],
+            ['Declined', dispatch.rejectionCount],
+            ['No response', dispatch.expiredOfferCount],
+            ['Delivery failures', dispatch.deliveryFailureCount],
+            ['Reservation conflicts', dispatch.reservationConflictCount],
+            ['Skipped — stale GPS', dispatch.staleCount],
+          ].map(([l, v]) => `
+            <div class="ro-diag-cell">
+              <div class="ro-diag-v">${v == null ? '—' : v}</div>
+              <div class="ro-diag-l">${escapeHtml(l)}</div>
+            </div>`).join('')}
+        </div>
+        ${dispatch.finalOutcomeCode ? `
+          <div class="ro-kv"><span>Final dispatch outcome</span>
+            <span class="ro-mono">${escapeHtml(dispatch.finalOutcomeCode)}</span></div>` : ''}
+        <details class="ro-tech">
+          <summary>Technical details</summary>
+          <div class="ro-tech-body">
+            ${row('Ride ID', `<span class="ro-mono">${escapeHtml(r.rideId)}</span>`)}
+            ${row('Evidence source', escapeHtml(dispatch.source || '—'))}
+            ${row('Pickup coords', r.pickup ? `<span class="ro-mono">${r.pickup.lat}, ${r.pickup.lng}</span>` : '—')}
+            ${row('Destination coords', r.destination ? `<span class="ro-mono">${r.destination.lat}, ${r.destination.lng}</span>` : '—')}
+            ${row('Outcome code', `<span class="ro-mono">${escapeHtml(r.outcomeReason || 'null')}</span>`)}
+            ${row('Legacy cancellation reason', `<span class="ro-mono">${escapeHtml(r.cancellationReason || 'null')}</span>`)}
+            ${row('Assignment mode', escapeHtml(r.assignmentMode || 'electronic'))}
+            ${row('App version', escapeHtml(p.appVersion || 'not reported'))}
+            ${row('Platform', escapeHtml(p.platform || 'not reported'))}
+          </div>
+        </details>
+      </section>`;
+
+    document.getElementById('ro-d-body').innerHTML =
+        summary + passenger + driver + journey + timeline + diag;
+}
+
+let roBound = false;
+/** Entry point for the Ride Operations section. Binds once, then loads. */
+function enterRideOperations() {
+    if (!roBound) { bindRideOpsFilters(); roBound = true; }
+    fetchRideHistory();
+}

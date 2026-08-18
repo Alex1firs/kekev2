@@ -10,6 +10,7 @@ import { SocketHandler } from './sockets/socket_handler';
 import { installRedisAdapter } from './sockets/redis_adapter';
 import { AppDataSource } from './config/data_source';
 import { Ride } from './models/Ride';
+import { RideOutcomeCode } from './services/ride_outcome';
 import financeRoutes from './routes/finance_routes';
 import adminRoutes from './routes/admin_routes';
 import driverRoutes from "./routes/driver_routes";
@@ -348,7 +349,16 @@ AppDataSource.initialize()
       const swept = await AppDataSource.getRepository(Ride)
         .createQueryBuilder()
         .update()
-        .set({ status: 'failed' as any })
+        // Not a supply failure and it must never be counted as one: these rides
+        // were mid-search when the process went away, so nothing was ever
+        // concluded about driver availability. TECHNICAL_FAILURE keeps them out
+        // of the "no Kekes in Awada" reports, where they would otherwise show
+        // up as demand we could not serve.
+        .set({
+          status: 'failed' as any,
+          outcomeReason: RideOutcomeCode.TECHNICAL_FAILURE,
+          outcomeDetail: 'dispatch_interrupted_by_restart',
+        })
         .where('status = :status AND "createdAt" < :cutoff', { status: 'searching', cutoff: tenMinAgo })
         .execute();
       if (swept.affected && swept.affected > 0) {

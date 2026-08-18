@@ -8,6 +8,8 @@ import staffAdminRoutes from "./staff_admin_routes";
 import parkAdminRoutes from "./park_admin_routes";
 import communicationsRoutes from "./communications_routes";
 import { DispatchMonitorQueryService } from "../services/dispatch_monitor_query_service";
+import { RideOperationsService, RideOperationsFilters } from "../services/ride_operations_service";
+import { RideOperationsSwitch } from "../services/ride_operations_switch";
 import { adminLimiter } from "../middleware/rate_limit";
 import { adminRejectionSchema } from "../services/validation_service";
 import { DriverStatus, DriverProfile } from "../models/DriverProfile";
@@ -101,6 +103,141 @@ router.get("/live-requests", requirePermission('monitor:read'), async (req: Admi
         res.json(data);
     } catch (err: any) {
         console.error('[ADMIN] live-requests error:', err?.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+//  RIDE OPERATIONS
+//
+//  The investigation console: every ride ever requested, with the reason it
+//  ended the way it did. Registered ahead of `/live-requests/:rideId` only for
+//  readability — these are their own path space.
+//
+//  Ordering within this block DOES matter: the literal sub-paths must be
+//  declared before `/:rideId`, or "summary" is read as a ride id.
+// ═══════════════════════════════════════════════════════════════════════
+
+/** Comma-separated or repeated query params, normalised to a string[]. */
+function listParam(v: unknown): string[] | undefined {
+    if (v == null) return undefined;
+    const raw = Array.isArray(v) ? v.map(String) : String(v).split(',');
+    const out = raw.map((s) => s.trim()).filter(Boolean);
+    return out.length ? out : undefined;
+}
+
+function operationsFilters(req: AdminRequest): RideOperationsFilters {
+    const q = req.query;
+    return {
+        from: q.from ? String(q.from) : undefined,
+        to: q.to ? String(q.to) : undefined,
+        status: listParam(q.status),
+        outcomeReason: listParam(q.outcomeReason),
+        cancelledByRole: listParam(q.cancelledByRole),
+        pickupArea: q.pickupArea ? String(q.pickupArea) : undefined,
+        destinationArea: q.destinationArea ? String(q.destinationArea) : undefined,
+        passengerId: q.passengerId ? String(q.passengerId) : undefined,
+        driverId: q.driverId ? String(q.driverId) : undefined,
+        q: q.q ? String(q.q) : undefined,
+        page: q.page ? Number(q.page) : undefined,
+        pageSize: q.pageSize ? Number(q.pageSize) : undefined,
+    };
+}
+
+/**
+ * GET /admin/rides/operations
+ * One page of rides, filtered and searched server-side.
+ */
+router.get("/rides/operations", requirePermission('monitor:read'), async (req: AdminRequest, res: Response) => {
+    try {
+        res.json(await RideOperationsService.list(operationsFilters(req)));
+    } catch (err: any) {
+        console.error('[ADMIN] ride-operations list error:', err?.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * GET /admin/rides/operations/summary
+ * The cards above the table. Honours the same filters as the list, so the
+ * numbers always describe the rows underneath them.
+ */
+router.get("/rides/operations/summary", requirePermission('monitor:read'), async (req: AdminRequest, res: Response) => {
+    try {
+        res.json(await RideOperationsService.summary(operationsFilters(req)));
+    } catch (err: any) {
+        console.error('[ADMIN] ride-operations summary error:', err?.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/** GET /admin/rides/operations/filters — dropdown values drawn from real data. */
+router.get("/rides/operations/filters", requirePermission('monitor:read'), async (_req: AdminRequest, res: Response) => {
+    try {
+        res.json(await RideOperationsService.filterOptions());
+    } catch (err: any) {
+        console.error('[ADMIN] ride-operations filters error:', err?.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * GET /admin/rides/operations/telemetry
+ * Whether the durable dispatch trail is currently being written. Shown in the
+ * console so an operator reading a thin timeline can tell "nothing happened"
+ * apart from "we were not recording".
+ */
+router.get("/rides/operations/telemetry", requirePermission('monitor:read'), async (_req: AdminRequest, res: Response) => {
+    try {
+        res.json(await RideOperationsSwitch.state());
+    } catch (err: any) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * POST /admin/rides/operations/telemetry
+ * The no-deploy kill switch. Disable-only by design: it cannot switch telemetry
+ * on when the environment says off, so a monitoring credential can never enable
+ * writes the deployment did not sanction. Requires admin:write, not monitor:read.
+ */
+router.post("/rides/operations/telemetry", requirePermission('admin:write'), async (req: AdminRequest, res: Response) => {
+    try {
+        const enabled = req.body?.enabled === true;
+        const reason = (req.body?.reason as string | undefined)?.slice(0, 200) || 'no reason given';
+        const actor = req.admin?.label ?? SYSTEM_LEGACY_ADMIN;
+
+        if (enabled) await RideOperationsSwitch.enable();
+        else await RideOperationsSwitch.disable(reason, String(actor));
+
+        await auditAdmin(req, enabled ? 'ENABLE_RIDE_TELEMETRY' : 'DISABLE_RIDE_TELEMETRY', 'SETTING', 'ride_operations_telemetry', { reason });
+        res.json(await RideOperationsSwitch.state());
+    } catch (err: any) {
+        console.error('[ADMIN] ride-operations telemetry toggle error:', err?.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * GET /admin/rides/operations/:rideId
+ * The investigation view for ANY ride, live or terminal.
+ *
+ * This is deliberately the same DispatchMonitorQueryService.requestDetail the
+ * live monitor uses — it was always keyed by rideId alone, and the only thing
+ * that ever made it "live only" was that nothing linked to it for a finished
+ * ride. Reusing it means a completed ride and an in-flight one are investigated
+ * through one code path, and cannot disagree.
+ */
+router.get("/rides/operations/:rideId", requirePermission('monitor:read'), async (req: AdminRequest, res: Response) => {
+    try {
+        const detail = await DispatchMonitorQueryService.requestDetail(String(req.params.rideId));
+        if (!detail) return res.status(404).json({ error: 'Ride not found' });
+        await auditAdmin(req, 'VIEW_RIDE_INVESTIGATION', 'RIDE', String(req.params.rideId), {
+            status: detail.ride.status,
+        });
+        res.json(detail);
+    } catch (err: any) {
+        console.error('[ADMIN] ride-operations detail error:', err?.message);
         res.status(500).json({ error: err.message });
     }
 });

@@ -96,7 +96,15 @@ export class DispatchMonitorService {
      * Fire-and-forget by design — callers do not await it, and it never throws.
      */
     static record(args: RecordArgs): void {
-        void this.recordAsync(args);
+        // `void` alone is not enough. A rejection from recordAsync would become
+        // an UNHANDLED promise rejection — which, under Node's default in
+        // recent majors, terminates the process. This is called from inside the
+        // dispatch offer loop, so an unhandled rejection here would take out
+        // the API mid-ride. The catch is the difference between losing a
+        // monitoring row and losing every ride in flight.
+        this.recordAsync(args).catch((err: any) => {
+            console.warn(`[DISPATCH_MONITOR] record failed (${args.eventType}): ${err?.message}`);
+        });
     }
 
     /** Awaitable form, for tests and for callers that want ordering guarantees. */
@@ -107,9 +115,17 @@ export class DispatchMonitorService {
         let heartbeatAgeMs: number | null = null;
         let locationAgeMs: number | null = null;
         if (args.withFreshness && args.driverId) {
-            const f = await this.freshness(args.driverId);
-            heartbeatAgeMs = f.heartbeatAgeMs;
-            locationAgeMs = f.locationAgeMs;
+            // `freshness` guards its own await, but a synchronous throw from
+            // the Redis client (a closed connection surfaces that way) would
+            // escape this whole method. Freshness is decoration on a monitoring
+            // row; missing it is not a reason to lose the row.
+            try {
+                const f = await this.freshness(args.driverId);
+                heartbeatAgeMs = f.heartbeatAgeMs;
+                locationAgeMs = f.locationAgeMs;
+            } catch {
+                /* recorded without freshness rather than not recorded */
+            }
         }
 
         const row: Partial<DispatchEvent> = {

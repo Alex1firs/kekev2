@@ -21,6 +21,7 @@ import { DispatchEvent, DispatchEventType, OfferDeliveryState } from '../models/
 import { DispatchMonitorService } from './dispatch_monitor_service';
 import { StaleRideService, RideSnapshot } from './stale_ride_service';
 import { loadStaleRideConfig } from '../config/stale_ride_config';
+import { outcomeLabel, classifyOutcome, RideOutcomeCode } from './ride_outcome';
 
 /** Ride statuses the monitor treats as "live". */
 export const LIVE_RIDE_STATUSES: RideStatus[] = [
@@ -424,7 +425,15 @@ export class DispatchMonitorQueryService {
     }
 
     /** PII join, kept in one place so masking cannot be forgotten at a call site. */
-    private static async peopleFor(rides: Ride[]) {
+    /**
+     * Passenger users, driver profiles and driver phones for a set of rides,
+     * in three batched queries regardless of page size.
+     *
+     * Public so RideOperationsService can reuse it: the operations console and
+     * the live monitor must resolve identity the same way, or the same ride
+     * would render two different names depending on which page you opened.
+     */
+    static async peopleFor(rides: Ride[]) {
         const passengerIds = [...new Set(rides.map((r) => r.passengerId).filter(Boolean))];
         const driverIds = [...new Set(rides.map((r) => r.driverId).filter(Boolean))] as string[];
 
@@ -526,14 +535,22 @@ export class DispatchMonitorQueryService {
 
         const acceptedEvent = events.find((e) => e.eventType === DispatchEventType.DRIVER_ACCEPTED);
 
+        const driverProfile = ride.driverId ? profileById.get(ride.driverId) ?? null : null;
+
         return {
             ride: {
                 rideId: ride.rideId,
                 status: ride.status,
                 createdAt: new Date(ride.createdAt).toISOString(),
                 pickup: this.coords(ride.pickupLat, ride.pickupLng),
+                // The full address as captured at request time, alongside the
+                // coarse area. Operations reads "Awada", not a coordinate pair
+                // — and neither is re-geocoded here, so opening a ride costs no
+                // third-party API call.
+                pickupAddress: ride.pickupAddress ?? null,
                 pickupArea: areaOf(ride.pickupAddress),
                 destination: this.coords(ride.destinationLat, ride.destinationLng),
+                destinationAddress: ride.destinationAddress ?? null,
                 destinationArea: areaOf(ride.destinationAddress),
                 estimatedFare: ride.fare != null ? Number(ride.fare) : null,
                 finalFare: ride.finalFare != null ? Number(ride.finalFare) : null,
@@ -541,7 +558,40 @@ export class DispatchMonitorQueryService {
                 estimatedDurationSec: ride.estimatedDurationSec ?? null,
                 paymentMode: ride.paymentMode,
                 acceptedAt: ride.acceptedAt ? new Date(ride.acceptedAt).toISOString() : null,
+                arrivedAt: ride.arrivedAt ? new Date(ride.arrivedAt).toISOString() : null,
+                startedAt: ride.startedAt ? new Date(ride.startedAt).toISOString() : null,
+                completedAt: ride.completedAt ? new Date(ride.completedAt).toISOString() : null,
+
+                // WHY it ended. `outcomeRecorded: false` is the honest signal
+                // that this ride predates the trail — the console renders it as
+                // "Reason unavailable — legacy ride" rather than as an em dash,
+                // which would read as "nothing went wrong".
+                outcomeReason: ride.outcomeReason ?? null,
+                outcomeLabel: outcomeLabel(ride.outcomeReason),
+                outcomeClass: classifyOutcome(ride.outcomeReason as RideOutcomeCode | null),
+                outcomeRecorded: ride.outcomeReason != null,
+                outcomeDetail: ride.outcomeDetail ?? null,
+                cancelledByRole: ride.cancelledByRole ?? null,
+                cancellationReason: ride.cancellationReason ?? null,
+
+                dispatchMode: ride.dispatchMode ?? 'direct',
+                assignmentMode: ride.assignmentMode ?? null,
+                tripDurationSec: ride.tripDurationSec ?? null,
             },
+
+            // A ride with no driver says so explicitly. An absent block would
+            // render as an empty panel, which reads as a loading failure.
+            driver: ride.driverId
+                ? {
+                      driverId: ride.driverId,
+                      name: maskName(driverProfile?.firstName, driverProfile?.lastName),
+                      phoneMasked: maskPhone(people.driverPhones.get(ride.driverId)),
+                      vehiclePlate: driverProfile?.vehiclePlate ?? null,
+                      vehicleModel: driverProfile?.vehicleModel ?? null,
+                      driverStatus: driverProfile?.status ?? null,
+                      acceptedAt: ride.acceptedAt ? new Date(ride.acceptedAt).toISOString() : null,
+                  }
+                : null,
             passenger: {
                 passengerId: ride.passengerId,
                 name: maskName(passenger?.firstName, passenger?.lastName),
@@ -561,22 +611,100 @@ export class DispatchMonitorQueryService {
                 acceptedAt: acceptedEvent ? new Date(acceptedEvent.occurredAt).toISOString() : null,
             },
             candidates,
-            timeline: events.map((e) => ({
-                sequence: e.sequence,
-                eventType: e.eventType,
-                occurredAt: new Date(e.occurredAt).toISOString(),
-                driverId: e.driverId,
-                driverName: e.driverId
-                    ? maskName(profileById.get(e.driverId)?.firstName, profileById.get(e.driverId)?.lastName)
-                    : null,
-                dispatchRound: e.dispatchRound,
-                radiusKm: e.radiusKm,
-                distanceKm: e.distanceKm,
-                heartbeatAgeMs: e.heartbeatAgeMs,
-                locationAgeMs: e.locationAgeMs,
-                detail: e.detail,
-            })),
+            timeline: this.buildTimeline(ride, events, profileById),
         };
+    }
+
+    /**
+     * The chronological story of one ride, from two authoritative sources.
+     *
+     * The dispatch trail covers request → assignment. What happens AFTER a
+     * driver accepts — arrival, trip start, completion — is not in that trail:
+     * those transitions are recorded as timestamps on the ride row itself, by
+     * RideIntegrityService, because they carry GPS evidence that belongs with
+     * the ride rather than with dispatch. Neither source is complete alone.
+     *
+     * So the two are merged here rather than a third being invented. Nothing is
+     * synthesised: every entry corresponds to a row or a non-null timestamp
+     * that something actually wrote. A ride missing `arrivedAt` simply has no
+     * arrival entry — the timeline stays short rather than being padded out
+     * with plausible-looking steps.
+     */
+    private static buildTimeline(
+        ride: Ride,
+        events: DispatchEvent[],
+        profileById: Map<string, DriverProfile>,
+    ) {
+        type Entry = {
+            sequence: number;
+            source: 'dispatch_event' | 'ride_record';
+            eventType: string;
+            occurredAt: string;
+            driverId: string | null;
+            driverName: string | null;
+            dispatchRound: number | null;
+            radiusKm: number | null;
+            distanceKm: number | null;
+            heartbeatAgeMs: number | null;
+            locationAgeMs: number | null;
+            detail: Record<string, unknown> | null;
+        };
+
+        const entries: Entry[] = events.map((e) => ({
+            sequence: e.sequence,
+            source: 'dispatch_event',
+            eventType: e.eventType,
+            occurredAt: new Date(e.occurredAt).toISOString(),
+            driverId: e.driverId,
+            driverName: e.driverId
+                ? maskName(profileById.get(e.driverId)?.firstName, profileById.get(e.driverId)?.lastName)
+                : null,
+            dispatchRound: e.dispatchRound,
+            radiusKm: e.radiusKm,
+            distanceKm: e.distanceKm,
+            heartbeatAgeMs: e.heartbeatAgeMs,
+            locationAgeMs: e.locationAgeMs,
+            detail: e.detail,
+        }));
+
+        const driverName = ride.driverId
+            ? maskName(profileById.get(ride.driverId)?.firstName, profileById.get(ride.driverId)?.lastName)
+            : null;
+
+        const lifecycle: Array<[Date | null | undefined, string, Record<string, unknown> | null]> = [
+            [ride.arrivedAt, 'driver_arrived', ride.arrivedPickupDistanceM != null
+                ? { distanceFromPickupM: Math.round(Number(ride.arrivedPickupDistanceM)) } : null],
+            [ride.startedAt, 'trip_started', null],
+            // A terminal completedAt is also stamped on cancellations, so it is
+            // only read as a completion when the ride actually completed.
+            [ride.status === RideStatus.COMPLETED ? ride.completedAt : null, 'trip_completed',
+                ride.tripDurationSec != null ? { tripDurationSec: ride.tripDurationSec } : null],
+        ];
+
+        for (const [at, eventType, detail] of lifecycle) {
+            if (!at) continue;
+            entries.push({
+                // Sorted by time below; sequence only orders same-millisecond
+                // dispatch rows, and these never collide with those.
+                sequence: Number.MAX_SAFE_INTEGER,
+                source: 'ride_record',
+                eventType,
+                occurredAt: new Date(at).toISOString(),
+                driverId: ride.driverId ?? null,
+                driverName,
+                dispatchRound: null,
+                radiusKm: null,
+                distanceKm: null,
+                heartbeatAgeMs: null,
+                locationAgeMs: null,
+                detail,
+            });
+        }
+
+        return entries.sort((a, b) => {
+            const t = Date.parse(a.occurredAt) - Date.parse(b.occurredAt);
+            return t !== 0 ? t : a.sequence - b.sequence;
+        });
     }
 
     /**

@@ -30,6 +30,11 @@ import { NotificationService } from './notification_service';
 import { DispatchMonitorService } from './dispatch_monitor_service';
 import { DispatchEventType } from '../models/DispatchEvent';
 import { cancellationCopy, coordinationEventId } from './ride_coordination_contract';
+import {
+    RideOutcomeCode,
+    CancelActorRole,
+    outcomeFromCancellationReason,
+} from './ride_outcome';
 
 /**
  * The in-memory and realtime state only the socket handler owns. Registered once
@@ -166,6 +171,18 @@ export class RideCleanupService {
                 status: 'canceled' as any,
                 completedAt: new Date(),
                 cancellationReason: args.reason,
+                // Same fact in the vocabulary Ride Operations queries on. The
+                // legacy `cancellationReason` string stays exactly as it was —
+                // other code and older admin builds still read it.
+                // `cancellationRequestedBy` is read off the ride we already
+                // loaded, so "one party asked and the other went quiet" is
+                // attributed to whoever actually asked rather than to "system".
+                outcomeReason:
+                    outcomeFromCancellationReason(args.reason, ride.cancellationRequestedBy)?.code
+                    ?? RideOutcomeCode.SYSTEM_CANCELLED,
+                cancelledByRole:
+                    outcomeFromCancellationReason(args.reason, ride.cancellationRequestedBy)?.actor
+                    ?? CancelActorRole.SYSTEM,
                 // The situation and the decision are separate facts: "the driver
                 // never arrived" is why it went wrong, "the passenger chose to
                 // cancel" is how it ended.

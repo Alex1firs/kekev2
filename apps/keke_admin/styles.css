@@ -2036,3 +2036,248 @@ body.authenticated .admin-container { display: flex; }
     .cp-frame-mobile { max-width: 100%; }
 }
 .cc-pill-warn { background: rgba(251,191,36,0.16); color: #fbbf24; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   RIDE OPERATIONS
+   A dispatch control room, not a database table. The visual job here is to
+   make one row answerable at a glance: what happened, to whom, and why.
+   Colour carries the BUSINESS meaning — amber for "we had no supply", violet
+   for "supply existed and nobody took it" — because those two failures look
+   identical in a status column and need completely different responses.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Summary cards ──────────────────────────────────────────────────── */
+.ro-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px;
+    margin-bottom: 20px;
+}
+.ro-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 14px 16px;
+    border-left: 3px solid var(--border-color);
+}
+.ro-card-v { font-size: 1.6rem; font-weight: 700; line-height: 1.1; color: var(--text-primary); }
+.ro-card-l {
+    font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--text-secondary); margin-top: 6px;
+}
+.ro-c-ok        { border-left-color: var(--accent-emerald); }
+.ro-c-bad       { border-left-color: var(--accent-rose); }
+.ro-c-warn      { border-left-color: var(--accent-amber); }
+.ro-c-supply    { border-left-color: #f59e0b; }
+.ro-c-behaviour { border-left-color: #a78bfa; }
+.ro-c-unknown   { border-left-color: #64748b; }
+.ro-c-unknown .ro-card-v { color: var(--text-secondary); }
+
+/* ── Toolbar ────────────────────────────────────────────────────────── */
+.ro-toolbar { margin-bottom: 16px; }
+.ro-search { position: relative; margin-bottom: 10px; }
+.ro-search i {
+    position: absolute; left: 14px; top: 50%; transform: translateY(-50%);
+    color: var(--text-secondary); font-size: 0.85rem;
+}
+.ro-search input {
+    width: 100%; padding: 11px 14px 11px 38px;
+    background: var(--card-bg); border: 1px solid var(--border-color);
+    border-radius: 10px; color: var(--text-primary); font-size: 0.9rem;
+}
+.ro-search input:focus {
+    outline: none; border-color: var(--accent-amber);
+    box-shadow: 0 0 0 3px rgba(255, 204, 0, 0.12);
+}
+.ro-filters { display: flex; flex-wrap: wrap; gap: 8px; }
+.ro-filters select, .ro-filters input {
+    background: var(--card-bg); border: 1px solid var(--border-color);
+    border-radius: 8px; color: var(--text-primary);
+    padding: 8px 10px; font-size: 0.82rem; min-width: 130px;
+}
+.ro-filters input[type="date"] { min-width: 145px; color-scheme: dark; }
+.ro-btn-ghost {
+    background: transparent; border: 1px solid var(--border-color);
+    border-radius: 8px; color: var(--text-secondary);
+    padding: 8px 14px; font-size: 0.82rem; cursor: pointer;
+    transition: all 0.15s ease;
+}
+.ro-btn-ghost:hover:not(:disabled) { color: var(--text-primary); border-color: var(--accent-amber); }
+.ro-btn-ghost:disabled { opacity: 0.35; cursor: not-allowed; }
+
+/* ── Table ──────────────────────────────────────────────────────────── */
+.ro-table { width: 100%; }
+.ro-table th {
+    font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.07em;
+    color: var(--text-secondary); font-weight: 600;
+}
+.ro-table td { vertical-align: middle; padding: 12px 14px; }
+.ro-row { cursor: pointer; transition: background 0.12s ease; }
+.ro-row:hover { background: rgba(255, 204, 0, 0.04); }
+.ro-row:hover .ro-view { color: var(--accent-amber); border-color: var(--accent-amber); }
+.ro-time { font-variant-numeric: tabular-nums; color: var(--text-secondary); white-space: nowrap; }
+.ro-name { font-weight: 500; color: var(--text-primary); }
+.ro-sub  { font-size: 0.75rem; color: var(--text-secondary); }
+.ro-place { max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ro-num  { text-align: right; font-variant-numeric: tabular-nums; }
+.ro-none { color: var(--text-secondary); font-style: italic; font-size: 0.82rem; }
+.ro-none-block {
+    padding: 14px; text-align: center; background: rgba(148, 163, 184, 0.05);
+    border-radius: 8px; font-style: normal;
+}
+.ro-empty { text-align: center; padding: 40px; color: var(--text-secondary); }
+.ro-view {
+    border: 1px solid var(--border-color); border-radius: 6px;
+    padding: 4px 12px; font-size: 0.75rem; color: var(--text-secondary);
+    transition: all 0.15s ease;
+}
+
+/* ── Outcome badges ─────────────────────────────────────────────────── */
+.ro-badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 4px 10px; border-radius: 20px;
+    font-size: 0.73rem; white-space: nowrap;
+    border: 1px solid transparent;
+}
+.ro-badge strong { font-weight: 700; letter-spacing: 0.03em; }
+.ro-badge-sep { opacity: 0.5; }
+.ro-b-ok        { background: rgba(16, 185, 129, 0.12); color: #34d399; border-color: rgba(16, 185, 129, 0.3); }
+.ro-b-supply    { background: rgba(245, 158, 11, 0.12); color: #fbbf24; border-color: rgba(245, 158, 11, 0.3); }
+.ro-b-behaviour { background: rgba(167, 139, 250, 0.12); color: #c4b5fd; border-color: rgba(167, 139, 250, 0.3); }
+.ro-b-tech      { background: rgba(244, 63, 94, 0.12);  color: #fb7185; border-color: rgba(244, 63, 94, 0.3); }
+.ro-b-cancel    { background: rgba(148, 163, 184, 0.12); color: #cbd5e1; border-color: rgba(148, 163, 184, 0.3); }
+/* Deliberately muted: "we never recorded this" must not look like a finding. */
+.ro-b-unknown   { background: transparent; color: var(--text-secondary); border-color: var(--border-color); border-style: dashed; }
+.ro-b-live      { background: rgba(255, 204, 0, 0.12); color: var(--accent-amber); border-color: rgba(255, 204, 0, 0.3); }
+.ro-tel-off     { background: rgba(244, 63, 94, 0.15) !important; color: #fb7185 !important; }
+
+/* ── Pager ──────────────────────────────────────────────────────────── */
+.ro-pager { display: flex; align-items: center; gap: 12px; justify-content: flex-end; margin-top: 16px; }
+.ro-pager-info { font-size: 0.8rem; color: var(--text-secondary); }
+
+/* ── Investigation drawer ───────────────────────────────────────────── */
+.ro-drawer { position: fixed; inset: 0; z-index: 1000; }
+.ro-drawer.hidden { display: none; }
+.ro-drawer-backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.6); backdrop-filter: blur(2px); }
+.ro-drawer-panel {
+    position: absolute; top: 0; right: 0; bottom: 0;
+    width: min(560px, 100vw);
+    background: var(--bg-dark);
+    border-left: 1px solid var(--border-color);
+    box-shadow: -12px 0 40px rgba(0, 0, 0, 0.5);
+    display: flex; flex-direction: column;
+    animation: roSlideIn 0.2s ease-out;
+}
+@keyframes roSlideIn { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .ro-drawer-panel { animation: none; } }
+
+.ro-drawer-head {
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+    padding: 20px 22px; border-bottom: 1px solid var(--border-color);
+    background: var(--sidebar-bg);
+}
+.ro-drawer-title { font-size: 1.15rem; font-weight: 700; color: var(--text-primary); }
+.ro-drawer-sub { font-size: 0.78rem; color: var(--text-secondary); margin-top: 4px; }
+.ro-close {
+    background: transparent; border: none; color: var(--text-secondary);
+    font-size: 1.1rem; cursor: pointer; padding: 4px 8px; border-radius: 6px;
+}
+.ro-close:hover { color: var(--text-primary); background: rgba(255, 255, 255, 0.06); }
+.ro-drawer-body { flex: 1; overflow-y: auto; padding: 18px 22px 40px; }
+.ro-loading { padding: 40px; text-align: center; color: var(--text-secondary); }
+
+.ro-panel { margin-bottom: 24px; }
+.ro-panel h4 {
+    font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--accent-amber); margin-bottom: 12px; font-weight: 700;
+}
+.ro-panel h4 .ro-sub { text-transform: none; letter-spacing: 0; margin-left: 6px; }
+.ro-kv {
+    display: flex; justify-content: space-between; gap: 16px;
+    padding: 8px 0; border-bottom: 1px solid rgba(46, 54, 66, 0.5);
+    font-size: 0.85rem;
+}
+.ro-kv > span:first-child { color: var(--text-secondary); flex-shrink: 0; }
+.ro-kv > span:last-child { color: var(--text-primary); text-align: right; word-break: break-word; }
+.ro-mono { font-family: 'SF Mono', 'Monaco', 'Consolas', monospace; font-size: 0.8em; }
+.ro-actions { display: flex; gap: 8px; margin-top: 14px; }
+.ro-btn {
+    background: var(--accent-amber); border: none; border-radius: 8px;
+    color: #1a1a1a; font-weight: 600; padding: 9px 16px;
+    font-size: 0.82rem; cursor: pointer;
+}
+.ro-btn:hover { filter: brightness(1.1); }
+.ro-note { font-size: 0.72rem; color: var(--text-secondary); margin-top: 10px; line-height: 1.5; }
+
+/* ── Journey ────────────────────────────────────────────────────────── */
+.ro-journey { position: relative; padding-left: 4px; }
+.ro-leg { display: flex; gap: 12px; align-items: flex-start; padding: 6px 0; }
+.ro-dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 5px; flex-shrink: 0; }
+.ro-dot-pickup { background: var(--accent-emerald); }
+.ro-dot-dest   { background: var(--accent-rose); }
+/* The connecting line makes two addresses read as one journey. */
+.ro-leg:first-child { position: relative; }
+.ro-leg:first-child::after {
+    content: ''; position: absolute; left: 4px; top: 20px; bottom: -6px;
+    width: 2px; background: var(--border-color);
+}
+.ro-leg-area { font-weight: 600; color: var(--text-primary); font-size: 0.9rem; }
+.ro-map-link { display: inline-block; margin-top: 12px; text-decoration: none; }
+
+/* ── Timeline ───────────────────────────────────────────────────────── */
+.ro-timeline { list-style: none; padding: 0; margin: 0; position: relative; }
+.ro-timeline::before {
+    content: ''; position: absolute; left: 61px; top: 6px; bottom: 6px;
+    width: 1px; background: var(--border-color);
+}
+.ro-timeline li {
+    display: flex; gap: 14px; align-items: baseline;
+    padding: 7px 0; position: relative; font-size: 0.84rem;
+    color: var(--text-secondary);
+}
+.ro-timeline li::before {
+    content: ''; position: absolute; left: 58px; top: 13px;
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--border-color); border: 2px solid var(--bg-dark);
+}
+.ro-tl-time {
+    width: 52px; flex-shrink: 0; text-align: right;
+    font-variant-numeric: tabular-nums; font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+.ro-tl-text { padding-left: 14px; }
+/* Milestones carry the story; everything else is supporting evidence. */
+.ro-tl-major { color: var(--text-primary); font-weight: 500; }
+.ro-tl-major::before { background: var(--accent-emerald); }
+.ro-tl-bad   { color: #fb7185; }
+.ro-tl-bad::before { background: var(--accent-rose); }
+.ro-tl-warn::before { background: var(--accent-amber); }
+
+/* ── Diagnostics ────────────────────────────────────────────────────── */
+.ro-diag {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+    gap: 8px; margin-bottom: 14px;
+}
+.ro-diag-cell {
+    background: var(--card-bg); border: 1px solid var(--border-color);
+    border-radius: 8px; padding: 10px 8px; text-align: center;
+}
+.ro-diag-v { font-size: 1.15rem; font-weight: 700; color: var(--text-primary); }
+.ro-diag-l { font-size: 0.65rem; color: var(--text-secondary); margin-top: 3px; line-height: 1.3; }
+.ro-tech { margin-top: 14px; }
+.ro-tech summary {
+    cursor: pointer; font-size: 0.78rem; color: var(--text-secondary);
+    padding: 8px 0; user-select: none;
+}
+.ro-tech summary:hover { color: var(--text-primary); }
+.ro-tech-body { padding-top: 6px; }
+
+/* ── Responsive ─────────────────────────────────────────────────────── */
+@media (max-width: 900px) {
+    .ro-drawer-panel { width: 100vw; }
+    /* Pickup/destination fall away first: the outcome, who, and the driver are
+       what a triage pass actually needs on a phone. */
+    .ro-table th:nth-child(3), .ro-table td:nth-child(3),
+    .ro-table th:nth-child(4), .ro-table td:nth-child(4) { display: none; }
+    .ro-filters select, .ro-filters input { flex: 1 1 140px; min-width: 0; }
+}

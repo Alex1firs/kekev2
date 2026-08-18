@@ -22,6 +22,12 @@ import {
 import { RideActivityService } from '../services/ride_activity_service';
 import { DispatchEventType } from '../models/DispatchEvent';
 import { projectDispatchEvent } from '../services/dispatch_event_projection';
+import { RideOperationsSwitch } from '../services/ride_operations_switch';
+import {
+    RideOutcomeCode,
+    CancelActorRole,
+    outcomeFromDispatchCode,
+} from '../services/ride_outcome';
 import { User, UserRole } from '../models/User';
 import { AppDataSource } from '../config/data_source';
 import { Ride } from '../models/Ride';
@@ -689,6 +695,8 @@ export class SocketHandler {
                         status: 'canceled' as any,
                         completedAt: new Date(),
                         cancellationReason: 'passenger_cancelled',
+                        outcomeReason: RideOutcomeCode.PASSENGER_CANCELLED,
+                        cancelledByRole: CancelActorRole.PASSENGER,
                     } as any);
 
                     // Abort dispatch NOW so no further round can start and any
@@ -2222,8 +2230,22 @@ export class SocketHandler {
      * tested directly and audited in one place.
      */
     private projectDispatchEvent(rideId: string, event: string, fields: Record<string, any>): void {
-        for (const row of projectDispatchEvent(rideId, event, fields)) {
-            DispatchMonitorService.record(row);
+        // The kill switch is checked here rather than inside the recorder so
+        // that turning telemetry off also skips the mapping work, not just the
+        // write. Synchronous and cached — see RideOperationsSwitch — so this
+        // costs a clock read on the dispatch path and nothing else.
+        if (!RideOperationsSwitch.isEnabled()) return;
+
+        // Belt and braces. `record` already swallows its own errors, but the
+        // mapping runs first and a malformed log field must not be able to
+        // throw into the orchestrator's log port — which is called from inside
+        // the offer loop, between a passenger and a driver.
+        try {
+            for (const row of projectDispatchEvent(rideId, event, fields)) {
+                DispatchMonitorService.record(row);
+            }
+        } catch (err: any) {
+            console.warn(`[RIDE_OPS] projection failed (${event}): ${err?.message}`);
         }
     }
 
@@ -2365,7 +2387,16 @@ export class SocketHandler {
             log.error(JSON.stringify({ level: 'error', event: 'park_fallback_threw', rideId, error: err?.message }));
         }
 
-        await rideRepo.update(rideId, { status: 'failed' as any });
+        // The outcome code is written in the SAME update as the status it
+        // explains. It is not telemetry and is deliberately not behind the
+        // telemetry kill switch: a `failed` row with no reason is exactly the
+        // defect this work exists to remove, and it must not be able to come
+        // back because someone silenced the event trail.
+        await rideRepo.update(rideId, {
+            status: 'failed' as any,
+            outcomeReason: outcomeFromDispatchCode(outcome.code) ?? RideOutcomeCode.TECHNICAL_FAILURE,
+            outcomeDetail: outcome.dispatchResult ?? null,
+        });
 
         rlog('dispatch_outcome', {
             rideId,
@@ -2462,7 +2493,11 @@ export class SocketHandler {
             }
         }
 
-        await rideRepo.update(rideId, { status: 'completed' as any, completedAt: new Date() });
+        await rideRepo.update(rideId, {
+            status: 'completed' as any,
+            completedAt: new Date(),
+            outcomeReason: RideOutcomeCode.COMPLETED,
+        });
 
         const adminStatus = held ? 'completed_held_for_review' : (paymentSucceeded ? 'completed' : 'completed_payment_failed');
         this.io.to('admin').emit('ride:status_update', { rideId, status: adminStatus });

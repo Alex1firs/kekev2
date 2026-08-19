@@ -236,3 +236,30 @@ The persisted shape supports these without further schema work:
 
 The analytics product is not built. The evidence to build it is no longer being
 thrown away.
+
+---
+
+## Data quality: what the addresses actually look like
+
+Worth knowing before reading the area column, because it shapes what the
+console can honestly tell you.
+
+Pickup addresses are whatever Google returned to the passenger's handset at
+request time. Across 824 production rides:
+
+| Shape | Count | Example |
+|---|---|---|
+| Multi-part address | 513 | `109, Upper New Market Road` |
+| Begins with a plus code | 211 | `4QGP+JPF, Nweweka Street` |
+| Single token | 100 | `Awka` |
+
+A minority are a **bare** plus code (`4QHQ+3WF`) or the app's placeholder
+(`Location selected`). Those carry no locality, so the console shows **"Area
+not recorded"**. Guessing a neighbourhood from coordinates would mean a
+reverse-geocode on every admin page load — a paid call per row — and would
+still be a guess.
+
+**If richer area data matters**, the fix belongs in the passenger app: capture
+a locality/sublocality field alongside the formatted address at request time,
+when the geocode result is already in hand and free. That is a passenger-app
+change and is deliberately not in this work.

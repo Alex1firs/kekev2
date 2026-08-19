@@ -45,12 +45,24 @@ export function projectDispatchEvent(
     const base = { rideId, dispatchRound: round, radiusKm };
 
     switch (event) {
-        case 'round_start':
+        case 'round_start': {
+            // The orchestrator logs the tier LIST for this round, not a single
+            // radius. Record the widest tier in the scalar column too: it is
+            // how far this round will actually reach, and without it a round
+            // that found nobody records no radius at all — which is precisely
+            // the ride an operator is investigating when they ask "how far did
+            // we look?". The full list stays in detail; nothing is invented.
+            const tiers: unknown = f.radiusTiersKm;
+            const widest = Array.isArray(tiers)
+                ? tiers.filter((t) => typeof t === 'number').reduce((a, b) => Math.max(a, b), 0)
+                : null;
             return [{
                 ...base,
+                radiusKm: widest || base.radiusKm,
                 eventType: DispatchEventType.ROUND_STARTED,
                 detail: { radiusTiersKm: f.radiusTiersKm ?? null },
             }];
+        }
 
         case 'round_transition':
             return [{

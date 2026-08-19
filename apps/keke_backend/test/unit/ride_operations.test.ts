@@ -507,3 +507,22 @@ describe('repeated address segments are collapsed', () => {
         expect(areaOf('Venn Road South, Onitsha North')).toBe('Venn Road South, Onitsha North');
     });
 });
+
+describe('a search records how far it reached', () => {
+    it('records the widest tier of a round in the scalar radius column', () => {
+        // Without this, a round that discovered nobody carries no radius at
+        // all — and "how far did we look?" is the first question asked about
+        // exactly that ride.
+        const rows = projectDispatchEvent('RIDE-1', 'round_start', {
+            round: 1,
+            radiusTiersKm: [2, 3.5, 5],
+        });
+        expect(rows[0].radiusKm).toBe(5);
+        expect(rows[0].detail!.radiusTiersKm).toEqual([2, 3.5, 5]);
+    });
+
+    it('leaves the radius null when no tiers were logged', () => {
+        const rows = projectDispatchEvent('RIDE-1', 'round_start', { round: 1 });
+        expect(rows[0].radiusKm).toBeNull();
+    });
+});

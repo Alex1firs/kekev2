@@ -25,7 +25,7 @@ import { StaffPermission } from '../config/staff_permissions';
 import { OperationsQueueService } from '../services/operations_queue_service';
 import { OperationsDriverDiscovery, DriverCategory } from '../services/operations_driver_discovery';
 import { RideControlService, ControlActor } from '../services/ride_control_service';
-import { OperationsDispatchService } from '../services/operations_dispatch_service';
+import { OperationsDispatchService, ReassignReason } from '../services/operations_dispatch_service';
 import { OperationsAuditService } from '../services/operations_audit_service';
 import { OperationsNotificationService } from '../services/operations_notification_service';
 import { ControlReleaseReason } from '../models/RideDispatchControl';
@@ -214,6 +214,46 @@ router.post('/rides/:rideId/assign', interventionLimiter, requireStaffPermission
 });
 
 /**
+ * POST /operations/rides/:rideId/release-driver
+ *
+ * Take the assigned driver off a ride that has not started, so another can be
+ * chosen. The ride stays alive and keeps its id — this is not a cancellation.
+ */
+router.post('/rides/:rideId/release-driver', interventionLimiter, requireStaffPermission(StaffPermission.OPS_ASSIGN), async (req: StaffRequest, res: Response) => {
+    try {
+        const rideId = String(req.params.rideId);
+        const reason = Object.values(ReassignReason).includes(req.body?.reason)
+            ? (req.body.reason as ReassignReason)
+            : ReassignReason.OPERATIONS_CORRECTION;
+
+        const result = await OperationsDispatchService.releaseDriver(rideId, actorOf(req), reason);
+        if (!result.ok) {
+            // A trip that has already started is a 409, not a 400: nothing was
+            // malformed, the world moved. The UI shows the incident-workflow
+            // sentence rather than a validation error.
+            const status =
+                result.code === 'TRIP_ALREADY_STARTED' || result.code === 'RIDE_STATE_CHANGED'
+                || result.code === 'NOT_REASSIGNABLE' ? 409
+                : result.code === 'NOT_CONTROLLER' ? 403
+                : result.code === 'DISABLED' ? 503
+                : 400;
+            return res.status(status).json({ code: result.code, message: result.message });
+        }
+        await AuditService.record({
+            actor: auditActorOf(req.actor!),
+            action: 'OPS_DRIVER_RELEASED' as any,
+            resourceType: 'RIDE', resourceId: rideId, rideId,
+            metadata: { releasedDriverId: result.releasedDriverId, reason },
+            ipAddress: req.ip ?? null,
+        }).catch(() => {});
+        res.json({ ok: true, releasedDriverId: result.releasedDriverId });
+    } catch (err: any) {
+        console.error('[OPS] release-driver error:', err?.message);
+        fail(res, 500, ErrorCode.INTERNAL_ERROR, 'Could not release the driver.');
+    }
+});
+
+/**
  * POST /operations/rides/:rideId/contact-driver
  * Records that a dispatcher rang a driver. Changes nothing about the ride.
  */
@@ -223,12 +263,16 @@ router.post('/rides/:rideId/contact-driver', interventionLimiter, requireStaffPe
         const driverId = String(req.body?.driverId ?? '');
         if (!driverId) return fail(res, 400, ErrorCode.VALIDATION_ERROR, 'driverId is required.');
 
-        await OperationsDispatchService.recordDriverContacted(rideId, driverId, actorOf(req), {
-            presence: req.body?.presence,
-            distanceKm: req.body?.distanceKm ?? null,
-            lastSeenSeconds: req.body?.lastSeenSeconds ?? null,
-        });
-        res.json({ ok: true });
+        const contact = await OperationsDispatchService.recordDriverContacted(
+            rideId, driverId, actorOf(req), {
+                presence: req.body?.presence,
+                distanceKm: req.body?.distanceKm ?? null,
+                lastSeenSeconds: req.body?.lastSeenSeconds ?? null,
+            },
+        );
+        // 200 with dialable:null rather than an error — "we have no number for
+        // this driver" is information the operator needs, not a failure.
+        res.json({ ok: true, ...contact });
     } catch (err: any) {
         fail(res, 500, ErrorCode.INTERNAL_ERROR, 'Could not record the call.');
     }

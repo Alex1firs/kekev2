@@ -425,3 +425,84 @@ describe('an Operations alert carries no passenger identity', () => {
         expect(body).toContain('12s');
     });
 });
+
+// ══════════════════════════════════════════════════════════════════════
+//  Calling a driver
+// ══════════════════════════════════════════════════════════════════════
+
+describe('the Call action produces something a handset can dial', () => {
+    const { toLocalDialable } = require('../../src/utils/phone');
+
+    it('normalises the forms Nigerian numbers are stored in', () => {
+        // The field failure was that no number reached the client at all. Once
+        // it does, it has to be in a shape Android will dial without the
+        // operator editing it.
+        expect(toLocalDialable('2348031234567')).toBe('08031234567');
+        expect(toLocalDialable('+234 803 123 4567')).toBe('08031234567');
+        expect(toLocalDialable('08031234567')).toBe('08031234567');
+        expect(toLocalDialable('8031234567')).toBe('08031234567');
+    });
+
+    it('never invents a number it cannot make sense of', () => {
+        expect(toLocalDialable(null)).toBeNull();
+        expect(toLocalDialable(undefined)).toBeUndefined();
+    });
+
+    it('produces a tel: href with no spaces or punctuation', () => {
+        // `tel:+234 803...` is not reliably dialled; the normalised form is.
+        const href = `tel:${toLocalDialable('+234 803 123 4567')}`;
+        expect(href).toBe('tel:08031234567');
+        expect(href).not.toMatch(/[\s()+-]/);
+    });
+});
+
+describe('the dispatcher UI actually wires the dialer', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const src = () => fs.readFileSync(
+        path.join(__dirname, '../../../keke_dispatcher/operations.js'), 'utf8');
+
+    it('builds a tel: link rather than only recording the intent', () => {
+        // The original Call button recorded the contact and showed a toast
+        // telling the operator to find the number in the admin console. On a
+        // phone that reads as the button doing nothing — which is exactly what
+        // was reported from the field.
+        const s = src();
+        expect(s).toContain('`tel:${number}`');
+        expect(s).not.toContain('Reveal the number in Keke Ops to dial');
+    });
+
+    it('says so plainly when there is no number', () => {
+        expect(src()).toContain('Phone number unavailable for this driver.');
+    });
+
+    it('offers a fallback link and a copy action', () => {
+        // If the dialer refuses to launch the operator must not be left
+        // looking at a screen that did nothing.
+        const s = src();
+        expect(s).toContain('showCallFallback');
+        expect(s).toContain('data-copy=');
+        expect(s).toContain('The dialer did not open');
+    });
+
+    it('offers every reassignment reason the server accepts', () => {
+        const { ReassignReason } = require('../../src/services/operations_dispatch_service');
+        const s = src();
+        for (const code of Object.values(ReassignReason)) {
+            expect(s).toContain(`'${code}'`);
+        }
+    });
+});
+
+describe('reassignment is only offered before the trip starts', () => {
+    const { REASSIGNABLE_STATUSES } = require('../../src/services/operations_dispatch_service');
+
+    it('covers the pre-trip states and nothing else', () => {
+        expect(REASSIGNABLE_STATUSES).toEqual(['accepted', 'arrived']);
+        // A moving Keke with a passenger in it is an incident, not a swap.
+        expect(REASSIGNABLE_STATUSES).not.toContain('in_progress');
+        expect(REASSIGNABLE_STATUSES).not.toContain('started');
+        expect(REASSIGNABLE_STATUSES).not.toContain('completed');
+        expect(REASSIGNABLE_STATUSES).not.toContain('canceled');
+    });
+});

@@ -312,3 +312,76 @@
     .ops-sheet-body { max-width: 720px; margin: 0 auto; width: 100%; }
     .ops-list { display: grid; grid-template-columns: repeat(2, 1fr); }
 }
+
+/* ── Call fallback ────────────────────────────────────────────────────
+   Shown after a dial attempt. On a handset the dialer covers it; coming
+   back from a failed launch the operator still has the number in front of
+   them rather than a screen that appeared to do nothing. */
+.ops-call-fallback {
+    position: fixed;
+    left: 0; right: 0;
+    bottom: 0;
+    z-index: 980;
+    padding: 12px 12px calc(12px + env(safe-area-inset-bottom));
+    background: linear-gradient(to top, var(--bg) 70%, transparent);
+}
+.ops-call-fallback.hidden { display: none; }
+.ops-call-card {
+    background: var(--surface);
+    border: 1px solid var(--amber);
+    border-radius: var(--radius);
+    padding: 14px;
+}
+.ops-call-who { font-size: 0.8rem; color: var(--text-dim); margin-bottom: 4px; }
+.ops-call-number {
+    display: block;
+    font-size: 1.5rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--amber);
+    text-decoration: none;
+    margin-bottom: 12px;
+}
+.ops-call-actions { display: flex; gap: 8px; }
+.ops-call-actions .ops-btn,
+.ops-call-actions .ops-btn-ghost {
+    flex: 1;
+    text-align: center;
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 46px;
+}
+.ops-call-note { margin-top: 10px; font-size: 0.78rem; color: var(--orange); }
+
+/* ── Assigned driver + reassignment ───────────────────────────────────
+   Selecting a driver assigns immediately, which is right for a dispatcher
+   who has already spoken to them on the phone. What makes that safe is that
+   it is reversible: this panel is the recovery path. */
+.ops-assigned {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px;
+    margin-bottom: 10px;
+}
+.ops-assigned-main { flex: 1; min-width: 0; }
+
+.ops-reassign {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    background: var(--surface-2);
+    border: 1px solid var(--orange);
+    border-radius: 10px;
+    padding: 12px;
+    margin-top: 8px;
+}
+.ops-reassign-title { font-size: 0.85rem; font-weight: 600; margin-bottom: 4px; }
+/* A reason is required, so each is its own full-width target — a dropdown
+   plus a confirm is two taps and one of them is fiddly on a phone. */
+.ops-reason { width: 100%; text-align: left; min-height: 46px; }

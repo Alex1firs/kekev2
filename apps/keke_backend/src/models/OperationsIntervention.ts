@@ -25,6 +25,9 @@ export enum InterventionType {
     ASSIGNMENT_ATTEMPTED = "assignment_attempted",
     DRIVER_ASSIGNED = "driver_assigned",
     ASSIGNMENT_FAILED = "assignment_failed",
+    /** A driver was taken off a ride that had not started. */
+    DRIVER_RELEASED = "driver_released",
+    DRIVER_RELEASE_FAILED = "driver_release_failed",
 }
 
 /**
@@ -40,6 +43,13 @@ export enum InterventionReason {
     PARK_ASSISTANCE = "PARK_ASSISTANCE",
     OPERATIONS_INTERVENTION = "OPERATIONS_INTERVENTION",
     OTHER = "OTHER",
+    // ── Reassignment ────────────────────────────────────────────────────
+    DRIVER_DECLINED_MANUALLY = "DRIVER_DECLINED_MANUALLY",
+    DRIVER_UNAVAILABLE = "DRIVER_UNAVAILABLE",
+    DRIVER_CANNOT_REACH_PICKUP = "DRIVER_CANNOT_REACH_PICKUP",
+    DRIVER_VEHICLE_PROBLEM = "DRIVER_VEHICLE_PROBLEM",
+    DRIVER_REQUESTED_REASSIGNMENT = "DRIVER_REQUESTED_REASSIGNMENT",
+    OPERATIONS_CORRECTION = "OPERATIONS_CORRECTION",
 }
 
 @Entity()

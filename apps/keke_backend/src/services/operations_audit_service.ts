@@ -45,6 +45,7 @@ const TIMELINE_EVENT: Partial<Record<InterventionType, DispatchEventType>> = {
     [InterventionType.DRIVER_CONTACTED]: DispatchEventType.OPS_DRIVER_CONTACTED,
     [InterventionType.DRIVER_ASSIGNED]: DispatchEventType.OPS_DRIVER_ASSIGNED,
     [InterventionType.ASSIGNMENT_FAILED]: DispatchEventType.OPS_ASSIGNMENT_FAILED,
+    [InterventionType.DRIVER_RELEASED]: DispatchEventType.OPS_DRIVER_RELEASED,
 };
 
 export class OperationsAuditService {

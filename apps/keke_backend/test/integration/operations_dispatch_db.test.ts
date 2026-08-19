@@ -49,6 +49,7 @@ describeDb('Operations Dispatch (database)', () => {
 
     /** Records what the stub arbiter did, so races can be asserted on. */
     let assignments: Array<{ rideId: string; driverId: string }> = [];
+    let releases: Array<{ rideId: string; driverId: string }> = [];
 
     /**
      * The SAME conditional UPDATE the real arbiter performs. If this ever
@@ -78,6 +79,34 @@ describeDb('Operations Dispatch (database)', () => {
         emitToAdmin: () => {},
         emitToOps: () => {},
         abortDispatch: () => {},
+        /**
+         * The SAME conditional UPDATE the real release performs. If this
+         * diverges from releaseAssignedDriver the reassignment tests stop
+         * meaning anything, which is why it is copied in shape.
+         */
+        releaseAssignedDriver: async (a: any) => {
+            const before = await ds.getRepository(Ride).findOne({ where: { rideId: a.rideId } });
+            const r = await ds.getRepository(Ride).createQueryBuilder()
+                .update()
+                .set({
+                    driverId: null as any, status: 'searching' as any,
+                    acceptedAt: null, arrivedAt: null, arrivedPickupDistanceM: null,
+                })
+                .where('"rideId" = :rideId AND status IN (:...allowed) AND "driverId" = :driverId', {
+                    rideId: a.rideId, allowed: ['accepted', 'arrived'], driverId: a.expectedDriverId,
+                })
+                .execute();
+            if (!r.affected) {
+                const now = await ds.getRepository(Ride).findOne({ where: { rideId: a.rideId } });
+                const st = String(now?.status ?? 'unknown');
+                return { ok: false as const,
+                    code: st === 'in_progress' || st === 'started' ? 'TRIP_ALREADY_STARTED' : 'RIDE_STATE_CHANGED',
+                    message: 'refused' };
+            }
+            releases.push({ rideId: a.rideId, driverId: a.expectedDriverId });
+            return { ok: true as const, driverId: a.expectedDriverId,
+                priorStatus: String(before?.status), priorEvidence: {} };
+        },
     };
 
     beforeAll(async () => {
@@ -109,6 +138,7 @@ describeDb('Operations Dispatch (database)', () => {
 
     beforeEach(async () => {
         assignments = [];
+        releases = [];
         // TRUNCATE rather than delete({}), which TypeORM refuses on empty
         // criteria. Order matters only for readability — there are no FKs.
         for (const t of ['operations_intervention', 'ride_dispatch_control', 'dispatch_event', 'ride']) {
@@ -468,4 +498,238 @@ describeDb('Operations Dispatch (database)', () => {
         expect(failed).toBeTruthy();
         expect(failed!.outcomeCode).toBe('DRIVER_NOT_ELIGIBLE');
     });
+
+    // ══════════════════════════════════════════════════════════════════
+    //  Reassignment: taking a driver off a ride that has not started
+    // ══════════════════════════════════════════════════════════════════
+
+    describe('reassignment', () => {
+        let ReassignReason: any;
+        beforeAll(() => {
+            ReassignReason = require('../../src/services/operations_dispatch_service').ReassignReason;
+        });
+
+        /** Ride assigned to a driver, under this actor's control. */
+        async function assigned(status: RideStatus = RideStatus.ACCEPTED) {
+            const rideId = await makeRide();
+            const driverA = await makeDriver();
+            await RideControlService.takeover(rideId, ADA);
+            expect((await OperationsDispatchService.assign(rideId, driverA, ADA)).ok).toBe(true);
+            // Assignment releases control, so retake it the way an operator would.
+            await RideControlService.takeover(rideId, ADA);
+            if (status !== RideStatus.ACCEPTED) {
+                await ds.getRepository(Ride).update({ rideId }, { status: status as any });
+            }
+            return { rideId, driverA };
+        }
+
+        it('releases the driver and keeps the SAME ride alive', async () => {
+            const { rideId, driverA } = await assigned();
+            const r = await OperationsDispatchService.releaseDriver(
+                rideId, ADA, ReassignReason.DRIVER_DECLINED_MANUALLY);
+            expect(r.ok).toBe(true);
+
+            const ride = await ds.getRepository(Ride).findOne({ where: { rideId } });
+            // The passenger keeps their journey: same id, still live, no driver.
+            expect(ride!.rideId).toBe(rideId);
+            expect(ride!.status).toBe(RideStatus.SEARCHING);
+            expect(ride!.driverId).toBeNull();
+            expect(ride!.acceptedAt).toBeNull();
+            expect((r as any).releasedDriverId).toBe(driverA);
+        });
+
+        it('leaves Operations still in control, ready to pick somebody else', async () => {
+            const { rideId } = await assigned();
+            await OperationsDispatchService.releaseDriver(rideId, ADA, ReassignReason.DRIVER_UNAVAILABLE);
+            const control = await RideControlService.get(rideId);
+            expect(RideControlService.isOperationsControlled(control)).toBe(true);
+            expect(control!.ownerStaffId).toBe(ADA.staffUserId);
+        });
+
+        it('assigns Driver B afterwards, through the same arbiter', async () => {
+            const { rideId, driverA } = await assigned();
+            const driverB = await makeDriver();
+            await OperationsDispatchService.releaseDriver(rideId, ADA, ReassignReason.DRIVER_UNAVAILABLE);
+
+            const r = await OperationsDispatchService.assign(rideId, driverB, ADA);
+            expect(r.ok).toBe(true);
+
+            const ride = await ds.getRepository(Ride).findOne({ where: { rideId } });
+            expect(ride!.driverId).toBe(driverB);
+            expect(ride!.status).toBe(RideStatus.ACCEPTED);
+            expect(ride!.driverId).not.toBe(driverA);
+            // One assignment per driver, through the one path.
+            expect(assignments.filter((a) => a.rideId === rideId)).toHaveLength(2);
+        });
+
+        it('makes Driver A free to take other work', async () => {
+            const { rideId, driverA } = await assigned();
+            await OperationsDispatchService.releaseDriver(rideId, ADA, ReassignReason.DRIVER_UNAVAILABLE);
+            // "already on active ride" is what would block him; the release
+            // must clear it or the driver is stranded as busy forever.
+            const other = await makeRide();
+            await RideControlService.takeover(other, ADA);
+            const r = await OperationsDispatchService.assign(other, driverA, ADA);
+            expect(r.ok).toBe(true);
+        });
+
+        it('REFUSES once the trip has started', async () => {
+            for (const status of [RideStatus.IN_PROGRESS, RideStatus.STARTED]) {
+                const { rideId } = await assigned(status);
+                const r = await OperationsDispatchService.releaseDriver(
+                    rideId, ADA, ReassignReason.DRIVER_UNAVAILABLE);
+                expect(r.ok).toBe(false);
+                expect((r as any).code).toBe('TRIP_ALREADY_STARTED');
+                // And the driver is untouched.
+                const ride = await ds.getRepository(Ride).findOne({ where: { rideId } });
+                expect(ride!.driverId).toBeTruthy();
+            }
+        });
+
+        it('REFUSES on a completed or cancelled ride', async () => {
+            for (const status of [RideStatus.COMPLETED, RideStatus.CANCELED]) {
+                const { rideId } = await assigned(status);
+                const r = await OperationsDispatchService.releaseDriver(
+                    rideId, ADA, ReassignReason.OPERATIONS_CORRECTION);
+                expect(r.ok).toBe(false);
+            }
+        });
+
+        it('allows release while the driver is waiting at pickup', async () => {
+            // "arrived" is still pre-trip: the Keke is there but nobody has
+            // got in, and a driver can still say he cannot do it.
+            const { rideId } = await assigned(RideStatus.ARRIVED);
+            const r = await OperationsDispatchService.releaseDriver(
+                rideId, ADA, ReassignReason.DRIVER_CANNOT_REACH_PICKUP);
+            expect(r.ok).toBe(true);
+        });
+
+        it('refuses without control', async () => {
+            const { rideId } = await assigned();
+            await RideControlService.release(rideId, ADA, ControlReleaseReason.EXPLICIT);
+            const r = await OperationsDispatchService.releaseDriver(
+                rideId, ADA, ReassignReason.OPERATIONS_CORRECTION);
+            expect(r.ok).toBe(false);
+            expect((r as any).code).toBe('NOT_CONTROLLER');
+        });
+
+        it('refuses to another operator', async () => {
+            const { rideId } = await assigned();
+            const r = await OperationsDispatchService.releaseDriver(
+                rideId, BEN, ReassignReason.OPERATIONS_CORRECTION);
+            expect(r.ok).toBe(false);
+            expect((r as any).code).toBe('NOT_CONTROLLER');
+        });
+
+        // ── The races ────────────────────────────────────────────────
+
+        it('D: two operators releasing at once — exactly one succeeds', async () => {
+            for (let i = 0; i < 15; i++) {
+                const { rideId } = await assigned();
+                // Both hold the same actor's lease (one owner), so this is the
+                // double-tap/duplicate-command shape: one release, not two.
+                const [a, b] = await Promise.all([
+                    OperationsDispatchService.releaseDriver(rideId, ADA, ReassignReason.DRIVER_UNAVAILABLE),
+                    OperationsDispatchService.releaseDriver(rideId, ADA, ReassignReason.DRIVER_UNAVAILABLE),
+                ]);
+                expect([a.ok, b.ok].filter(Boolean)).toHaveLength(1);
+                expect(releases.filter((r) => r.rideId === rideId)).toHaveLength(1);
+                releases = [];
+            }
+        });
+
+        it('F: a driver starting the trip beats a release', async () => {
+            for (let i = 0; i < 15; i++) {
+                const { rideId } = await assigned();
+                const start = ds.getRepository(Ride).createQueryBuilder()
+                    .update().set({ status: 'in_progress' as any })
+                    .where('"rideId" = :rideId AND status = :s', { rideId, s: 'accepted' })
+                    .execute();
+                const [, rel] = await Promise.all([
+                    start,
+                    OperationsDispatchService.releaseDriver(rideId, ADA, ReassignReason.DRIVER_UNAVAILABLE),
+                ]);
+                const ride = await ds.getRepository(Ride).findOne({ where: { rideId } });
+                if (rel.ok) {
+                    // Release won the row first: the ride is searching and free.
+                    expect(ride!.status).toBe(RideStatus.SEARCHING);
+                    expect(ride!.driverId).toBeNull();
+                } else {
+                    // The trip won: the driver keeps it and is NOT detached.
+                    expect(ride!.status).toBe(RideStatus.IN_PROGRESS);
+                    expect(ride!.driverId).toBeTruthy();
+                }
+            }
+        });
+
+        it('E: a passenger cancelling during reassignment wins', async () => {
+            const { rideId } = await assigned();
+            await ds.getRepository(Ride).update({ rideId }, { status: RideStatus.CANCELED as any });
+            const r = await OperationsDispatchService.releaseDriver(
+                rideId, ADA, ReassignReason.DRIVER_UNAVAILABLE);
+            expect(r.ok).toBe(false);
+            const ride = await ds.getRepository(Ride).findOne({ where: { rideId } });
+            expect(ride!.status).toBe(RideStatus.CANCELED);
+        });
+
+        it('C: a driver accepting during the release window cannot double-assign', async () => {
+            for (let i = 0; i < 15; i++) {
+                const { rideId } = await assigned();
+                const driverB = await makeDriver();
+                await OperationsDispatchService.releaseDriver(rideId, ADA, ReassignReason.DRIVER_UNAVAILABLE);
+
+                // The ride is briefly `searching` again. A driver accepting and
+                // Operations assigning B race for it; exactly one may win.
+                const driverC = await makeDriver();
+                const [autoAccept, opsAssign] = await Promise.all([
+                    stubHost.assignDriver({ rideId, driverId: driverC }),
+                    OperationsDispatchService.assign(rideId, driverB, ADA),
+                ]);
+                expect([autoAccept.ok, opsAssign.ok].filter(Boolean)).toHaveLength(1);
+
+                const ride = await ds.getRepository(Ride).findOne({ where: { rideId } });
+                expect(ride!.status).toBe(RideStatus.ACCEPTED);
+                expect([driverB, driverC]).toContain(ride!.driverId);
+                assignments = [];
+            }
+        });
+
+        it('records the whole story: who, why, from whom, to whom', async () => {
+            const { rideId, driverA } = await assigned();
+            const driverB = await makeDriver();
+            await OperationsDispatchService.recordDriverContacted(rideId, driverA, ADA, {});
+            await OperationsDispatchService.releaseDriver(rideId, ADA, ReassignReason.DRIVER_DECLINED_MANUALLY);
+            await OperationsDispatchService.assign(rideId, driverB, ADA);
+
+            const rows = await ds.getRepository(OperationsIntervention).find({
+                where: { rideId }, order: { createdAt: 'ASC' },
+            });
+            const types = rows.map((r) => r.type);
+            expect(types).toContain(InterventionType.DRIVER_ASSIGNED);
+            expect(types).toContain(InterventionType.DRIVER_CONTACTED);
+            expect(types).toContain(InterventionType.DRIVER_RELEASED);
+
+            const released = rows.find((r) => r.type === InterventionType.DRIVER_RELEASED)!;
+            expect(released.reason).toBe('DRIVER_DECLINED_MANUALLY');
+            expect(released.staffUserId).toBe(ADA.staffUserId);
+            expect(released.driverId).toBe(driverA);              // previousDriverId
+            expect(released.priorRideStatus).toBe('accepted');
+            expect((released.detail as any).releasedDriverId).toBe(driverA);
+
+            // And the new assignment names Driver B.
+            const assignedRows = rows.filter((r) => r.type === InterventionType.DRIVER_ASSIGNED);
+            expect(assignedRows[assignedRows.length - 1].driverId).toBe(driverB);
+        });
+
+        it('a failed release is recorded, not silently dropped', async () => {
+            const { rideId } = await assigned(RideStatus.IN_PROGRESS);
+            await OperationsDispatchService.releaseDriver(rideId, ADA, ReassignReason.DRIVER_UNAVAILABLE);
+            const failed = await ds.getRepository(OperationsIntervention).findOne({
+                where: { rideId, type: InterventionType.DRIVER_RELEASE_FAILED },
+            });
+            expect(failed).toBeTruthy();
+            expect(failed!.outcomeCode).toBe('TRIP_ALREADY_STARTED');
+        });
+    });
+
 });

@@ -28,6 +28,8 @@
         renewTimer: null,
         pollTimer: null,
         busy: false,
+        /** True while the reason picker is open. */
+        reassigning: false,
     };
 
     const $$ = (id) => document.getElementById(id);
@@ -163,6 +165,42 @@
         }
     }
 
+    const REASSIGN_REASONS = [
+        ['DRIVER_DECLINED_MANUALLY', 'Driver declined'],
+        ['DRIVER_UNAVAILABLE', 'Driver unavailable'],
+        ['DRIVER_CANNOT_REACH_PICKUP', 'Cannot reach pickup'],
+        ['DRIVER_VEHICLE_PROBLEM', 'Vehicle problem'],
+        ['DRIVER_REQUESTED_REASSIGNMENT', 'Driver asked to be swapped'],
+        ['OPERATIONS_CORRECTION', 'Operations correction'],
+        ['OTHER', 'Other'],
+    ];
+
+    /**
+     * Take the assigned driver off the ride so another can be chosen.
+     *
+     * A reason is required, not optional: "how often does a manually-assigned
+     * driver fall through, and why" is the question this data exists to
+     * answer, and a nullable free-text field would never answer it.
+     */
+    async function releaseDriver(rideId, reason) {
+        if (OPS.busy) return;
+        OPS.busy = true;
+        try {
+            await api(`/operations/rides/${encodeURIComponent(rideId)}/release-driver`, 'POST', { reason });
+            toast('Driver released. Choose another.', 'ok');
+            OPS.reassigning = false;
+            await refresh();
+            await loadDrivers(rideId);
+        } catch (e) {
+            // A started trip is the important refusal — it carries the
+            // incident-workflow sentence from the server.
+            toast(e?.message || 'Could not release the driver.', 'warn');
+            await refresh();
+        } finally {
+            OPS.busy = false;
+        }
+    }
+
     async function assign(rideId, driverId) {
         if (OPS.busy) return;
         OPS.busy = true;
@@ -181,18 +219,82 @@
         }
     }
 
+    /**
+     * Ring a driver.
+     *
+     * The number is fetched at the moment of the tap rather than shipped with
+     * the driver list — a list of forty drivers should not put forty real
+     * numbers into a browser that might be sitting unlocked on a bench. The
+     * same request is the audited record that somebody decided to call.
+     *
+     * Then it actually dials. Previously this recorded the intent and showed a
+     * toast telling the operator to go and find the number in the admin
+     * console, which on a phone reads as the button doing nothing.
+     */
     async function contactDriver(rideId, driver) {
+        let contact = null;
         try {
-            await api(`/operations/rides/${encodeURIComponent(rideId)}/contact-driver`, 'POST', {
+            contact = await api(`/operations/rides/${encodeURIComponent(rideId)}/contact-driver`, 'POST', {
                 driverId: driver.driverId,
                 presence: driver.presence,
                 distanceKm: driver.distanceKm,
                 lastSeenSeconds: driver.lastSeenSeconds,
             });
         } catch (e) {
-            // The call still happens; only the record failed.
-            console.warn('[OPS] contact record failed', e?.message);
+            toast(e?.message || 'Could not record the call.', 'warn');
+            return;
         }
+
+        if (!contact?.dialable) {
+            toast('Phone number unavailable for this driver.', 'warn');
+            return;
+        }
+        dial(contact.dialable, contact.name || driver.name);
+    }
+
+    /**
+     * Hand a number to the OS dialer, with a visible way out if it refuses.
+     *
+     * A synthesised anchor click is used rather than assigning location.href:
+     * the tap has already been through an await by this point, and some
+     * installed-PWA contexts drop a programmatic navigation that is no longer
+     * attached to a user gesture. If the dialer does not come up the operator
+     * is left looking at a screen that did nothing — so the number is also
+     * rendered as a real link they can tap themselves, plus a copy button.
+     */
+    function dial(number, who) {
+        let launched = false;
+        try {
+            const a = document.createElement('a');
+            a.href = `tel:${number}`;
+            a.style.display = 'none';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            launched = true;
+        } catch (err) {
+            console.warn('[OPS] dialer launch failed', err?.message);
+        }
+        // Shown regardless. On a handset the dialer covers it; coming back, the
+        // operator still has the number in front of them for a second attempt.
+        showCallFallback(number, who, launched);
+    }
+
+    function showCallFallback(number, who, launched) {
+        const box = $$('ops-call-fallback');
+        if (!box) return;
+        box.innerHTML = `
+          <div class="ops-call-card">
+            <div class="ops-call-who">${esc(who)}</div>
+            <a class="ops-call-number" href="tel:${esc(number)}">${esc(number)}</a>
+            <div class="ops-call-actions">
+              <a class="ops-btn" href="tel:${esc(number)}">Call now</a>
+              <button class="ops-btn-ghost" data-copy="${esc(number)}">Copy</button>
+              <button class="ops-btn-ghost" data-call-dismiss="1">Done</button>
+            </div>
+            ${launched ? '' : '<div class="ops-call-note">The dialer did not open. Tap the number above.</div>'}
+          </div>`;
+        box.classList.remove('hidden');
     }
 
     async function loadDrivers(rideId) {
@@ -328,6 +430,33 @@
             <div><span class="ops-dot ops-dot-b"></span> ${esc(r.destinationAddress || 'No address captured')}</div>
           </div>
 
+          ${r.driver ? `
+          <div class="ops-section">
+            <h4>Assigned driver</h4>
+            <div class="ops-assigned">
+              <div class="ops-assigned-main">
+                <div class="ops-driver-name">${esc(r.driver.name)}</div>
+                <div class="ops-driver-sub">${esc(r.driver.phoneMasked || 'no number on file')}</div>
+              </div>
+              <div class="ops-driver-actions">
+                ${can('ops:contact_driver')
+                  ? `<button class="ops-btn-ghost" data-call-assigned="${esc(r.driver.id)}">Call</button>` : ''}
+              </div>
+            </div>
+            ${mine && can('ops:assign') && ['ASSIGNED'].includes(r.queueState) ? (
+              OPS.reassigning ? `
+              <div class="ops-reassign">
+                <div class="ops-reassign-title">Why is this driver being taken off?</div>
+                ${REASSIGN_REASONS.map(([code, label]) =>
+                  `<button class="ops-btn-ghost ops-reason" data-release-reason="${code}">${esc(label)}</button>`).join('')}
+                <button class="ops-btn-ghost" data-reassign-cancel="1">Cancel</button>
+              </div>`
+              : `<button class="ops-btn-ghost ops-btn-big" data-reassign="1">Reassign driver</button>`
+            ) : ''}
+            ${!mine && r.queueState === 'ASSIGNED' && can('ops:takeover')
+              ? '<p class="ops-note">Take control of this ride to reassign the driver.</p>' : ''}
+          </div>` : ''}
+
           <div class="ops-actions">
             ${!held && can('ops:takeover')
               ? `<button class="ops-btn ops-btn-big" data-takeover="${esc(r.rideId)}">Take over dispatch</button>` : ''}
@@ -422,15 +551,43 @@
         const asg = e.target.closest('[data-assign]');
         if (asg && OPS.selected) { assign(OPS.selected, asg.dataset.assign); return; }
 
+        if (e.target.closest('[data-reassign]')) { OPS.reassigning = true; render(); return; }
+        if (e.target.closest('[data-reassign-cancel]')) { OPS.reassigning = false; render(); return; }
+
+        const rr = e.target.closest('[data-release-reason]');
+        if (rr && OPS.selected) { releaseDriver(OPS.selected, rr.dataset.releaseReason); return; }
+
+        // Calling the driver who is already assigned, from the summary panel.
+        const ca = e.target.closest('[data-call-assigned]');
+        if (ca && OPS.selected) {
+            const r = OPS.rides.find((x) => x.rideId === OPS.selected);
+            contactDriver(OPS.selected, {
+                driverId: ca.dataset.callAssigned,
+                name: r?.driver?.name,
+                presence: 'ASSIGNED',
+                distanceKm: null,
+                lastSeenSeconds: null,
+            });
+            return;
+        }
+
+        const copy = e.target.closest('[data-copy]');
+        if (copy) {
+            const n = copy.dataset.copy;
+            navigator.clipboard?.writeText(n)
+                .then(() => toast('Number copied.', 'ok'))
+                .catch(() => toast(`Copy unavailable — the number is ${n}`, 'warn'));
+            return;
+        }
+        if (e.target.closest('[data-call-dismiss]')) {
+            $$('ops-call-fallback')?.classList.add('hidden');
+            return;
+        }
+
         const call = e.target.closest('[data-call]');
         if (call && OPS.selected) {
             const d = OPS.drivers.find((x) => x.driverId === call.dataset.call);
-            if (d) {
-                contactDriver(OPS.selected, d);
-                // The masked number cannot be dialled; reveal is a separate
-                // audited action and lives in the admin console for now.
-                toast('Call recorded. Reveal the number in Keke Ops to dial.', 'ok');
-            }
+            if (d) contactDriver(OPS.selected, d);
             return;
         }
 
@@ -439,6 +596,7 @@
             OPS.selected = card.dataset.ride;
             OPS.interventions = [];
             OPS.drivers = [];
+            OPS.reassigning = false;
             render();
             loadInterventions(OPS.selected);
             const r = OPS.rides.find((x) => x.rideId === OPS.selected);
@@ -461,6 +619,7 @@
         OPS.selected = rideId;
         OPS.interventions = [];
         OPS.drivers = [];
+        OPS.reassigning = false;
         render();
         loadInterventions(rideId);
         refresh().then(() => {

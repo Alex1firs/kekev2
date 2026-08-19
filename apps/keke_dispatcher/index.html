@@ -20,7 +20,7 @@
     <meta name="mobile-web-app-capable" content="yes">
 
     <title>KekeRide Park Dispatch</title>
-    <link rel="stylesheet" href="operations.css?v=1.1">
+    <link rel="stylesheet" href="operations.css?v=1.2">
     <link rel="stylesheet" href="styles.css?v=5.5">
 </head>
 <body class="booting">
@@ -150,6 +150,9 @@
     </header>
     <main id="ops-root" class="ops-main"></main>
     <section id="ops-sheet" class="ops-sheet hidden" role="dialog" aria-label="Ride detail"></section>
+    <!-- Sits above the sheet: the number stays reachable if the OS dialer
+         refuses to open, so a tap is never a dead end. -->
+    <div id="ops-call-fallback" class="ops-call-fallback hidden"></div>
 </div>
 
 <!-- ═══ Workspace ════════════════════════════════════════════════════ -->
@@ -389,7 +392,7 @@
 <div id="toasts" class="toasts" aria-live="polite"></div>
 
 <script src="/socket.io/socket.io.js"></script>
-<script src="operations.js?v=1.1"></script>
+<script src="operations.js?v=1.2"></script>
 <script src="app.js?v=5.5"></script>
 </body>
 </html>

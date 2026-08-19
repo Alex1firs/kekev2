@@ -348,6 +348,7 @@ export class SocketHandler {
                 const run = this.dispatchRuns.get(rideId);
                 if (run) run.abort(reason);
             },
+            releaseAssignedDriver: (a) => this.releaseAssignedDriver(a),
         });
 
         ParkDispatchService.setHost({
@@ -2034,6 +2035,152 @@ export class SocketHandler {
     }
 
     /**
+     * THE one place a ride LOSES its driver without the ride ending.
+     *
+     * The mirror of assignDriverToRide, and deliberately built the same way:
+     * a single conditional UPDATE is the arbiter, and everything else is
+     * cleanup that runs only after it has already won.
+     *
+     *     UPDATE ride SET driverId = NULL, status = 'searching'
+     *      WHERE rideId = ? AND status IN ('accepted','arrived') AND driverId = ?
+     *
+     * That WHERE clause is what makes every race safe:
+     *   - the driver started the trip a moment ago  → status is in_progress,
+     *     affected = 0, and Operations is told the trip has begun
+     *   - the passenger cancelled                    → status is canceled, 0
+     *   - another operator released first            → driverId is null, 0
+     *   - the ride was never this driver's           → driverId mismatch, 0
+     *
+     * The ride stays ALIVE and keeps its rideId. The passenger is not sent back
+     * to "Where to?" and no second ride is created — the whole point is that
+     * this is the same journey with a different Keke.
+     */
+    private async releaseAssignedDriver(args: {
+        rideId: string;
+        expectedDriverId: string;
+        reason: string;
+        releasedByStaffId?: string | null;
+    }): Promise<
+        | { ok: true; driverId: string; priorStatus: string; priorEvidence: Record<string, unknown> }
+        | { ok: false; code: string; message: string }
+    > {
+        const { rideId, expectedDriverId } = args;
+        const rideRepo = AppDataSource.getRepository(Ride);
+        const before = await rideRepo.findOne({ where: { rideId } });
+        if (!before) return { ok: false, code: 'RIDE_NOT_FOUND', message: 'Ride not found.' };
+
+        // Said plainly before the UPDATE so the operator gets the right
+        // sentence. The UPDATE would refuse anyway — this only shapes the
+        // message, exactly as in the assignment path.
+        const status = String(before.status);
+        if (status === 'in_progress' || status === 'started') {
+            return {
+                ok: false,
+                code: 'TRIP_ALREADY_STARTED',
+                message: 'This trip has already started. Use the incident/cancellation workflow instead.',
+            };
+        }
+        if (!['accepted', 'arrived'].includes(status)) {
+            return {
+                ok: false,
+                code: 'NOT_REASSIGNABLE',
+                message: `This ride is ${status} and cannot be reassigned.`,
+            };
+        }
+
+        // Driver A's own journey evidence. Cleared from the ride so Driver B
+        // does not inherit an arrival that was not theirs, but carried out of
+        // here so the intervention record keeps it — a driver who genuinely
+        // reached the pickup and then could not take the trip is a fact worth
+        // keeping.
+        const priorEvidence = {
+            acceptedAt: before.acceptedAt ?? null,
+            arrivedAt: before.arrivedAt ?? null,
+            arrivedPickupDistanceM: before.arrivedPickupDistanceM ?? null,
+        };
+
+        const update = await rideRepo
+            .createQueryBuilder()
+            .update()
+            .set({
+                driverId: null as any,
+                status: 'searching' as any,
+                acceptedAt: null,
+                acceptLat: null,
+                acceptLng: null,
+                arrivedAt: null,
+                arrivedLat: null,
+                arrivedLng: null,
+                arrivedPickupDistanceM: null,
+            })
+            .where('"rideId" = :rideId AND status IN (:...allowed) AND "driverId" = :driverId', {
+                rideId,
+                allowed: ['accepted', 'arrived'],
+                driverId: expectedDriverId,
+            })
+            .execute();
+
+        if (!update.affected) {
+            const now = await rideRepo.findOne({ where: { rideId } });
+            const nowStatus = String(now?.status ?? 'unknown');
+            return {
+                ok: false,
+                code: nowStatus === 'in_progress' || nowStatus === 'started'
+                    ? 'TRIP_ALREADY_STARTED'
+                    : 'RIDE_STATE_CHANGED',
+                message: nowStatus === 'in_progress' || nowStatus === 'started'
+                    ? 'This trip has already started. Use the incident/cancellation workflow instead.'
+                    : 'This ride changed while you were working on it. Reload and try again.',
+            };
+        }
+
+        // ── Cleanup, only now that the release has committed ────────────
+        // Exclude first: the ride is already `searching` again, so this is the
+        // narrow window in which the released driver could re-accept.
+        const excluded = this.rideExclusions.get(rideId) ?? new Set<string>();
+        excluded.add(expectedDriverId);
+        this.rideExclusions.set(rideId, excluded);
+
+        this.driverRideMap.delete(expectedDriverId);
+        try { await DispatchService.releaseDriver(expectedDriverId, rideId); } catch { /* best effort */ }
+        // The assignment lock is what isRideAssigned reads. Left in place, the
+        // orchestrator would treat the ride as still owned.
+        try { await redis.del(`ride:${rideId}:lock`); } catch { /* best effort */ }
+
+        // Tell Driver A, so their app clears rather than showing a ride that is
+        // no longer theirs — and so a reconnect does not restore it.
+        this.io.to(`driver:${expectedDriverId}`).emit('ride:cancelled', {
+            rideId,
+            reason: 'reassigned_by_operations',
+            message: 'This ride has been reassigned. You can accept new rides now.',
+        });
+        NotificationService.sendToUser(
+            expectedDriverId,
+            UserRole.DRIVER,
+            'Ride reassigned',
+            'That ride has been given to another driver. You are free to accept new rides.',
+            { rideId, type: 'RIDE_REASSIGNED' },
+        );
+
+        // The passenger keeps the SAME ride and the same screen. This is a
+        // status line, not a lifecycle change.
+        this.io.to(`ride:${rideId}`).emit('ride:reassigning', {
+            rideId,
+            message: "We're assigning another driver",
+        });
+        this.io.to('admin').emit('ride:status_update', { rideId, status: 'searching' });
+
+        rlog('operations_driver_released', {
+            rideId,
+            priorStatus: status,
+            reason: args.reason,
+            byStaffId: args.releasedByStaffId ?? null,
+        });
+
+        return { ok: true, driverId: expectedDriverId, priorStatus: status, priorEvidence };
+    }
+
+    /**
      * THE one place a ride gains a driver.
      *
      * Extracted verbatim from the original `ride:accept` handler so that Park
@@ -2069,6 +2216,19 @@ export class SocketHandler {
         | { ok: false; code: string; message: string }
     > {
         const { rideId, driverId } = args;
+
+        // A driver Operations has just RELEASED from this ride must not be able
+        // to take it straight back. Release returns the ride to `searching`, so
+        // without this a stale client that still shows the offer could re-accept
+        // in the gap before Operations assigns somebody else — and the operator
+        // who just heard "I can't take it" would watch the same driver reappear.
+        //
+        // Direct acceptance only. Operations may deliberately re-assign the same
+        // driver (he rang back, he can take it after all), and Park assignment
+        // is a dispatcher's decision too.
+        if (args.source === 'direct' && this.rideExclusions.get(rideId)?.has(driverId)) {
+            return { ok: false, code: 'RIDE_ALREADY_TAKEN', message: 'This ride is no longer available.' };
+        }
 
         const profile = await AppDataSource.getRepository(DriverProfile).findOneBy({ userId: driverId });
         if (!profile || profile.status === 'suspended' || profile.status === 'rejected') {

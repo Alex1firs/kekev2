@@ -22,7 +22,7 @@
  * Bump on every shell change. The old cache is deleted on activate, so a stale
  * build cannot outlive a deploy.
  */
-const VERSION = 'v5.8.0';   // Operations: phone-width fixes + deep link
+const VERSION = 'v5.9.0';   // Operations: real dialer + driver reassignment
 const SHELL_CACHE = `kd-shell-${VERSION}`;
 
 const SHELL = [

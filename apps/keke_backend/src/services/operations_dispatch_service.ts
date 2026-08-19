@@ -20,6 +20,8 @@
 import { AppDataSource } from '../config/data_source';
 import { Ride, RideStatus } from '../models/Ride';
 import { DriverProfile } from '../models/DriverProfile';
+import { User } from '../models/User';
+import { toLocalDialable } from '../utils/phone';
 import { DriverEligibilityService } from './driver_eligibility_service';
 import { RideControlService, ControlActor } from './ride_control_service';
 import { OperationsAuditService } from './operations_audit_service';
@@ -36,7 +38,38 @@ export interface OperationsHost {
     emitToAdmin(event: string, payload: Record<string, unknown>): void;
     emitToOps(event: string, payload: Record<string, unknown>): void;
     abortDispatch(rideId: string, reason: 'operations_control'): void;
+    /**
+     * Detach the currently-assigned driver without ending the ride. The
+     * conditional UPDATE inside is the arbiter, exactly as assignDriver's is.
+     */
+    releaseAssignedDriver(a: {
+        rideId: string;
+        expectedDriverId: string;
+        reason: string;
+        releasedByStaffId?: string | null;
+    }): Promise<
+        | { ok: true; driverId: string; priorStatus: string; priorEvidence: Record<string, unknown> }
+        | { ok: false; code: string; message: string }
+    >;
 }
+
+/**
+ * Why a driver was taken off a ride. Machine-readable so "how often does a
+ * manually-assigned driver fall through, and why" is a GROUP BY rather than a
+ * reading exercise.
+ */
+export enum ReassignReason {
+    DRIVER_DECLINED_MANUALLY = 'DRIVER_DECLINED_MANUALLY',
+    DRIVER_UNAVAILABLE = 'DRIVER_UNAVAILABLE',
+    DRIVER_CANNOT_REACH_PICKUP = 'DRIVER_CANNOT_REACH_PICKUP',
+    DRIVER_VEHICLE_PROBLEM = 'DRIVER_VEHICLE_PROBLEM',
+    DRIVER_REQUESTED_REASSIGNMENT = 'DRIVER_REQUESTED_REASSIGNMENT',
+    OPERATIONS_CORRECTION = 'OPERATIONS_CORRECTION',
+    OTHER = 'OTHER',
+}
+
+/** Ride states in which a driver may be swapped. Pre-trip only. */
+export const REASSIGNABLE_STATUSES = ['accepted', 'arrived'];
 
 export type AssignFailure =
     | 'DISABLED'
@@ -194,6 +227,94 @@ export class OperationsDispatchService {
     }
 
     /**
+     * Take a driver off a ride that has not started, leaving the ride alive.
+     *
+     * ── Why this is release-then-assign, not swap ────────────────────────
+     * The obvious implementation is one UPDATE moving the ride from Driver A
+     * to Driver B. It is also wrong: it would need its own WHERE clause, its
+     * own race analysis, and it would become a SECOND way a ride gains a
+     * driver — the precise thing this system has spent three phases avoiding.
+     *
+     * So reassignment is two existing operations in sequence. Release returns
+     * the ride to `searching` (its own conditional UPDATE arbitrates), and
+     * then Operations assigns through assignDriverToRide exactly as before.
+     * There is still one assignment path, and the new code is a release rather
+     * than a rival to it.
+     *
+     * Between the two the ride is `searching` under a live Operations lease,
+     * so automatic dispatch does not start offering it around while the
+     * dispatcher is choosing.
+     */
+    static async releaseDriver(
+        rideId: string,
+        actor: ControlActor,
+        reason: ReassignReason = ReassignReason.OPERATIONS_CORRECTION,
+    ): Promise<
+        | { ok: true; releasedDriverId: string }
+        | { ok: false; code: string; message: string }
+    > {
+        const config = loadOperationsDispatchConfig();
+        const ride = await AppDataSource.getRepository(Ride).findOne({ where: { rideId } });
+        const control = await RideControlService.get(rideId);
+
+        const audit = (type: InterventionType, outcome: string, code: string | null, detail?: any) =>
+            OperationsAuditService.record({
+                type,
+                rideId,
+                staffUserId: actor.staffUserId,
+                staffLabel: actor.label,
+                reason,
+                driverId: ride?.driverId ?? null,
+                priorRideStatus: ride ? String(ride.status) : null,
+                priorControlMode: control?.mode ?? null,
+                outcome,
+                outcomeCode: code,
+                detail: detail ?? null,
+            });
+
+        const fail = async (code: string, message: string) => {
+            await audit(InterventionType.DRIVER_RELEASE_FAILED, 'refused', code);
+            return { ok: false as const, code, message };
+        };
+
+        if (!config.enabled || !config.interventionEnabled) {
+            return fail('DISABLED', 'Operations intervention is disabled.');
+        }
+        if (!ride) return fail('RIDE_NOT_FOUND', 'Ride not found.');
+        if (!ride.driverId) return fail('NO_DRIVER_ASSIGNED', 'This ride has no driver to release.');
+
+        // Control is required: releasing a driver is an intervention, and the
+        // lease is what stops two operators doing it to the same ride at once.
+        if (!RideControlService.isOperationsControlled(control)) {
+            return fail('NOT_CONTROLLER', 'Take control of this ride before reassigning.');
+        }
+        if (control!.ownerStaffId !== actor.staffUserId) {
+            return fail('NOT_CONTROLLER',
+                `${control!.ownerLabel ?? 'Another dispatcher'} is handling this ride.`);
+        }
+        if (!this.host) return fail('HOST_UNAVAILABLE', 'Dispatch is not available right now.');
+
+        const result = await this.host.releaseAssignedDriver({
+            rideId,
+            expectedDriverId: ride.driverId,
+            reason,
+            releasedByStaffId: actor.staffUserId,
+        });
+
+        if (!result.ok) return fail(result.code, result.message);
+
+        await audit(InterventionType.DRIVER_RELEASED, 'ok', null, {
+            releasedDriverId: result.driverId,
+            priorStatus: result.priorStatus,
+            // Driver A's arrival evidence, preserved here because the ride row
+            // no longer carries it.
+            priorEvidence: result.priorEvidence,
+        });
+
+        return { ok: true, releasedDriverId: result.driverId };
+    }
+
+    /**
      * Record that a dispatcher rang a driver.
      *
      * Records the CALL, never its content, and changes nothing about the ride
@@ -205,7 +326,7 @@ export class OperationsDispatchService {
         driverId: string,
         actor: ControlActor,
         detail: { presence?: string; distanceKm?: number | null; lastSeenSeconds?: number | null } = {},
-    ): Promise<void> {
+    ): Promise<{ dialable: string | null; name: string }> {
         const ride = await AppDataSource.getRepository(Ride).findOne({ where: { rideId } });
         const control = await RideControlService.get(rideId);
         await OperationsAuditService.record({
@@ -224,6 +345,25 @@ export class OperationsDispatchService {
                 lastSeenSeconds: detail.lastSeenSeconds ?? null,
             },
         });
+
+        // The number is returned so the operator's phone can actually dial it.
+        //
+        // Revealed on demand rather than shipped with the driver list: a list
+        // of forty drivers should not put forty real numbers into a browser
+        // that might be left unlocked on a bench. This call is already the
+        // audited moment somebody decided to ring one person.
+        //
+        // Normalised to the local 0XXXXXXXXXX form Nigerian handsets dial
+        // reliably. The stored value is NOT modified — normalisation happens
+        // on the way out only.
+        const [profile, user] = await Promise.all([
+            AppDataSource.getRepository(DriverProfile).findOneBy({ userId: driverId }),
+            AppDataSource.getRepository(User).findOne({ where: { id: driverId } }),
+        ]);
+        return {
+            dialable: toLocalDialable(user?.phone) ?? null,
+            name: [profile?.firstName, profile?.lastName].filter(Boolean).join(' ') || 'this driver',
+        };
     }
 
     /** Operator-facing sentence for an eligibility rejection code. */

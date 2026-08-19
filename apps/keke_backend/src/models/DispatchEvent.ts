@@ -108,6 +108,11 @@ export enum DispatchEventType {
     OPS_DRIVER_ASSIGNED = "ops_driver_assigned",
     /** A manual assignment was refused — usually because it lost a race. */
     OPS_ASSIGNMENT_FAILED = "ops_assignment_failed",
+    /**
+     * A driver was taken off a ride that had not started, so another could be
+     * assigned. The ride keeps its id and the passenger keeps their screen.
+     */
+    OPS_DRIVER_RELEASED = "ops_driver_released",
 
     // ── Park Dispatch fallback ───────────────────────────────────────────
     // Downstream of direct dispatch, never inside it. These land on the SAME

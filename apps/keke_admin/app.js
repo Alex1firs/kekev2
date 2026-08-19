@@ -4753,6 +4753,39 @@ function enterRideOperations() {
 }
 
 // ===================== Live Operations (desktop) =====================
+
+/**
+ * The Operations API lives at /api/v1/operations, not under /admin.
+ *
+ * adminFetch is hard-wired to API_BASE, which ends in `/admin` — so calling it
+ * with '/operations/queue' produced a 404 against
+ * /api/v1/admin/operations/queue. Caught in the browser, not by a test, because
+ * the path only assembles at runtime.
+ *
+ * Same headers, same staff-refresh behaviour; only the namespace differs.
+ */
+const OPS_BASE = API_BASE.replace(/\/admin$/, '/operations');
+
+async function opsFetch(endpoint, method = 'GET', body = null) {
+    const doFetch = () => fetch(`${OPS_BASE}${endpoint}`, {
+        method,
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: body ? JSON.stringify(body) : null,
+    });
+
+    let res = await doFetch();
+    if (res.status === 401 && isStaffSession()) {
+        if (await tryRefreshStaffSession()) res = await doFetch();
+    }
+    const text = await res.text();
+    let data = null;
+    try { data = text ? JSON.parse(text) : null; } catch { /* non-JSON error body */ }
+    if (!res.ok) {
+        throw new Error(data?.message || data?.error || `HTTP ${res.status}`);
+    }
+    return data;
+}
+
 // The companion to Ride Operations: what needs acting on now, rather than what
 // already happened. Deliberately calls the SAME /operations endpoints the
 // dispatcher PWA calls — there is one set of Operations business rules and
@@ -4762,7 +4795,7 @@ let loState = { tab: 'attention', rows: [], counts: {}, timer: null };
 
 async function fetchLiveOperations() {
     try {
-        const data = await adminFetch('/operations/queue');
+        const data = await opsFetch('/queue');
         loState.rows = data.rows || [];
         loState.counts = data.counts || {};
         renderLiveOperations();

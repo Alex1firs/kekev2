@@ -64,6 +64,22 @@ let navLinks = [];
 let sections = [];
 let sectionTitle = null;
 
+/**
+ * Display names for sections whose id no longer matches what they are called.
+ * The heading was derived from the id alone, so renaming "Ride History" to
+ * "Ride Operations" in the sidebar left the page itself still saying "History".
+ */
+const SECTION_TITLES = {
+    'history': 'Ride Operations',
+    'live-requests': 'Live Ride Requests',
+    'live-riders': 'Live Riders',
+    'sos-alerts': 'SOS Alerts',
+    'driver-dispatch-metrics': 'Dispatch Metrics',
+    'park-detail': 'Park Detail',
+    'role-matrix': 'Role Matrix',
+};
+
+
 function captureElements() {
     navLinks = document.querySelectorAll('.nav-links li');
     sections = document.querySelectorAll('.content-section');
@@ -160,7 +176,8 @@ function switchSection(id) {
     currentSection = id;
     stopLiveRefresh(); // leaving any section halts the Live Riders poll
     if (typeof stopLiveRequestsStream === 'function') stopLiveRequestsStream();
-    if (sectionTitle) sectionTitle.innerText = id.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    if (sectionTitle) sectionTitle.innerText = SECTION_TITLES[id]
+        || id.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 
     if (id === 'drivers')       { fetchPendingDrivers(); fetchIncompleteDrivers(); }
     if (id === 'approved-drivers') fetchApprovedDrivers();
@@ -4454,6 +4471,26 @@ function roTimelineLabel(e) {
         case 'driver_arrived':      return `Driver arrived at pickup${d.distanceFromPickupM != null ? ` (${d.distanceFromPickupM} m away)` : ''}`;
         case 'trip_started':        return 'Trip started';
         case 'trip_completed':      return `Trip completed${d.tripDurationSec ? ` — ${Math.round(d.tripDurationSec / 60)} min` : ''}`;
+        case 'ride_activity_recorded': return 'Activity confirmed the ride was still live';
+        case 'stale_warning_sent':  return 'Overdue warning sent';
+        case 'stale_decision_requested': return 'Both parties asked whether to keep waiting';
+        case 'stale_decision_received':  return `${escapeHtml(String(d.by || 'Someone'))} chose to ${escapeHtml(String(d.choice || 'respond'))}`;
+        case 'stale_decision_timed_out': return 'Nobody answered the wait-or-cancel prompt';
+        case 'stale_cleanup_completed':  return 'Held state released';
+        case 'stale_escalated_to_support': return 'Escalated to a human';
+        case 'stale_extension_granted': return 'Driver confirmed they were still coming';
+        case 'cancellation_requested':  return `${escapeHtml(String(d.requestedBy || 'Someone'))} asked to cancel`;
+        case 'cancellation_request_accepted': return 'The other party agreed to cancel';
+        case 'cancellation_request_declined': return 'The other party said they were continuing';
+        case 'operations_review_required': return 'Flagged for operations review';
+        case 'rematch_offered':     return 'Offered another driver';
+        case 'park_job_expired':    return 'Park window closed with no answer';
+        case 'park_skipped':        return `Park skipped — ${escapeHtml(String(d.reason || 'no reason recorded'))}`;
+        case 'park_rejected':       return 'Dispatcher declined the request';
+        case 'park_escalated':      return 'Park escalated to a human';
+        case 'park_driver_offered': return `${who} offered a park assignment`;
+        case 'park_driver_accepted':return `${who} accepted the park assignment`;
+        case 'park_driver_declined':return `${who} declined the park assignment`;
         case 'stale_ride_detected': return 'Ride flagged as overdue';
         case 'stale_auto_cancelled':return `Automatically cancelled — ${escapeHtml(String(d.reason || ''))}`;
         default:                    return escapeHtml(e.eventType.replace(/_/g, ' '));
@@ -4483,6 +4520,59 @@ window.openRideInvestigation = async function (rideId) {
         renderRideInvestigation(roDetail);
     } catch (e) {
         body.innerHTML = `<div class="ro-empty">Could not load this ride: ${escapeHtml(e?.message || 'error')}</div>`;
+    }
+};
+
+
+/**
+ * Reveal contact, with the reason captured inline.
+ *
+ * Deliberately not window.prompt: a modal dialog blocks the whole page, and an
+ * operations agent doing this is usually mid-call with the passenger already.
+ * The reason is required because it is what the audit row is worth reading for.
+ */
+window.roShowRevealForm = function () {
+    const box = document.getElementById('ro-reveal');
+    if (!box) return;
+    box.innerHTML = `
+        <input type="text" id="ro-reveal-reason" class="ro-reveal-input"
+               placeholder="Reason (recorded in the audit log)" maxlength="200">
+        <div class="ro-actions">
+          <button class="ro-btn" onclick="roDoReveal()">Reveal</button>
+          <button class="ro-btn-ghost" onclick="renderRideInvestigation(roDetail)">Cancel</button>
+        </div>`;
+    document.getElementById('ro-reveal-reason')?.focus();
+};
+
+window.roDoReveal = async function () {
+    const box = document.getElementById('ro-reveal');
+    const reason = (document.getElementById('ro-reveal-reason')?.value || '').trim();
+    if (!reason) {
+        showToast('A reason is required — it is what the audit row records.', 'error');
+        return;
+    }
+    try {
+        const d = await adminFetch(
+            '/live-requests/' + encodeURIComponent(roDetail.ride.rideId) + '/reveal-contact',
+            'POST', { reason });
+        const line = (label, p) => p
+            ? `<div class="ro-kv"><span>${label}</span><span class="ro-mono">${escapeHtml(p.name || '')} · ${escapeHtml(p.phone || '—')}</span></div>`
+            : '';
+        box.innerHTML = `
+            <div class="ro-revealed">
+              ${line('Passenger', d.passenger)}
+              ${line('Driver', d.driver)}
+              ${d.passenger?.email ? `<div class="ro-kv"><span>Email</span><span class="ro-mono">${escapeHtml(d.passenger.email)}</span></div>` : ''}
+              ${d.passenger?.phone ? `<a class="ro-btn" href="tel:${encodeURIComponent(d.passenger.phone)}"><i class="fas fa-phone"></i> Call passenger</a>` : ''}
+              ${d.driver?.phone ? `<a class="ro-btn-ghost" href="tel:${encodeURIComponent(d.driver.phone)}"><i class="fas fa-phone"></i> Call driver</a>` : ''}
+            </div>`;
+    } catch (e) {
+        // A shared-key session is refused by design. Say which, rather than
+        // showing a generic failure the agent cannot act on.
+        const msg = /named staff account/i.test(e?.message || '')
+            ? 'This needs a named staff account — the shared admin key cannot reveal contact details.'
+            : 'Reveal was refused or failed.';
+        box.innerHTML = `<div class="ro-none ro-none-block">${escapeHtml(msg)}</div>`;
     }
 };
 
@@ -4539,12 +4629,13 @@ function renderRideInvestigation(d) {
         ${row('Email', `<span class="ro-mono">${escapeHtml(p.emailMasked || '—')}</span>`)}
         ${row('Passenger ID', `<span class="ro-mono ro-sub">${escapeHtml(p.passengerId)}</span>`)}
         ${row('History', `${p.completedRides} completed · ${p.cancelledRides} cancelled`)}
-        <div class="ro-actions">
-          <button class="ro-btn" onclick="revealRideContact('${escapeHtml(r.rideId)}')">
+        <div class="ro-reveal" id="ro-reveal">
+          <button class="ro-btn" onclick="roShowRevealForm()">
             <i class="fas fa-phone"></i> Reveal &amp; call
           </button>
         </div>
-        <p class="ro-note">Contact details are masked. Revealing them is recorded in the audit log.</p>
+        <p class="ro-note">Contact details are masked. Revealing them is recorded in the audit log
+        against a named staff account — the shared admin key cannot do it.</p>
       </section>`;
 
     // ── Driver ───────────────────────────────────────────────────────────

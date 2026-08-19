@@ -2,7 +2,7 @@ import { Router, Request, Response } from "express";
 import { AdminService } from "../services/admin_service";
 import { adminAuth } from "../middleware/admin_auth";
 import { attachAdminIdentity, requirePermission, AdminRequest } from "../middleware/admin_permissions";
-import { resolveActor, requireStaffAuth } from "../middleware/staff_auth";
+import { resolveActor, requireStaffAuth, requireRealStaff } from "../middleware/staff_auth";
 import { SYSTEM_LEGACY_ADMIN } from "../services/audit_service";
 import staffAdminRoutes from "./staff_admin_routes";
 import parkAdminRoutes from "./park_admin_routes";
@@ -266,7 +266,16 @@ router.get("/live-requests/:rideId", requirePermission('monitor:read'), async (r
  * POST /admin/live-requests/:rideId/reveal-contact
  * Unmasked passenger/driver contact for a live support call. Always audited.
  */
-router.post("/live-requests/:rideId/reveal-contact", requirePermission('monitor:reveal_contact'), async (req: AdminRequest, res: Response) => {
+// `requireRealStaff` as well as the permission, deliberately.
+//
+// Two permission systems coexist here: AdminPermission (driven by the shared
+// ADMIN_API_KEY) and StaffPermission (driven by a named staff account).
+// `ride:reveal_contact` is listed in LEGACY_FORBIDDEN_PERMISSIONS and the login
+// screen promises the shared key cannot reveal contact — but this route guarded
+// only with the ADMIN side, which never consults that list. The shared key
+// could therefore read any passenger's name, phone and email, attributed to
+// nobody. Unmasking a real person must be attributable to a real person.
+router.post("/live-requests/:rideId/reveal-contact", requireRealStaff, requirePermission('monitor:reveal_contact'), async (req: AdminRequest, res: Response) => {
     try {
         const reason = (req.body?.reason as string | undefined)?.slice(0, 200) || null;
         const data = await DispatchMonitorQueryService.revealContact(String(req.params.rideId));

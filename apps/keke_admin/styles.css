@@ -2289,3 +2289,29 @@ body.authenticated .admin-container { display: flex; }
     text-underline-offset: 3px;
 }
 .ro-area-note { font-style: italic; opacity: 0.75; }
+
+.ro-reveal-input {
+    width: 100%; padding: 9px 12px; margin-bottom: 10px;
+    background: var(--card-bg); border: 1px solid var(--border-color);
+    border-radius: 8px; color: var(--text-primary); font-size: 0.85rem;
+}
+.ro-reveal-input:focus { outline: none; border-color: var(--accent-amber); }
+.ro-revealed .ro-btn, .ro-revealed .ro-btn-ghost {
+    display: inline-block; margin-top: 10px; margin-right: 8px; text-decoration: none;
+}
+
+/* The shared .table-container clips overflow. At narrow widths that made
+   DRIVER, FARE and the View button permanently unreachable — no scrollbar, no
+   way to pan. Scoped to Ride Operations so other admin sections keep their
+   existing behaviour. */
+#history .table-container {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+#history .ro-table { min-width: 860px; }
+
+@media (max-width: 900px) {
+    /* Below the breakpoint the two address columns are hidden, so the table
+       fits without panning. */
+    #history .ro-table { min-width: 0; }
+}

@@ -526,3 +526,31 @@ describe('a search records how far it reached', () => {
         expect(rows[0].radiusKm).toBeNull();
     });
 });
+
+// ══════════════════════════════════════════════════════════════════════
+//  Contact reveal: the shared key is not a person
+// ══════════════════════════════════════════════════════════════════════
+
+describe('revealing a passenger contact requires a named human', () => {
+    const {
+        LEGACY_FORBIDDEN_PERMISSIONS,
+        StaffPermission,
+    } = require('../../src/config/staff_permissions');
+
+    it('lists contact reveal among the things a shared key may not do', () => {
+        // The login screen promises this. Found in a production browser test
+        // that the promise was false: /reveal-contact guarded only with the
+        // ADMIN permission system, which never consults this set, so the
+        // shared key returned a passenger's full name, phone and email
+        // attributed to nobody. The route now also requires requireRealStaff.
+        expect(LEGACY_FORBIDDEN_PERMISSIONS.has(StaffPermission.RIDE_REVEAL_CONTACT)).toBe(true);
+        expect(LEGACY_FORBIDDEN_PERMISSIONS.has(StaffPermission.DISPATCH_REVEAL_PASSENGER_CONTACT))
+            .toBe(true);
+    });
+
+    it('keeps read-only monitoring available to the shared key', () => {
+        // The fix must not lock the shared key out of everything — reading the
+        // console is still legitimate; unmasking a real person is not.
+        expect(LEGACY_FORBIDDEN_PERMISSIONS.has(StaffPermission.RIDE_READ)).toBe(false);
+    });
+});

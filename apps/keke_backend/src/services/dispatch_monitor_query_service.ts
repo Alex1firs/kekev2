@@ -130,11 +130,18 @@ export function areaOf(address?: string | null): string | null {
         // Pure house/plot numbers ("109", "3 1") locate a doorstep, not an area.
         .filter((p) => !/^[\d\s-]+$/.test(p));
 
-    if (parts.length === 0) return null;
-    if (parts.length === 1) {
-        return ADDRESS_PLACEHOLDERS.has(parts[0].toLowerCase()) ? null : parts[0];
+    // Google repeats segments freely — "Oguta Road, Oguta Road, Onitsha North"
+    // and even "Onitsha North, Onitsha North" are real captured pickups.
+    // Collapsing repeats keeps the area readable without discarding anything.
+    const deduped = parts.filter(
+        (p, i) => i === 0 || p.toLowerCase() !== parts[i - 1].toLowerCase(),
+    );
+
+    if (deduped.length === 0) return null;
+    if (deduped.length === 1) {
+        return ADDRESS_PLACEHOLDERS.has(deduped[0].toLowerCase()) ? null : deduped[0];
     }
-    return parts.slice(-2).join(', ');
+    return deduped.slice(-2).join(', ');
 }
 
 /**

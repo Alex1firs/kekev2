@@ -492,3 +492,18 @@ describe('area extraction survives what the passenger app actually stores', () =
         expect(areaOf('   ')).toBeNull();
     });
 });
+
+describe('repeated address segments are collapsed', () => {
+    const { areaOf } = require('../../src/services/dispatch_monitor_query_service');
+
+    it('collapses a segment Google repeated', () => {
+        // All real production pickups. Google duplicates segments freely.
+        expect(areaOf('Onitsha North, Onitsha North')).toBe('Onitsha North');
+        expect(areaOf('Oguta Road, Oguta Road, Onitsha North')).toBe('Oguta Road, Onitsha North');
+        expect(areaOf('A232, A232, Onitsha North')).toBe('A232, Onitsha North');
+    });
+
+    it('keeps genuinely different adjacent segments', () => {
+        expect(areaOf('Venn Road South, Onitsha North')).toBe('Venn Road South, Onitsha North');
+    });
+});

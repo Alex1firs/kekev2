@@ -506,3 +506,65 @@ describe('reassignment is only offered before the trip starts', () => {
         expect(REASSIGNABLE_STATUSES).not.toContain('canceled');
     });
 });
+
+// ══════════════════════════════════════════════════════════════════════
+//  The reassign control has to be REACHABLE
+// ══════════════════════════════════════════════════════════════════════
+
+describe('a dispatcher can actually see the reassign control', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const src = () => fs.readFileSync(
+        path.join(__dirname, '../../../keke_dispatcher/operations.js'), 'utf8');
+
+    it('does not gate visibility on holding the lease', () => {
+        // The field report was "I cannot find this interface". Two independent
+        // faults, either fatal on its own:
+        //
+        //   1. assignDriverToRide releases control for EVERY source, so the
+        //      instant Operations assigned a driver `mine` became false.
+        //   2. queueState folds control and lifecycle into one value, so
+        //      holding the lease makes it OPERATIONS_CONTROL — never
+        //      'ASSIGNED'.
+        //
+        // The old condition was `mine && queueState === 'ASSIGNED'`, whose two
+        // clauses are mutually exclusive. It could not render on any device.
+        const s = src();
+        expect(s).not.toContain("mine && can('ops:assign') && ['ASSIGNED'].includes(r.queueState)");
+    });
+
+    it('gates on the ride status the server actually enforces', () => {
+        const s = src();
+        expect(s).toContain("const PRE_TRIP = ['accepted', 'arrived']");
+        expect(s).toContain('PRE_TRIP.includes(String(r.status))');
+    });
+
+    it('the client and server agree on which states allow a swap', () => {
+        // Two lists in two languages; if they drift, the operator is either
+        // offered a button that always fails or denied one that would work.
+        const { REASSIGNABLE_STATUSES } = require('../../src/services/operations_dispatch_service');
+        const m = src().match(/const PRE_TRIP = \[([^\]]*)\]/);
+        const client = m![1].match(/'([a-z_]+)'/g)!.map((q: string) => q.replace(/'/g, ''));
+        expect(client).toEqual(REASSIGNABLE_STATUSES);
+    });
+
+    it('asks for a named confirmation before removing anyone', () => {
+        const s = src();
+        expect(s).toContain('Remove ${esc(r.driver.name)} from this ride?');
+        expect(s).toContain('data-reassign-confirm');
+        expect(s).toContain('Remove &amp; Reassign');
+    });
+
+    it('takes control itself rather than expecting the operator to', () => {
+        // Assignment hands the lease back to AUTO, so the dispatcher does not
+        // hold it when they decide to reassign. Making them press Take over
+        // first is exactly the obscure workflow that was reported.
+        const s = src();
+        expect(s).toContain('/takeover`, \'POST\'');
+        expect(s).toContain('holdsIt');
+    });
+
+    it('says why reassignment is unavailable once the trip has started', () => {
+        expect(src()).toContain('This trip has already started');
+    });
+});

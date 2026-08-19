@@ -30,6 +30,8 @@
         busy: false,
         /** True while the reason picker is open. */
         reassigning: false,
+        /** The chosen reason code, while the confirmation is showing. */
+        reassignConfirm: null,
     };
 
     const $$ = (id) => document.getElementById(id);
@@ -186,9 +188,25 @@
         if (OPS.busy) return;
         OPS.busy = true;
         try {
+            // Releasing a driver requires the lease, and assignment gives it
+            // back to AUTO — so after assigning Driver A the dispatcher no
+            // longer holds it. Take it first rather than making them work that
+            // out and press Take over themselves.
+            //
+            // Two explicit calls, not a hidden server-side grab: taking control
+            // IS an intervention and the audit trail should say so.
+            const ride = OPS.rides.find((x) => x.rideId === rideId);
+            const holdsIt = ride?.control?.mode === 'operations'
+                         && ride?.control?.ownerStaffId === me()?.staffUserId;
+            if (!holdsIt) {
+                await api(`/operations/rides/${encodeURIComponent(rideId)}/takeover`, 'POST', {});
+                OPS.owned.add(rideId);
+            }
+
             await api(`/operations/rides/${encodeURIComponent(rideId)}/release-driver`, 'POST', { reason });
             toast('Driver released. Choose another.', 'ok');
             OPS.reassigning = false;
+            OPS.reassignConfirm = null;
             await refresh();
             await loadDrivers(rideId);
         } catch (e) {
@@ -391,10 +409,36 @@
         </div>`;
     }
 
+    /** Ride states in which a driver may still be swapped. Mirrors the server. */
+    const PRE_TRIP = ['accepted', 'arrived'];
+
+    function reasonLabel(code) {
+        return (REASSIGN_REASONS.find(([c]) => c === code) || [null, code])[1];
+    }
+
+    /**
+     * The ride detail sheet.
+     *
+     * The Reassign button is gated on the RIDE, not on who holds the lease.
+     * It used to be gated on `mine && queueState === 'ASSIGNED'`, which can
+     * never be true: holding the lease makes queueState OPERATIONS_CONTROL, so
+     * the two clauses excluded one another. And assignment releases the lease
+     * anyway, so `mine` was false the instant a driver was assigned — the
+     * button could not appear on a real device under any circumstances.
+     *
+     * Control is still required to release a driver, enforced on the SERVER
+     * where it belongs. Hiding the button was never the safety mechanism; it
+     * only hid the feature.
+     */
     function detailSheet(r) {
         const mine = r.control?.ownerStaffId === me()?.staffUserId
                   && r.control?.mode === 'operations';
         const held = r.control?.mode === 'operations';
+        // The same statuses the server allows a release from. Deliberately read
+        // from ride.status rather than the derived queueState, which folds
+        // control and lifecycle into one value and cannot express "assigned AND
+        // under Operations control".
+        const preTrip = PRE_TRIP.includes(String(r.status));
 
         return `
         <div class="ops-sheet-head">
@@ -443,8 +487,22 @@
                   ? `<button class="ops-btn-ghost" data-call-assigned="${esc(r.driver.id)}">Call</button>` : ''}
               </div>
             </div>
-            ${mine && can('ops:assign') && ['ASSIGNED'].includes(r.queueState) ? (
-              OPS.reassigning ? `
+
+            ${preTrip && can('ops:assign') ? (
+              OPS.reassignConfirm ? `
+              <div class="ops-reassign">
+                <div class="ops-reassign-title">
+                  Remove ${esc(r.driver.name)} from this ride?
+                </div>
+                <div class="ops-reassign-why">
+                  ${esc(reasonLabel(OPS.reassignConfirm))}
+                </div>
+                <div class="ops-confirm-row">
+                  <button class="ops-btn-ghost" data-reassign-cancel="1">Cancel</button>
+                  <button class="ops-btn" data-reassign-confirm="1">Remove &amp; Reassign</button>
+                </div>
+              </div>`
+              : OPS.reassigning ? `
               <div class="ops-reassign">
                 <div class="ops-reassign-title">Why is this driver being taken off?</div>
                 ${REASSIGN_REASONS.map(([code, label]) =>
@@ -453,8 +511,11 @@
               </div>`
               : `<button class="ops-btn-ghost ops-btn-big" data-reassign="1">Reassign driver</button>`
             ) : ''}
-            ${!mine && r.queueState === 'ASSIGNED' && can('ops:takeover')
-              ? '<p class="ops-note">Take control of this ride to reassign the driver.</p>' : ''}
+            ${!preTrip && r.driver ? `
+              <p class="ops-note">
+                This trip has already started. Use the incident/cancellation
+                workflow instead.
+              </p>` : ''}
           </div>` : ''}
 
           <div class="ops-actions">
@@ -551,11 +612,23 @@
         const asg = e.target.closest('[data-assign]');
         if (asg && OPS.selected) { assign(OPS.selected, asg.dataset.assign); return; }
 
-        if (e.target.closest('[data-reassign]')) { OPS.reassigning = true; render(); return; }
-        if (e.target.closest('[data-reassign-cancel]')) { OPS.reassigning = false; render(); return; }
+        if (e.target.closest('[data-reassign]')) {
+            OPS.reassigning = true; OPS.reassignConfirm = null; render(); return;
+        }
+        if (e.target.closest('[data-reassign-cancel]')) {
+            OPS.reassigning = false; OPS.reassignConfirm = null; render(); return;
+        }
 
+        // Reason first, then a named confirmation. Removing a driver from a
+        // ride a passenger is waiting on should not be one tap away from a
+        // list of seven buttons.
         const rr = e.target.closest('[data-release-reason]');
-        if (rr && OPS.selected) { releaseDriver(OPS.selected, rr.dataset.releaseReason); return; }
+        if (rr) { OPS.reassignConfirm = rr.dataset.releaseReason; render(); return; }
+
+        if (e.target.closest('[data-reassign-confirm]') && OPS.selected) {
+            releaseDriver(OPS.selected, OPS.reassignConfirm);
+            return;
+        }
 
         // Calling the driver who is already assigned, from the summary panel.
         const ca = e.target.closest('[data-call-assigned]');
@@ -597,6 +670,7 @@
             OPS.interventions = [];
             OPS.drivers = [];
             OPS.reassigning = false;
+            OPS.reassignConfirm = null;
             render();
             loadInterventions(OPS.selected);
             const r = OPS.rides.find((x) => x.rideId === OPS.selected);
@@ -620,6 +694,7 @@
         OPS.interventions = [];
         OPS.drivers = [];
         OPS.reassigning = false;
+        OPS.reassignConfirm = null;
         render();
         loadInterventions(rideId);
         refresh().then(() => {

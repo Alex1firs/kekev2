@@ -385,3 +385,13 @@
 /* A reason is required, so each is its own full-width target — a dropdown
    plus a confirm is two taps and one of them is fiddly on a phone. */
 .ops-reason { width: 100%; text-align: left; min-height: 46px; }
+
+/* The named confirmation. Removing a driver from a ride somebody is waiting
+   on should not be one tap away from a list of seven reason buttons. */
+.ops-reassign-why {
+    font-size: 0.8rem;
+    color: var(--orange);
+    margin-bottom: 10px;
+}
+.ops-confirm-row { display: flex; gap: 8px; }
+.ops-confirm-row button { flex: 1; min-height: 48px; }

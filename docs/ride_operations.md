@@ -263,3 +263,30 @@ still be a guess.
 a locality/sublocality field alongside the formatted address at request time,
 when the geocode result is already in hand and free. That is a passenger-app
 change and is deliberately not in this work.
+
+---
+
+## Field diagnostics: the story of one ride
+
+```bash
+ssh root@206.189.96.147
+cd /opt/kekev2
+COLOUR=$(bash -c 'source infra/lib.sh && live_colour')
+cd apps/keke_backend
+docker compose run --rm --no-deps "api_prod_$COLOUR" \
+    node dist/scripts/ride_story.js RIDE-1787129928901
+```
+
+**Resolve the colour, do not hardcode it.** Blue and green swap on every
+deploy, and the idle colour runs the *previous* image — which may predate the
+script, or predate the behaviour you are trying to explain.
+
+Prints request → automatic dispatch → Operations → assignment → trip → outcome,
+then the full event timeline. Reports explicitly whether the passenger build
+sent structured locality, and whether an area came from that or from parsing
+the address.
+
+Contains no passenger names, phones or emails: this output gets pasted into
+chat threads during a field test, so it has to be safe to paste. Ids are
+printed so a ride can still be looked up in the console, where identity is
+masked and revealing it is audited.

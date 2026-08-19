@@ -568,3 +568,24 @@ describe('a dispatcher can actually see the reassign control', () => {
         expect(src()).toContain('This trip has already started');
     });
 });
+
+describe('a refusal says what is actually true of the ride', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const src = fs.readFileSync(
+        path.join(__dirname, '../../../keke_dispatcher/operations.js'), 'utf8');
+
+    it('does not tell a cancelled ride that its trip started', () => {
+        // Found by walking every status in the browser: a cancelled ride never
+        // started and a completed one finished, so the started-trip sentence
+        // was wrong for both. An operator reading a line that contradicts what
+        // is on screen starts distrusting the rest of it.
+        expect(src).toContain("case 'canceled':");
+        expect(src).toContain('This ride was cancelled.');
+        expect(src).toContain('This trip is finished.');
+    });
+
+    it('keeps the incident-workflow wording for a trip in progress', () => {
+        expect(src).toContain('Use the incident/cancellation workflow instead.');
+    });
+});

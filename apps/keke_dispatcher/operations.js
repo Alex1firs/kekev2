@@ -412,6 +412,30 @@
     /** Ride states in which a driver may still be swapped. Mirrors the server. */
     const PRE_TRIP = ['accepted', 'arrived'];
 
+
+    /**
+     * Why reassignment is not on offer, in the operator's terms.
+     *
+     * A cancelled ride never started and a completed one finished, so telling
+     * either of them "this trip has already started" is simply wrong — and an
+     * operator reading a sentence that does not match what they are looking at
+     * starts to distrust the rest of the screen.
+     */
+    function noReassignReason(status) {
+        switch (String(status)) {
+            case 'in_progress':
+            case 'started':
+                return 'This trip has already started. Use the incident/cancellation workflow instead.';
+            case 'completed':
+                return 'This trip is finished.';
+            case 'canceled':
+            case 'cancelled':
+                return 'This ride was cancelled.';
+            default:
+                return 'This ride can no longer be reassigned.';
+        }
+    }
+
     function reasonLabel(code) {
         return (REASSIGN_REASONS.find(([c]) => c === code) || [null, code])[1];
     }
@@ -511,11 +535,8 @@
               </div>`
               : `<button class="ops-btn-ghost ops-btn-big" data-reassign="1">Reassign driver</button>`
             ) : ''}
-            ${!preTrip && r.driver ? `
-              <p class="ops-note">
-                This trip has already started. Use the incident/cancellation
-                workflow instead.
-              </p>` : ''}
+            ${!preTrip && r.driver
+              ? `<p class="ops-note">${esc(noReassignReason(r.status))}</p>` : ''}
           </div>` : ''}
 
           <div class="ops-actions">

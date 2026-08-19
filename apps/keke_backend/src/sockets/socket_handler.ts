@@ -25,6 +25,7 @@ import { projectDispatchEvent } from '../services/dispatch_event_projection';
 import { RideOperationsSwitch } from '../services/ride_operations_switch';
 import { RideControlService } from '../services/ride_control_service';
 import { OperationsDispatchService } from '../services/operations_dispatch_service';
+import { OperationsBroadcastService } from '../services/operations_broadcast_service';
 import {
     RideOutcomeCode,
     CancelActorRole,
@@ -93,7 +94,7 @@ const id  = () => z.string().min(1).max(128);
 const Schemas = {
     join: z.object({
         userId: id(),
-        role: z.enum(['passenger', 'driver', 'admin', 'ride', 'park']),
+        role: z.enum(['passenger', 'driver', 'admin', 'ride', 'park', 'ops']),
     }),
     heartbeat: z.object({
         driverId: id(),
@@ -321,6 +322,10 @@ export class SocketHandler {
         // reference, no dispatch state, and cannot reach any other path — so
         // there is no way for a manual assignment to diverge from an automatic
         // one, which is the whole point of routing it through here.
+        OperationsBroadcastService.setEmitter((event, payload) => {
+            this.io.to('ops').emit(event, payload);
+        });
+
         OperationsDispatchService.setHost({
             assignDriver: async (a) => {
                 const result = await this.assignDriverToRide({
@@ -471,6 +476,43 @@ export class SocketHandler {
                     }
                     socket.join(`park:${data.userId}`);
                     log.info(`park:${data.userId} joined by staff ${staff.staffUserId}`);
+                    return;
+                }
+
+                // The OPS room carries every live ride request in the city —
+                // passenger names, pickups, destinations. Same reasoning as the
+                // park room above: joining it is authorised, not namespaced.
+                // The socket must hold a staff identity that actually has
+                // ops:queue_read, checked here rather than trusted from the
+                // client, because the client is not a security boundary.
+                if (data.role === 'ops') {
+                    const staff = (socket as any).staff as { staffUserId: string } | undefined;
+                    if (!staff) {
+                        socket.emit('ride:error', { code: 'FORBIDDEN', message: 'Staff session required.' });
+                        return;
+                    }
+                    try {
+                        const { StaffAuthService } = await import('../services/staff_auth_service');
+                        const { StaffUser } = await import('../models/StaffUser');
+                        const member = await AppDataSource.getRepository(StaffUser)
+                            .findOne({ where: { id: staff.staffUserId } });
+                        const roles = await StaffAuthService.loadRoles(staff.staffUserId);
+                        const perms = StaffAuthService.resolvePermissions(member?.status as any, roles);
+                        if (!perms.has('ops:queue_read')) {
+                            log.warn(`[SOCKET_BLOCK] ${staff.staffUserId} tried to join ops without permission`);
+                            socket.emit('ride:error', { code: 'FORBIDDEN', message: 'You do not have Operations access.' });
+                            return;
+                        }
+                    } catch (err: any) {
+                        // Fails CLOSED. Unlike dispatch, being unable to verify
+                        // authorisation for a feed of passenger data is a reason
+                        // to refuse, not to proceed.
+                        log.warn(`[SOCKET_BLOCK] ops permission check failed: ${err?.message}`);
+                        socket.emit('ride:error', { code: 'FORBIDDEN', message: 'Could not verify Operations access.' });
+                        return;
+                    }
+                    socket.join('ops');
+                    log.info(`ops room joined by staff ${staff.staffUserId}`);
                     return;
                 }
 
@@ -675,6 +717,9 @@ export class SocketHandler {
                 this.rideExclusions.set(rideId, new Set());
                 log.info(`Starting dispatch for ride ${rideId}`);
                 this.io.to('admin').emit('ride:status_update', { rideId, status: 'searching' });
+                // Operations sees every request the moment it exists. Detached
+                // — the passenger's dispatch must not wait on a queue rebuild.
+                OperationsBroadcastService.rideChanged(rideId, { isNewRequest: true });
                 // First row of the ride's admin timeline, so the request appears
                 // in Live Ride Requests the moment it is created.
                 DispatchMonitorService.record({
@@ -783,6 +828,7 @@ export class SocketHandler {
                     this.clearDispatchTimers(data.rideId);
 
                     this.io.to('admin').emit('ride:status_update', { rideId: data.rideId, status: 'canceled' });
+                    OperationsBroadcastService.rideChanged(data.rideId);
                     // `outcome` is the discriminator the apps key on. Without it the
                     // passenger app read EVERY cancellation as its own — including a
                     // driver-initiated one — and told the passenger they had
@@ -2504,6 +2550,7 @@ export class SocketHandler {
             message: 'No drivers available nearby',
         });
         this.io.to('admin').emit('ride:status_update', { rideId, status: 'failed' });
+        OperationsBroadcastService.rideChanged(rideId);
 
         if (ride.passengerId) {
             NotificationService.sendToUser(

@@ -1,0 +1,319 @@
+/**
+ * Operations Dispatch: the judgements, without a database.
+ *
+ * The atomic transitions are covered against real Postgres in
+ * test/integration/operations_dispatch_db.test.ts — they cannot be tested
+ * honestly any other way. What is here is everything a database would not
+ * help with: when a ride needs a human, who gets rung, whether a lease is
+ * live, and the order a dispatcher sees drivers in.
+ */
+import { RideControlService } from '../../src/services/ride_control_service';
+import { DispatchControlMode } from '../../src/models/RideDispatchControl';
+import { OperationsQueueService } from '../../src/services/operations_queue_service';
+import {
+    OperationsNotificationService,
+    DEFAULT_POLICY,
+    EXCEPTION_ONLY_POLICY,
+} from '../../src/services/operations_notification_service';
+import { OperationsDispatchService } from '../../src/services/operations_dispatch_service';
+import { RideStatus } from '../../src/models/Ride';
+import { RideOutcomeCode } from '../../src/services/ride_outcome';
+import { StaffRole, permissionsForRole, LEGACY_FORBIDDEN_PERMISSIONS, StaffPermission } from '../../src/config/staff_permissions';
+
+const config = {
+    leaseDurationMs: 180_000,
+    leaseRenewIntervalMs: 30_000,
+    sweepIntervalMs: 30_000,
+    waitAttentionThresholdMs: 45_000,
+    waitUrgentThresholdMs: 90_000,
+    enabled: true,
+    interventionEnabled: true,
+};
+
+const ride = (over: any = {}) => ({
+    rideId: 'RIDE-1',
+    status: RideStatus.SEARCHING,
+    driverId: null,
+    outcomeReason: null,
+    createdAt: new Date(),
+    ...over,
+});
+
+const rollup = (over: any = {}) => ({
+    candidateCount: 0,
+    eligibleDriverCount: 0,
+    notifiedDriverCount: 0,
+    finalOutcomeCode: null,
+    ...over,
+});
+
+// ══════════════════════════════════════════════════════════════════════
+//  A lease is live or it is not — sockets are irrelevant
+// ══════════════════════════════════════════════════════════════════════
+
+describe('control liveness is decided by the clock, never by a connection', () => {
+    const now = new Date('2026-08-19T09:00:00Z');
+    const live = (over: any = {}) => ({
+        mode: DispatchControlMode.OPERATIONS,
+        leaseExpiresAt: new Date(now.getTime() + 60_000),
+        ...over,
+    }) as any;
+
+    it('a future expiry means controlled', () => {
+        expect(RideControlService.isOperationsControlled(live(), now)).toBe(true);
+    });
+
+    it('a lapsed expiry means NOT controlled, even before the sweeper runs', () => {
+        // The sweep is bookkeeping. Dispatch must treat a lapsed lease as
+        // released immediately, or a dead client would keep blocking offers
+        // for up to a full sweep interval.
+        expect(RideControlService.isOperationsControlled(
+            live({ leaseExpiresAt: new Date(now.getTime() - 1) }), now)).toBe(false);
+    });
+
+    it('AUTO is never controlled however recent the lease looks', () => {
+        expect(RideControlService.isOperationsControlled(
+            live({ mode: DispatchControlMode.AUTO }), now)).toBe(false);
+    });
+
+    it('a missing control row means AUTO, not an error', () => {
+        expect(RideControlService.isOperationsControlled(null, now)).toBe(false);
+        expect(RideControlService.isOperationsControlled(undefined, now)).toBe(false);
+    });
+
+    it('a null expiry is not a permanent lease', () => {
+        // Otherwise a malformed row would hold a passenger's ride forever.
+        expect(RideControlService.isOperationsControlled(
+            live({ leaseExpiresAt: null }), now)).toBe(false);
+    });
+});
+
+// ══════════════════════════════════════════════════════════════════════
+//  NEEDS ATTENTION
+// ══════════════════════════════════════════════════════════════════════
+
+describe('the queue only calls for a human when evidence says so', () => {
+    it('a brand-new request is healthy, not a problem', () => {
+        // Crying wolf within two seconds of every request would make the
+        // queue useless on the first busy morning.
+        const a = OperationsQueueService.assessAttention(ride() as any, rollup(), 2, config);
+        expect(a.triggers).toEqual([]);
+        expect(a.severity).toBe('none');
+    });
+
+    it('a ride not yet searched is not "no drivers available"', () => {
+        // No rollup means dispatch has not reported yet. Absence of evidence
+        // is not evidence of absence.
+        const a = OperationsQueueService.assessAttention(ride() as any, undefined, 5, config);
+        expect(a.triggers).toEqual([]);
+    });
+
+    it('candidates found but none eligible is a supply problem', () => {
+        const a = OperationsQueueService.assessAttention(
+            ride() as any, rollup({ candidateCount: 6, eligibleDriverCount: 0 }), 10, config);
+        expect(a.triggers).toContain('NO_ELIGIBLE_DRIVER');
+    });
+
+    it('offers delivered and unanswered past the threshold needs attention', () => {
+        const a = OperationsQueueService.assessAttention(
+            ride() as any, rollup({ candidateCount: 3, eligibleDriverCount: 3, notifiedDriverCount: 3 }),
+            50, config);
+        expect(a.triggers).toContain('NO_DRIVER_ACCEPTED');
+    });
+
+    it('offers delivered but still inside the threshold does not', () => {
+        const a = OperationsQueueService.assessAttention(
+            ride() as any, rollup({ candidateCount: 3, eligibleDriverCount: 3, notifiedDriverCount: 3 }),
+            10, config);
+        expect(a.triggers).not.toContain('NO_DRIVER_ACCEPTED');
+    });
+
+    it('a long wait alone is enough', () => {
+        const a = OperationsQueueService.assessAttention(ride() as any, rollup(), 60, config);
+        expect(a.triggers).toContain('WAIT_EXCEEDS_THRESHOLD');
+        expect(a.severity).toBe('warning');
+    });
+
+    it('escalates to urgent past the urgent threshold', () => {
+        const a = OperationsQueueService.assessAttention(ride() as any, rollup(), 120, config);
+        expect(a.severity).toBe('urgent');
+    });
+
+    it('a technical failure is always urgent', () => {
+        const a = OperationsQueueService.assessAttention(
+            ride({ status: RideStatus.FAILED, outcomeReason: RideOutcomeCode.TECHNICAL_FAILURE }) as any,
+            rollup(), 5, config);
+        expect(a.triggers).toContain('TECHNICAL_FAILURE');
+        expect(a.severity).toBe('urgent');
+    });
+
+    it('a completed or cancelled ride needs nobody', () => {
+        for (const status of [RideStatus.COMPLETED, RideStatus.CANCELED]) {
+            const a = OperationsQueueService.assessAttention(
+                ride({ status }) as any, rollup(), 9999, config);
+            expect(a.severity).toBe('none');
+        }
+    });
+
+    it('an assigned ride stops accruing wait triggers', () => {
+        // The passenger has a Keke. A long "wait" is now a journey.
+        const a = OperationsQueueService.assessAttention(
+            ride({ driverId: 'd1', status: RideStatus.ACCEPTED }) as any, rollup(), 600, config);
+        expect(a.triggers).toEqual([]);
+    });
+
+    it('thresholds come from config, so the rollout can be retuned', () => {
+        const quiet = { ...config, waitAttentionThresholdMs: 600_000 };
+        expect(OperationsQueueService.assessAttention(ride() as any, rollup(), 60, quiet).triggers)
+            .toEqual([]);
+    });
+});
+
+// ══════════════════════════════════════════════════════════════════════
+//  Notification policy
+// ══════════════════════════════════════════════════════════════════════
+
+describe('notification policy is data, not code', () => {
+    it('the rollout default rings for every new request', () => {
+        const d = OperationsNotificationService.decide(DEFAULT_POLICY, {
+            isNewRequest: true, triggers: [], severity: 'none',
+        });
+        expect(d.notify).toBe(true);
+        expect(d.reason).toBe('EVERY_REQUEST');
+        expect(d.urgent).toBe(false);
+    });
+
+    it('exception-only stays silent on an ordinary request', () => {
+        const d = OperationsNotificationService.decide(EXCEPTION_ONLY_POLICY, {
+            isNewRequest: true, triggers: [], severity: 'none',
+        });
+        expect(d.notify).toBe(false);
+    });
+
+    it('exception-only still shouts when there is no supply', () => {
+        const d = OperationsNotificationService.decide(EXCEPTION_ONLY_POLICY, {
+            isNewRequest: false, triggers: ['NO_ELIGIBLE_DRIVER'], severity: 'warning',
+        });
+        expect(d.notify).toBe(true);
+        expect(d.urgent).toBe(true);
+    });
+
+    it('a problem outranks "new request" in what it says', () => {
+        // A ride that is both new and already failing should announce the
+        // failure, which is the more useful fact.
+        const d = OperationsNotificationService.decide(DEFAULT_POLICY, {
+            isNewRequest: true, triggers: ['NO_ELIGIBLE_DRIVER'], severity: 'warning',
+        });
+        expect(d.reason).toBe('NO_ELIGIBLE_DRIVER');
+        expect(d.urgent).toBe(true);
+    });
+
+    it('urgent severity escalates a normally-quiet trigger', () => {
+        const d = OperationsNotificationService.decide(DEFAULT_POLICY, {
+            isNewRequest: false, triggers: ['WAIT_EXCEEDS_THRESHOLD'], severity: 'urgent',
+        });
+        expect(d.notify).toBe(true);
+        expect(d.urgent).toBe(true);
+    });
+
+    it('pushEnabled false silences everything', () => {
+        const d = OperationsNotificationService.decide(
+            { ...DEFAULT_POLICY, pushEnabled: false },
+            { isNewRequest: true, triggers: ['TECHNICAL_FAILURE'], severity: 'urgent' },
+        );
+        expect(d.notify).toBe(false);
+    });
+
+    it('an empty trigger list notifies about nothing', () => {
+        const d = OperationsNotificationService.decide(
+            { ...DEFAULT_POLICY, triggers: [] },
+            { isNewRequest: true, triggers: ['NO_ELIGIBLE_DRIVER'], severity: 'urgent' },
+        );
+        expect(d.notify).toBe(false);
+    });
+});
+
+// ══════════════════════════════════════════════════════════════════════
+//  Permissions
+// ══════════════════════════════════════════════════════════════════════
+
+describe('the Operations role is capability-driven and cannot bypass anything', () => {
+    const ops = permissionsForRole(StaffRole.OPERATIONS_DISPATCHER);
+
+    it('holds exactly the powers the job needs', () => {
+        for (const p of [
+            StaffPermission.OPS_QUEUE_READ,
+            StaffPermission.OPS_TAKEOVER,
+            StaffPermission.OPS_RELEASE,
+            StaffPermission.OPS_ASSIGN,
+            StaffPermission.OPS_CONTACT_DRIVER,
+        ]) {
+            expect(ops).toContain(p);
+        }
+    });
+
+    it('has no wallet, staff or park administration authority', () => {
+        for (const p of [
+            StaffPermission.WALLET_ADJUST,
+            StaffPermission.WALLET_REVERSE,
+            StaffPermission.STAFF_CREATE,
+            StaffPermission.STAFF_ASSIGN_ROLES,
+            StaffPermission.PARK_CREATE,
+            StaffPermission.BADGE_ISSUE,
+        ]) {
+            expect(ops).not.toContain(p);
+        }
+    });
+
+    it('a shared admin key can never take over or assign', () => {
+        // Same rule as contact reveal: seizing a live ride must be
+        // attributable to a named human.
+        for (const p of [
+            StaffPermission.OPS_TAKEOVER,
+            StaffPermission.OPS_RELEASE,
+            StaffPermission.OPS_ASSIGN,
+            StaffPermission.OPS_CONTACT_DRIVER,
+        ]) {
+            expect(LEGACY_FORBIDDEN_PERMISSIONS.has(p)).toBe(true);
+        }
+    });
+
+    it('reading the queue is not forbidden to a shared key', () => {
+        // Observation is harmless; intervention is not. The distinction is the
+        // point of splitting these permissions.
+        expect(LEGACY_FORBIDDEN_PERMISSIONS.has(StaffPermission.OPS_QUEUE_READ)).toBe(false);
+    });
+
+    it('a supervisor may watch but not intervene', () => {
+        const admin = permissionsForRole(StaffRole.OPERATIONS_ADMIN);
+        expect(admin).toContain(StaffPermission.OPS_QUEUE_READ);
+        expect(admin).not.toContain(StaffPermission.OPS_ASSIGN);
+        expect(admin).not.toContain(StaffPermission.OPS_TAKEOVER);
+    });
+});
+
+// ══════════════════════════════════════════════════════════════════════
+//  Ineligibility is explained, never hidden
+// ══════════════════════════════════════════════════════════════════════
+
+describe('a dispatcher is told WHY a driver cannot take the ride', () => {
+    it('translates every reason the eligibility service produces', () => {
+        // Hiding an ineligible driver would leave a dispatcher wondering where
+        // Emeka went. Showing him greyed out with a reason is actionable.
+        const cases: Array<[string, RegExp]> = [
+            ['driver_suspended_or_rejected', /suspended|not approved/i],
+            ['already_on_active_ride', /another ride/i],
+            ['cash_debt_blocked', /debt/i],
+            ['no_driver_profile', /profile/i],
+            ['explicit_rejector', /declined/i],
+        ];
+        for (const [code, pattern] of cases) {
+            expect(OperationsDispatchService.explainIneligibility(code)).toMatch(pattern);
+        }
+    });
+
+    it('an unknown reason still says something useful', () => {
+        expect(OperationsDispatchService.explainIneligibility('some_new_rule'))
+            .toContain('some_new_rule');
+    });
+});

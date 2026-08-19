@@ -17,11 +17,13 @@ import driverRoutes from "./routes/driver_routes";
 import authRoutes, { driverAuthRouter } from "./routes/auth_routes";
 import staffAuthRoutes from "./routes/staff_auth_routes";
 import dispatcherRoutes from "./routes/dispatcher_routes";
+import operationsRoutes from "./routes/operations_routes";
 import rideRoutes from "./routes/ride_routes";
 import notificationRoutes from "./routes/notification_routes";
 import passengerRoutes from "./routes/passenger_routes";
 import { NotificationService } from './services/notification_service';
 import { StaleRideSweeper } from './services/stale_ride_sweeper';
+import { OperationsControlSweeper } from './services/operations_control_sweeper';
 import { ParkJobSweeper } from './services/park_job_sweeper';
 import { redis } from './config/redis';
 import publicCommsRoutes from "./routes/public_comms_routes";
@@ -293,6 +295,7 @@ app.use('/api/v1/staff/auth', staffAuthRoutes);
 // The park dispatcher device surface. Staff sessions only — the legacy shared
 // key is refused outright, because every action here must name a person.
 app.use('/api/v1/dispatcher', dispatcherRoutes);
+app.use('/api/v1/operations', operationsRoutes);
 app.use('/api/v1/finance', financeRoutes);
 app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/drivers', driverRoutes);
@@ -376,6 +379,7 @@ AppDataSource.initialize()
     // needs no change here. See services/stale_ride_sweeper.ts.
     try {
       StaleRideSweeper.start();
+      OperationsControlSweeper.start();
     } catch (e: any) {
       console.error(JSON.stringify({ level: 'error', message: 'Failed to start stale-ride sweeper', error: e.message }));
     }
@@ -428,6 +432,7 @@ AppDataSource.initialize()
           // Stop sweeping before the datasource goes away, so an in-flight pass
           // cannot query a destroyed connection during a deploy.
           StaleRideSweeper.stop();
+          OperationsControlSweeper.stop();
           await AppDataSource.destroy();
           redis.disconnect();
         } catch (e) {}

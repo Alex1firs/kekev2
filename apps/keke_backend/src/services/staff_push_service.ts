@@ -230,6 +230,81 @@ export class StaffPushService {
      * Addressed by PARK, not by person: a request arrives at a park, and
      * whoever is on duty there should hear about it.
      */
+    /**
+     * Push to every staff member holding a given permission.
+     *
+     * Operations dispatchers are global, not park-bound, so the park-scoped
+     * path above cannot reach them. This resolves the audience by CAPABILITY
+     * rather than by location — which is also the correct security posture:
+     * the people who may see the queue are exactly the people told about it.
+     *
+     * Never throws. A push failure must never affect a ride.
+     */
+    static async sendToPermission(
+        permission: string,
+        message: { title: string; body: string; urgent?: boolean },
+        data: Record<string, string> = {},
+    ): Promise<{ tokens: number; accepted: number; failed: number }> {
+        try {
+            const { StaffAuthService } = require('./staff_auth_service');
+            const { StaffUser, StaffStatus } = require('../models/StaffUser');
+
+            const staff = await AppDataSource.getRepository(StaffUser).find({
+                where: { status: StaffStatus.ACTIVE },
+            });
+            const audience: string[] = [];
+            for (const member of staff) {
+                const roles = await StaffAuthService.loadRoles(member.staffUserId).catch(() => []);
+                const perms = StaffAuthService.resolvePermissions(member.status, roles);
+                if (perms.has(permission)) audience.push(member.staffUserId);
+            }
+            if (audience.length === 0) return { tokens: 0, accepted: 0, failed: 0 };
+
+            const devices = await this.tokens.find({
+                where: { staffUserId: In(audience), status: StaffTokenStatus.ACTIVE },
+            });
+            if (devices.length === 0) return { tokens: 0, accepted: 0, failed: 0 };
+
+            NotificationService.initialize();
+            if (!NotificationService.isReady()) {
+                return { tokens: devices.length, accepted: 0, failed: 0 };
+            }
+
+            const rideId = data.rideId ?? 'none';
+            const multicast: admin.messaging.MulticastMessage = {
+                tokens: devices.map((d) => d.token),
+                notification: { title: message.title, body: message.body },
+                data: { type: 'OPS_QUEUE', ...data },
+                webpush: {
+                    headers: { TTL: '300', Urgency: message.urgent ? 'high' : 'normal' },
+                    notification: {
+                        title: message.title,
+                        body: message.body,
+                        // Replaces an earlier alert about the SAME ride rather
+                        // than stacking; renotify so an escalation still buzzes.
+                        tag: `ops-ride-${rideId}`,
+                        renotify: true,
+                        requireInteraction: message.urgent === true,
+                        icon: '/dispatch/icons/icon-192.png',
+                        badge: '/dispatch/icons/icon-192.png',
+                        vibrate: message.urgent ? [200, 100, 200, 100, 200] : [150],
+                    },
+                    fcmOptions: {
+                        link: `/dispatch/index.html?ops=1&ride=${encodeURIComponent(rideId)}`,
+                    },
+                },
+            };
+
+            const response = await admin.messaging().sendEachForMulticast(multicast);
+            let accepted = 0; let failed = 0;
+            for (const r of response.responses) { if (r.success) accepted++; else failed++; }
+            return { tokens: devices.length, accepted, failed };
+        } catch (err: any) {
+            console.warn(`[STAFF_PUSH] sendToPermission(${permission}) failed: ${err?.message}`);
+            return { tokens: 0, accepted: 0, failed: 0 };
+        }
+    }
+
     static async notifyParkDispatchers(args: {
         parkId: string;
         jobId: string;

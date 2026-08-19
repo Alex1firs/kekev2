@@ -2315,3 +2315,38 @@ body.authenticated .admin-container { display: flex; }
        fits without panning. */
     #history .ro-table { min-width: 0; }
 }
+
+/* ── Live Operations ──────────────────────────────────────────────────
+   The desktop companion to Ride Operations. A wide row rather than a card:
+   on a desk there is room to put waiting time, route, supply and status side
+   by side, which is faster to scan down a column than stacked cards. */
+.lo-list { display: flex; flex-direction: column; gap: 8px; }
+.lo-row {
+    display: grid;
+    grid-template-columns: 90px 1fr 200px 220px;
+    gap: 16px;
+    align-items: center;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-left: 4px solid var(--border-color);
+    border-radius: 10px;
+    padding: 14px 16px;
+    cursor: pointer;
+    transition: background 0.12s ease;
+}
+.lo-row:hover { background: rgba(255, 204, 0, 0.04); }
+.lo-row-warn    { border-left-color: #f59e0b; }
+.lo-row-urgent  { border-left-color: var(--accent-rose); }
+.lo-row-control { border-left-color: var(--accent-amber); background: rgba(255, 204, 0, 0.05); }
+
+.lo-wait { font-size: 1.4rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.lo-supply { font-size: 0.85rem; }
+.lo-status { font-size: 0.85rem; text-align: right; }
+.lo-chips { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
+.lo-auto { display: flex; align-items: center; gap: 6px; font-size: 0.82rem; color: var(--text-secondary); }
+
+@media (max-width: 900px) {
+    /* Supply detail folds away first; waiting time and route are the triage. */
+    .lo-row { grid-template-columns: 70px 1fr; }
+    .lo-supply, .lo-status { display: none; }
+}

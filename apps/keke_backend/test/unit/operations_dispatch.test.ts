@@ -278,9 +278,18 @@ describe('the Operations role is capability-driven and cannot bypass anything', 
         }
     });
 
-    it('reading the queue is not forbidden to a shared key', () => {
-        // Observation is harmless; intervention is not. The distinction is the
-        // point of splitting these permissions.
+    it('the whole Operations surface is closed to a shared key', () => {
+        // OPS_QUEUE_READ is deliberately NOT in the forbidden set — the
+        // permission itself is harmless — but the router applies
+        // requireRealStaff to every Operations route, so a shared key reaches
+        // none of it. That is the stronger posture and the correct one: the
+        // queue is a live feed of every passenger in the city, with their
+        // pickup, destination and masked number. Streaming that to a
+        // credential with no person behind it is not observation, it is an
+        // unattributable export.
+        //
+        // Verified against production: /operations/queue returns 403 to the
+        // shared admin key.
         expect(LEGACY_FORBIDDEN_PERMISSIONS.has(StaffPermission.OPS_QUEUE_READ)).toBe(false);
     });
 

@@ -186,6 +186,8 @@ function switchSection(id) {
     if (id === 'finance')       { fetchFinanceSummary(); fetchDebtLeaderboard(); }
     if (id === 'payouts')       fetchPayouts();
     if (id === 'history')       enterRideOperations();
+    if (id === 'live-operations') enterLiveOperations();
+    else stopLiveOperationsRefresh();
     if (id === 'live-riders')   { fetchLiveRiders(); toggleLiveAutoRefresh(); }
     if (id === 'live-requests')  enterLiveRequests();
     if (id === 'driver-dispatch-metrics') fetchDispatchMetrics();
@@ -4748,4 +4750,133 @@ let roBound = false;
 function enterRideOperations() {
     if (!roBound) { bindRideOpsFilters(); roBound = true; }
     fetchRideHistory();
+}
+
+// ===================== Live Operations (desktop) =====================
+// The companion to Ride Operations: what needs acting on now, rather than what
+// already happened. Deliberately calls the SAME /operations endpoints the
+// dispatcher PWA calls — there is one set of Operations business rules and
+// neither surface owns them.
+
+let loState = { tab: 'attention', rows: [], counts: {}, timer: null };
+
+async function fetchLiveOperations() {
+    try {
+        const data = await adminFetch('/operations/queue');
+        loState.rows = data.rows || [];
+        loState.counts = data.counts || {};
+        renderLiveOperations();
+        const conn = document.getElementById('lo-conn');
+        if (conn) { conn.textContent = 'Updated ' + new Date().toLocaleTimeString(); }
+    } catch (e) {
+        const list = document.getElementById('lo-list');
+        // A staff-only surface reached with the shared key fails here by
+        // design — say which, rather than showing a bare error.
+        const staffOnly = /named staff account|403/i.test(e?.message || '');
+        if (list) {
+            list.innerHTML = `<div class="ro-empty">${
+                staffOnly
+                    ? 'Live Operations needs a named staff account. The shared admin key cannot open it.'
+                    : escapeHtml(e?.message || 'Could not load the queue.')
+            }</div>`;
+        }
+    }
+}
+
+const LO_TRIGGER = {
+    NO_ELIGIBLE_DRIVER: 'No eligible driver',
+    NO_DRIVER_ACCEPTED: 'Nobody accepted',
+    WAIT_EXCEEDS_THRESHOLD: 'Waiting a long time',
+    TECHNICAL_FAILURE: 'Dispatch failed',
+    DISPATCH_EXHAUSTED: 'Dispatch exhausted',
+};
+const LO_STATE = {
+    AUTO_HEALTHY: 'Auto dispatch working',
+    NEEDS_ATTENTION: 'Needs attention',
+    OPERATIONS_CONTROL: 'Operations control',
+    ASSIGNED: 'Assigned',
+    COMPLETED: 'Completed',
+    CANCELLED: 'Cancelled',
+    FAILED: 'Failed',
+};
+
+function loWaited(s) {
+    if (s == null) return '—';
+    if (s < 60) return s + 's';
+    const m = Math.floor(s / 60);
+    return m < 60 ? `${m}m ${s % 60}s` : `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+
+function renderLiveOperations() {
+    const cards = document.getElementById('lo-counts');
+    if (cards) {
+        const c = loState.counts;
+        const card = (label, v, cls) =>
+            `<div class="ro-card ${cls || ''}"><div class="ro-card-v">${v || 0}</div>
+             <div class="ro-card-l">${escapeHtml(label)}</div></div>`;
+        cards.innerHTML = [
+            card('Needs attention', c.NEEDS_ATTENTION, 'ro-c-bad'),
+            card('Operations control', c.OPERATIONS_CONTROL, 'ro-c-warn'),
+            card('Auto healthy', c.AUTO_HEALTHY, 'ro-c-ok'),
+            card('Assigned', c.ASSIGNED),
+            card('Failed', c.FAILED, 'ro-c-bad'),
+        ].join('');
+    }
+
+    const list = document.getElementById('lo-list');
+    if (!list) return;
+    const rows = loState.tab === 'attention'
+        ? loState.rows.filter(r => ['NEEDS_ATTENTION', 'OPERATIONS_CONTROL'].includes(r.queueState))
+        : loState.rows.filter(r => ['AUTO_HEALTHY','NEEDS_ATTENTION','OPERATIONS_CONTROL','ASSIGNED'].includes(r.queueState));
+
+    if (!rows.length) {
+        list.innerHTML = `<div class="ro-empty">${loState.tab === 'attention'
+            ? 'Nothing needs attention. Automatic dispatch is coping.'
+            : 'No live requests right now.'}</div>`;
+        return;
+    }
+
+    list.innerHTML = rows.map(r => {
+        const sev = r.attention?.severity || 'none';
+        const cls = r.queueState === 'OPERATIONS_CONTROL' ? 'lo-row-control'
+                  : sev === 'urgent' ? 'lo-row-urgent'
+                  : sev === 'warning' ? 'lo-row-warn' : '';
+        const chips = (r.attention?.triggers || [])
+            .map(t => `<span class="ro-badge ro-b-supply">${escapeHtml(LO_TRIGGER[t] || t)}</span>`).join(' ');
+        return `
+        <div class="lo-row ${cls}" onclick="openRideInvestigation('${escapeHtml(r.rideId)}')">
+          <div class="lo-wait">${escapeHtml(loWaited(r.waitingSeconds))}</div>
+          <div class="lo-route">
+            <div class="ro-name">${escapeHtml(r.pickupArea || r.pickupAddress || 'Area not recorded')}
+              <span class="ro-sub">→ ${escapeHtml(r.destinationArea || '—')}</span></div>
+            <div class="ro-sub">${escapeHtml(r.passenger?.name || 'Unknown')} ·
+              ${escapeHtml(r.passenger?.phoneMasked || '')}</div>
+          </div>
+          <div class="lo-supply">
+            <div>${r.candidateCount === 0 ? 'no drivers found'
+                : `${r.eligibleDriverCount}/${r.candidateCount} eligible`}</div>
+            <div class="ro-sub">${r.offersSent} offered · ${r.rejected} declined · ${r.expired} no answer</div>
+          </div>
+          <div class="lo-status">
+            <div>${escapeHtml(LO_STATE[r.queueState] || r.queueState)}</div>
+            ${r.control?.ownerLabel ? `<div class="ro-sub">${escapeHtml(r.control.ownerLabel)}</div>` : ''}
+            ${chips ? `<div class="lo-chips">${chips}</div>` : ''}
+          </div>
+        </div>`;
+    }).join('');
+}
+
+function enterLiveOperations() {
+    const setTab = (t) => { loState.tab = t; renderLiveOperations(); };
+    document.getElementById('lo-tab-attention')?.addEventListener('click', () => setTab('attention'), { once: false });
+    document.getElementById('lo-tab-live')?.addEventListener('click', () => setTab('live'), { once: false });
+    fetchLiveOperations();
+    stopLiveOperationsRefresh();
+    if (document.getElementById('lo-autorefresh')?.checked) {
+        loState.timer = setInterval(() => fetchLiveOperations().catch(() => {}), 8000);
+    }
+}
+
+function stopLiveOperationsRefresh() {
+    if (loState.timer) { clearInterval(loState.timer); loState.timer = null; }
 }

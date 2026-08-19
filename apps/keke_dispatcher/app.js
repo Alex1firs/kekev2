@@ -61,6 +61,19 @@ const S = {
     caps: null,
 };
 
+
+/*
+ * Bridge for the Operations surface.
+ *
+ * operations.js is a separate file so the park workspace is untouched by it.
+ * It needs exactly three things from here — the authenticated fetch, the
+ * toast, and who is signed in — so those are handed over explicitly rather
+ * than letting it reach into module state.
+ */
+window.__kdApi = (path, method, body) => api(path, method, body);
+window.__kdToast = (m, k) => toast(m, k);
+window.__kdMe = () => S.me;
+
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -720,7 +733,9 @@ $('login-form').addEventListener('submit', async (e) => {
         S.refreshToken = data.refreshToken;
         sessionStorage.setItem('KD_TOKEN', S.accessToken);
         sessionStorage.setItem('KD_REFRESH', S.refreshToken);
-        await boot();
+        await // Operations wires its own listeners once, before the first boot.
+window.__kdOps?.init();
+boot();
     } catch {
         $('login-error').textContent = navigator.onLine
             ? 'Could not reach KekeRide. Try again in a moment.'
@@ -818,6 +833,18 @@ function showScreen(which) {
 function showShiftGate() {
     showScreen('shift-gate');
     $('shift-who').textContent = `Signed in as ${S.me.name}.`;
+
+    // Operations is a capability, not a role check: whoever holds
+    // ops:queue_read sees the entry point, whatever else they are.
+    const opsBtn = $('ops-enter');
+    if (opsBtn) {
+        const mayOps = (S.me.permissions || []).includes('ops:queue_read');
+        opsBtn.classList.toggle('hidden', !mayOps);
+        if (mayOps && !opsBtn.dataset.bound) {
+            opsBtn.dataset.bound = '1';
+            opsBtn.addEventListener('click', () => window.__kdOps?.enter());
+        }
+    }
     const select = $('shift-park');
     const parks = (S.me.assignedParks || []).filter((p) => p && p.status === 'active');
     select.innerHTML = parks.length
@@ -2163,5 +2190,8 @@ $('drivers').addEventListener('error', (e) => {
     fallback.textContent = img.dataset.initials;
     img.replaceWith(fallback);
 }, true);
+
+// Operations wires its own listeners once, before the first boot.
+window.__kdOps?.init();
 
 boot();

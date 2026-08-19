@@ -20,6 +20,7 @@
     <meta name="mobile-web-app-capable" content="yes">
 
     <title>KekeRide Park Dispatch</title>
+    <link rel="stylesheet" href="operations.css?v=1.0">
     <link rel="stylesheet" href="styles.css?v=5.5">
 </head>
 <body class="booting">
@@ -130,8 +131,25 @@
             You can read the board without a shift. Taking requests and assigning
             drivers needs one open.
         </p>
+        <!-- Only rendered for staff with ops:queue_read. -->
+        <button id="ops-enter" class="btn btn-primary btn-block hidden">Operations Dispatch</button>
         <button id="shift-signout" class="btn btn-ghost btn-block">Sign out</button>
     </div>
+</div>
+
+<!-- ═══ Operations Dispatch ═════════════════════════════════════════
+     A phone surface for the city-wide ride queue. Shown only to staff
+     holding ops:queue_read; everyone else never sees the entry point and
+     nothing about the park workspace changes.
+-->
+<div id="ops-screen" class="ops-screen hidden">
+    <header class="ops-topbar">
+        <button id="ops-exit" class="ops-btn-ghost ops-btn-back" aria-label="Back">‹</button>
+        <div class="ops-title">Operations</div>
+        <span id="ops-conn" class="conn conn-down" title="Realtime connection">offline</span>
+    </header>
+    <main id="ops-root" class="ops-main"></main>
+    <section id="ops-sheet" class="ops-sheet hidden" role="dialog" aria-label="Ride detail"></section>
 </div>
 
 <!-- ═══ Workspace ════════════════════════════════════════════════════ -->
@@ -371,6 +389,7 @@
 <div id="toasts" class="toasts" aria-live="polite"></div>
 
 <script src="/socket.io/socket.io.js"></script>
+<script src="operations.js?v=1.0"></script>
 <script src="app.js?v=5.5"></script>
 </body>
 </html>

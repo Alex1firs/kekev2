@@ -1,0 +1,290 @@
+/*
+ * Operations Dispatch — phone first.
+ *
+ * The person using this is standing in a park holding the phone in one hand.
+ * So: one column, thumb-reachable targets, and the fact that matters (how long
+ * somebody has been waiting) large enough to read at arm's length. No tables —
+ * a dense admin grid on a 390px screen is unusable, and this screen gets used
+ * when something is already going wrong.
+ */
+
+.ops-screen {
+    position: fixed;
+    inset: 0;
+    background: var(--bg);
+    display: flex;
+    flex-direction: column;
+    z-index: 900;
+}
+.ops-screen.hidden { display: none; }
+
+.ops-topbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    /* Clears the notch on a phone. */
+    padding-top: max(14px, env(safe-area-inset-top));
+}
+.ops-title { font-size: 1.05rem; font-weight: 700; flex: 1; }
+.ops-btn-back { font-size: 1.6rem; line-height: 1; padding: 0 10px; }
+
+.ops-main {
+    flex: 1;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 12px 12px 32px;
+}
+
+/* ── Tabs ─────────────────────────────────────────────────────────── */
+.ops-tabs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 14px;
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+    padding: 4px 0 10px;
+    z-index: 2;
+}
+.ops-tabs button {
+    flex: 1;
+    /* 44px minimum: a mis-tap here costs a passenger a ride. */
+    min-height: 44px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    color: var(--text-dim);
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+.ops-tabs button.on {
+    background: var(--surface-2);
+    color: var(--text);
+    border-color: var(--amber);
+}
+.ops-badge {
+    display: inline-block;
+    min-width: 20px;
+    padding: 1px 6px;
+    margin-left: 4px;
+    border-radius: 10px;
+    background: var(--amber);
+    color: #1a1a1a;
+    font-size: 0.72rem;
+    font-weight: 700;
+}
+
+/* ── Ride cards ───────────────────────────────────────────────────── */
+.ops-list { display: flex; flex-direction: column; gap: 10px; }
+
+.ops-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px;
+    cursor: pointer;
+    transition: border-color 0.15s ease;
+}
+.ops-card:active { background: var(--surface-2); }
+/* Colour carries urgency, and only urgency. */
+.ops-card-warn   { border-left-color: var(--orange); }
+.ops-card-urgent { border-left-color: var(--red); }
+.ops-card-mine   { border-left-color: var(--amber); background: rgba(255, 196, 0, 0.05); }
+
+.ops-card-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 10px;
+}
+/* The number a dispatcher scans for. */
+.ops-wait { font-size: 1.5rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.ops-state { font-size: 0.75rem; color: var(--text-dim); text-align: right; }
+
+.ops-route { margin-bottom: 10px; }
+.ops-leg {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    font-size: 0.92rem;
+    padding: 2px 0;
+}
+.ops-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+.ops-dot-a { background: var(--green); }
+.ops-dot-b { background: var(--red); }
+
+.ops-meta {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.82rem;
+    color: var(--text-dim);
+}
+.ops-supply { font-size: 0.78rem; color: var(--text-dim); margin-top: 6px; }
+
+.ops-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.ops-chip {
+    font-size: 0.72rem;
+    padding: 3px 9px;
+    border-radius: 20px;
+    background: rgba(251, 146, 60, 0.14);
+    color: var(--orange);
+    border: 1px solid rgba(251, 146, 60, 0.3);
+}
+.ops-owner {
+    margin-top: 10px;
+    font-size: 0.78rem;
+    color: var(--purple);
+}
+
+.ops-empty { padding: 18px; text-align: center; color: var(--text-dim); font-size: 0.85rem; }
+.ops-empty-big { padding: 56px 24px; line-height: 1.6; }
+
+/* ── Detail sheet ─────────────────────────────────────────────────── */
+.ops-sheet {
+    position: fixed;
+    inset: 0;
+    background: var(--bg);
+    display: flex;
+    flex-direction: column;
+    z-index: 950;
+    animation: opsUp 0.18s ease-out;
+}
+.ops-sheet.hidden { display: none; }
+@keyframes opsUp { from { transform: translateY(14px); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .ops-sheet { animation: none; } }
+
+.ops-sheet-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 16px;
+    padding-top: max(16px, env(safe-area-inset-top));
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+}
+.ops-sheet-title { font-size: 1rem; font-weight: 700; line-height: 1.35; }
+.ops-sheet-sub { font-size: 0.8rem; color: var(--text-dim); margin-top: 4px; }
+.ops-close {
+    background: transparent; border: none; color: var(--text-dim);
+    font-size: 1.2rem; padding: 6px 10px; cursor: pointer; min-height: 44px;
+}
+.ops-sheet-body {
+    flex: 1;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 16px 16px calc(32px + env(safe-area-inset-bottom));
+}
+
+.ops-facts {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    margin-bottom: 16px;
+}
+.ops-facts > div {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 9px 6px;
+    text-align: center;
+}
+.ops-facts span { display: block; font-size: 0.63rem; color: var(--text-dim); margin-bottom: 3px; }
+.ops-facts strong { font-size: 1rem; }
+
+.ops-addr {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px;
+    margin-bottom: 16px;
+    font-size: 0.85rem;
+}
+.ops-addr > div { display: flex; align-items: center; gap: 9px; padding: 4px 0; }
+
+.ops-actions { display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px; }
+.ops-btn {
+    background: var(--amber);
+    color: #1a1a1a;
+    border: none;
+    border-radius: 10px;
+    font-weight: 700;
+    font-size: 0.88rem;
+    padding: 11px 16px;
+    min-height: 44px;
+    cursor: pointer;
+}
+.ops-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.ops-btn-ghost {
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    color: var(--text-dim);
+    font-size: 0.85rem;
+    padding: 10px 16px;
+    min-height: 44px;
+    cursor: pointer;
+}
+/* The primary action on this screen. Deliberately large. */
+.ops-btn-big { width: 100%; min-height: 52px; font-size: 0.95rem; }
+
+.ops-section { margin-bottom: 22px; }
+.ops-section-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.ops-section h4 {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--amber);
+    margin-bottom: 10px;
+}
+.ops-section select {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; color: var(--text); padding: 7px 10px; font-size: 0.8rem;
+    min-height: 40px;
+}
+.ops-note { font-size: 0.82rem; color: var(--text-dim); text-align: center; padding: 18px; }
+
+/* ── Drivers ──────────────────────────────────────────────────────── */
+.ops-drivers { display: flex; flex-direction: column; gap: 8px; }
+.ops-driver {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 11px 12px;
+}
+/* Shown, not hidden — a dispatcher needs to know Emeka is there and why he
+   cannot be sent, otherwise they wonder where he went. */
+.ops-driver-blocked { opacity: 0.62; }
+.ops-driver-main { flex: 1; min-width: 0; }
+.ops-driver-name { font-weight: 600; font-size: 0.9rem; }
+.ops-driver-sub { font-size: 0.75rem; color: var(--text-dim); margin-top: 2px; }
+.ops-driver-block { font-size: 0.75rem; color: var(--orange); margin-top: 4px; }
+.ops-star { color: var(--amber); margin-right: 4px; }
+/* Stale intelligence must never read as current GPS. */
+.ops-stale { color: var(--purple); font-style: italic; }
+.ops-driver-actions { display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; }
+.ops-driver-actions button { font-size: 0.78rem; padding: 8px 12px; min-height: 40px; }
+
+/* ── History ──────────────────────────────────────────────────────── */
+.ops-history { list-style: none; padding: 0; margin: 0; font-size: 0.82rem; }
+.ops-history li {
+    display: flex; gap: 10px; padding: 7px 0;
+    border-bottom: 1px solid rgba(42, 50, 61, 0.55);
+    color: var(--text-dim);
+}
+.ops-history span { flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.ops-history em { color: var(--orange); font-style: normal; }
+
+/* ── Wider screens ────────────────────────────────────────────────── */
+@media (min-width: 720px) {
+    .ops-main { max-width: 720px; margin: 0 auto; width: 100%; }
+    .ops-sheet-body { max-width: 720px; margin: 0 auto; width: 100%; }
+    .ops-list { display: grid; grid-template-columns: repeat(2, 1fr); }
+}

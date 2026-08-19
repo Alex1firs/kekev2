@@ -18,6 +18,12 @@
 export enum StaffRole {
     SUPER_ADMIN = 'SUPER_ADMIN',
     OPERATIONS_ADMIN = 'OPERATIONS_ADMIN',
+    /**
+     * Watches the live ride queue and intervenes when automatic dispatch is
+     * struggling. Deliberately NOT a driver: an operations account has no
+     * User row and no DriverProfile, so it cannot appear as available supply.
+     */
+    OPERATIONS_DISPATCHER = 'OPERATIONS_DISPATCHER',
     PARK_SUPERVISOR = 'PARK_SUPERVISOR',
     PARK_DISPATCHER = 'PARK_DISPATCHER',
     CASHIER = 'CASHIER',
@@ -107,6 +113,16 @@ export const StaffPermission = {
     SETTLEMENT_READ: 'settlement:read',
     SETTLEMENT_APPROVE: 'settlement:approve',
 
+    // ── Operations Dispatch ─────────────────────────────────────────────
+    // Narrow on purpose. Taking control of a ride, assigning a driver by hand
+    // and ringing a driver are three different powers with three different
+    // blast radii, so they are three permissions rather than one.
+    OPS_QUEUE_READ: 'ops:queue_read',
+    OPS_TAKEOVER: 'ops:takeover',
+    OPS_RELEASE: 'ops:release',
+    OPS_ASSIGN: 'ops:assign',
+    OPS_CONTACT_DRIVER: 'ops:contact_driver',
+
     // ── Support / rides ─────────────────────────────────────────────────
     RIDE_READ: 'ride:read',
     RIDE_INTERVENE: 'ride:intervene',
@@ -184,6 +200,13 @@ export const LEGACY_FORBIDDEN_PERMISSIONS: ReadonlySet<string> = new Set<string>
     StaffPermission.WALLET_ADJUST,
     StaffPermission.WALLET_REVERSE,
     StaffPermission.SETTLEMENT_APPROVE,
+    // Operations Dispatch. Reading the queue is fine from a shared key;
+    // seizing a live ride or handing it to a driver is not — those must be
+    // attributable to a named human, exactly like contact reveal.
+    StaffPermission.OPS_TAKEOVER,
+    StaffPermission.OPS_RELEASE,
+    StaffPermission.OPS_ASSIGN,
+    StaffPermission.OPS_CONTACT_DRIVER,
     // contact exposure
     StaffPermission.RIDE_REVEAL_CONTACT,
     // audit export (a bulk personal-data egress path)
@@ -208,8 +231,13 @@ const ROLE_MATRIX: Record<StaffRole, StaffPermissionType[]> = {
      * Runs supply: parks, devices, rosters, badges and driver operations.
      * Deliberately has NO wallet mutation and NO contact reveal — operations
      * staff have no reason to move money or read a passenger's number.
+     *
+     * Gets READ access to the Operations Dispatch queue so a supervisor can
+     * see what is happening, but not takeover or assignment: intervening in a
+     * live ride is the dispatcher's job and stays with that role.
      */
     [StaffRole.OPERATIONS_ADMIN]: [
+        StaffPermission.OPS_QUEUE_READ,
         StaffPermission.STAFF_READ,
         StaffPermission.PARK_CREATE,
         StaffPermission.PARK_READ,
@@ -316,6 +344,31 @@ const ROLE_MATRIX: Record<StaffRole, StaffPermissionType[]> = {
         StaffPermission.PARK_MANAGE_ROSTER,
         StaffPermission.PRESENCE_READ,
         StaffPermission.PRESENCE_WRITE,
+    ],
+
+    /**
+     * Operations Dispatch. Sees every live request, takes control when
+     * automatic dispatch is struggling, and assigns a driver by hand.
+     *
+     * It can reveal a passenger's contact because the job is ringing people
+     * whose ride has not arrived — but it deliberately has NO wallet, staff,
+     * park-administration or badge authority. Assignment still runs through
+     * DriverEligibilityService; this role cannot bypass a suspension, a debt
+     * block or another active ride.
+     */
+    [StaffRole.OPERATIONS_DISPATCHER]: [
+        StaffPermission.OPS_QUEUE_READ,
+        StaffPermission.OPS_TAKEOVER,
+        StaffPermission.OPS_RELEASE,
+        StaffPermission.OPS_ASSIGN,
+        StaffPermission.OPS_CONTACT_DRIVER,
+        StaffPermission.RIDE_READ,
+        StaffPermission.RIDE_INTERVENE,
+        StaffPermission.RIDE_REVEAL_CONTACT,
+        StaffPermission.MONITOR_READ,
+        StaffPermission.PRESENCE_READ,
+        StaffPermission.PARK_READ,
+        StaffPermission.AUDIT_READ,
     ],
 
     /**

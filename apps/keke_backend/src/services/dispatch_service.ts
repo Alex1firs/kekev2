@@ -10,6 +10,19 @@ export class DispatchService {
    * lookup that always returns null.
    */
   static readonly DRIVER_LASTSEEN_PREFIX = 'driver:lastseen:';
+  /**
+   * Last known position, kept AFTER a driver goes offline.
+   *
+   * Separate from the geo index on purpose. `drivers:locations` is live,
+   * dispatch-eligible presence and a driver going offline is zrem'd out of it
+   * — that must not change, or an offline driver could be dispatched to.
+   *
+   * But Operations needs to ring the drivers who are near a stranded
+   * passenger, and "6 registered nearby, 0 online" is unanswerable without a
+   * position for the offline ones. This key holds that, with the same 24h life
+   * as last-seen, and is NEVER consulted by dispatch or eligibility.
+   */
+  static readonly DRIVER_LASTPOS_PREFIX = 'driver:lastpos:';
   // Tombstone written when a driver DELIBERATELY goes offline (or is ejected),
   // so admin tooling can show them as Offline immediately instead of lingering
   // as "recently seen". Cleared on the next heartbeat.
@@ -38,10 +51,54 @@ export class DispatchService {
     // tooling can distinguish "recently seen / stale" from "never online".
     pipeline.set(`${this.DRIVER_LASTSEEN_PREFIX}${driverId}`, Date.now().toString(), 'EX', this.LASTSEEN_TTL_SECONDS);
 
-    // 4. An active heartbeat clears any deliberate-offline tombstone.
+    // 4. Last KNOWN position, which outlives going offline. Written on the
+    // same pipeline so it costs no extra round trip and can never drift from
+    // the geo entry. Read only by Operations, never by dispatch.
+    pipeline.set(
+      `${this.DRIVER_LASTPOS_PREFIX}${driverId}`,
+      JSON.stringify({ lat, lng, at: Date.now() }),
+      'EX',
+      this.LASTSEEN_TTL_SECONDS,
+    );
+
+    // 5. An active heartbeat clears any deliberate-offline tombstone.
     pipeline.del(`${this.DRIVER_OFFLINE_PREFIX}${driverId}`);
 
     await pipeline.exec();
+  }
+
+  /**
+   * Last known positions for a set of drivers, including offline ones.
+   *
+   * STALE INTELLIGENCE, and labelled as such everywhere it surfaces. A
+   * position from 40 minutes ago says where a driver was, not where they are,
+   * and must never be presented as current GPS or used to make somebody
+   * dispatch-eligible. It exists so a dispatcher can decide who is worth
+   * ringing.
+   */
+  static async lastKnownPositions(
+    driverIds: string[],
+  ): Promise<Map<string, { lat: number; lng: number; at: number }>> {
+    const out = new Map<string, { lat: number; lng: number; at: number }>();
+    if (driverIds.length === 0) return out;
+    try {
+      const raw = await redis.mget(...driverIds.map((id) => `${this.DRIVER_LASTPOS_PREFIX}${id}`));
+      driverIds.forEach((id, i) => {
+        const v = raw[i];
+        if (!v) return;
+        try {
+          const parsed = JSON.parse(v);
+          if (Number.isFinite(parsed?.lat) && Number.isFinite(parsed?.lng)) {
+            out.set(id, { lat: parsed.lat, lng: parsed.lng, at: Number(parsed.at) || 0 });
+          }
+        } catch { /* a malformed entry is simply absent */ }
+      });
+    } catch (err: any) {
+      // Redis down means no last-known intelligence, which degrades the
+      // driver list to "online only" — it must never fail the request.
+      console.warn(`[DISPATCH] lastKnownPositions failed: ${err?.message}`);
+    }
+    return out;
   }
 
   /**
@@ -54,6 +111,9 @@ export class DispatchService {
     // Mark a deliberate offline so admin sees them Offline right away (not
     // "recently seen"). TTL matches last-seen so it self-expires.
     pipeline.set(`${this.DRIVER_OFFLINE_PREFIX}${driverId}`, Date.now().toString(), 'EX', this.LASTSEEN_TTL_SECONDS);
+    // Deliberately does NOT clear driver:lastpos — that is the whole point of
+    // keeping it separate from the geo index. Live presence disappears; where
+    // they last were does not.
     await pipeline.exec();
   }
 

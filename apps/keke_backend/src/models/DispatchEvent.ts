@@ -92,6 +92,23 @@ export enum DispatchEventType {
     /** The engaged party was offered another driver instead of a dead end. */
     REMATCH_OFFERED = "rematch_offered",
 
+    // ── Operations Dispatch ──────────────────────────────────────────────
+    // A named human intervening. These land on the SAME ride timeline as the
+    // automatic and park events above, so an investigator reads one continuous
+    // story: nobody accepted, Ada took control, Ada rang Emeka, Emeka assigned.
+    /** A dispatcher took control of dispatch for this ride. */
+    OPS_TAKEOVER_CLAIMED = "ops_takeover_claimed",
+    /** Control returned to automatic dispatch. `detail.reason` says why. */
+    OPS_TAKEOVER_RELEASED = "ops_takeover_released",
+    /** The lease lapsed without renewal. Nobody performed this. */
+    OPS_CONTROL_EXPIRED = "ops_control_expired",
+    /** A dispatcher rang a driver. Records the call, never its content. */
+    OPS_DRIVER_CONTACTED = "ops_driver_contacted",
+    /** A dispatcher assigned a driver by hand, through the same arbiter. */
+    OPS_DRIVER_ASSIGNED = "ops_driver_assigned",
+    /** A manual assignment was refused — usually because it lost a race. */
+    OPS_ASSIGNMENT_FAILED = "ops_assignment_failed",
+
     // ── Park Dispatch fallback ───────────────────────────────────────────
     // Downstream of direct dispatch, never inside it. These land on the SAME
     // ride timeline as the direct-dispatch events above, so the admin monitor

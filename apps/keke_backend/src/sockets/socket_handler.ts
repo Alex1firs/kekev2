@@ -23,6 +23,8 @@ import { RideActivityService } from '../services/ride_activity_service';
 import { DispatchEventType } from '../models/DispatchEvent';
 import { projectDispatchEvent } from '../services/dispatch_event_projection';
 import { RideOperationsSwitch } from '../services/ride_operations_switch';
+import { RideControlService } from '../services/ride_control_service';
+import { OperationsDispatchService } from '../services/operations_dispatch_service';
 import {
     RideOutcomeCode,
     CancelActorRole,
@@ -314,6 +316,35 @@ export class SocketHandler {
         // socket.io reference or in-memory dispatch state of its own. Note that
         // `assignDriver` is THIS class's single assignment method — the park
         // path cannot invent an alternative ride flow.
+        // Operations Dispatch borrows exactly one capability: the SAME
+        // assignment method Park and direct acceptance use. It holds no socket
+        // reference, no dispatch state, and cannot reach any other path — so
+        // there is no way for a manual assignment to diverge from an automatic
+        // one, which is the whole point of routing it through here.
+        OperationsDispatchService.setHost({
+            assignDriver: async (a) => {
+                const result = await this.assignDriverToRide({
+                    rideId: a.rideId,
+                    driverId: a.driverId,
+                    source: 'operations',
+                    assignedByStaffId: a.assignedByStaffId,
+                });
+                return result.ok
+                    ? { ok: true }
+                    : { ok: false, code: result.code, message: result.message };
+            },
+            emitToRide: (rideId, event, payload) => { this.io.to(`ride:${rideId}`).emit(event, payload); },
+            emitToAdmin: (event, payload) => { this.io.to('admin').emit(event, payload); },
+            emitToOps: (event, payload) => { this.io.to('ops').emit(event, payload); },
+            abortDispatch: (rideId, reason) => {
+                // Stops NEW offers. Deliberately does not cancel an offer
+                // already sitting on a driver's screen — that driver may be
+                // about to accept, and the conditional UPDATE will arbitrate.
+                const run = this.dispatchRuns.get(rideId);
+                if (run) run.abort(reason);
+            },
+        });
+
         ParkDispatchService.setHost({
             assignDriver: async (a) => {
                 const result = await this.assignDriverToRide({
@@ -1858,6 +1889,18 @@ export class SocketHandler {
 
             isRideAssigned: (id: string) => this.isRideAssigned(id),
 
+            isDispatchPaused: async (id: string) => {
+                try {
+                    return RideControlService.isOperationsControlled(await RideControlService.get(id));
+                } catch (err: any) {
+                    // Fails OPEN. A database blip must not stop dispatch: a
+                    // passenger with no Keke is a worse outcome than a
+                    // dispatcher being interrupted by an automatic offer.
+                    log.warn(`[OPS_CONTROL] pause check failed for ${id}: ${err?.message}`);
+                    return false;
+                }
+            },
+
             sendOffer: async (driverId: string, round: number): Promise<OfferDelivery> => {
                 // Enrich once per offer so a re-offered driver still gets the
                 // current pickup code. The cached copy is contact-free; contact
@@ -1969,7 +2012,7 @@ export class SocketHandler {
     private async assignDriverToRide(args: {
         rideId: string;
         driverId: string;
-        source: 'direct' | 'park';
+        source: 'direct' | 'park' | 'operations';
         parkId?: string | null;
         parkJobId?: string | null;
         assignmentMode?: 'electronic' | 'verbal';
@@ -2044,6 +2087,14 @@ export class SocketHandler {
 
         // Signal the dispatch loop to stop polling
         await redis.set(`ride:${rideId}:lock`, driverId);
+
+        // Control is meaningless once a driver owns the ride, so it returns to
+        // AUTO here — for EVERY source, not just Operations. A driver accepting
+        // automatically while a dispatcher held control must also end that
+        // control, or the dispatcher would keep a lease on a ride that is
+        // already under way. Never throws; the assignment has already
+        // committed and bookkeeping must not undo it.
+        await RideControlService.releaseOnAssignment(rideId);
 
         this.driverRideMap.set(driverId, rideId);
 
@@ -2356,7 +2407,15 @@ export class SocketHandler {
         }
 
         try {
-            if (result && result.stopReason !== 'accepted' && result.stopReason !== 'assigned_elsewhere') {
+            // `operations_control` joins the exclusions: a dispatcher taking
+            // over must never mark the ride failed. The passenger is still
+            // waiting and a human is actively working on it.
+            if (
+                result &&
+                result.stopReason !== 'accepted' &&
+                result.stopReason !== 'assigned_elsewhere' &&
+                result.stopReason !== 'operations_control'
+            ) {
                 await this.finalizeUnsuccessfulDispatch(rideId, result);
             }
         } finally {

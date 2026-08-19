@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { DataSource } from "typeorm";
-import { Wallet, LedgerEntry, Transaction, PayoutRecord, DriverProfile, Ride, AuditLog, User, DeviceToken, SavedLocation, Setting, SosAlert, RideReview, DispatchEvent, StaffUser, StaffRoleAssignment, StaffSession, StaffAuditEvent, ContactRevealEvent, Park, ParkZone, DispatcherShift, DriverPresence, DriverPresenceEvent, ParkDriverRoster, DriverBadge, ParkDispatchJob, StaffDeviceToken, StaffPushDelivery } from "../models";
+import { Wallet, LedgerEntry, Transaction, PayoutRecord, DriverProfile, Ride, AuditLog, User, DeviceToken, SavedLocation, Setting, SosAlert, RideReview, DispatchEvent, StaffUser, StaffRoleAssignment, StaffSession, StaffAuditEvent, ContactRevealEvent, Park, ParkZone, DispatcherShift, DriverPresence, DriverPresenceEvent, ParkDriverRoster, DriverBadge, ParkDispatchJob, StaffDeviceToken, StaffPushDelivery, RideDispatchControl, OperationsIntervention } from "../models";
 import dotenv from "dotenv";
 import { PassengerCommunicationPreference } from "../models/PassengerCommunicationPreference";
 import { EmailSuppression } from "../models/EmailSuppression";
@@ -27,7 +27,7 @@ export const AppDataSource = new DataSource({
     url: DATABASE_URL,
     synchronize: false,
     logging: ["error", "warn", "migration"],
-    entities: [Wallet, LedgerEntry, Transaction, PayoutRecord, DriverProfile, Ride, AuditLog, User, DeviceToken, SavedLocation, Setting, SosAlert, RideReview, DispatchEvent, StaffUser, StaffRoleAssignment, StaffSession, StaffAuditEvent, ContactRevealEvent, Park, ParkZone, DispatcherShift, DriverPresence, DriverPresenceEvent, ParkDriverRoster, DriverBadge, ParkDispatchJob, StaffDeviceToken, StaffPushDelivery,
+    entities: [Wallet, LedgerEntry, Transaction, PayoutRecord, DriverProfile, Ride, AuditLog, User, DeviceToken, SavedLocation, Setting, SosAlert, RideReview, DispatchEvent, StaffUser, StaffRoleAssignment, StaffSession, StaffAuditEvent, ContactRevealEvent, Park, ParkZone, DispatcherShift, DriverPresence, DriverPresenceEvent, ParkDriverRoster, DriverBadge, ParkDispatchJob, StaffDeviceToken, StaffPushDelivery, RideDispatchControl, OperationsIntervention,
     PassengerCommunicationPreference, EmailSuppression, EmailCampaign, EmailCampaignRecipient, EmailDeliveryEvent, EmailAudienceSegment,
     CommunicationCampaign, CommunicationCampaignChannel,
     MarketingPushJob, EmailWebhookEvent,

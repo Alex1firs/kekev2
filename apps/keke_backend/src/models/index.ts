@@ -12,6 +12,8 @@ export * from "./Setting";
 export * from "./SosAlert";
 export * from "./RideReview";
 export * from "./DispatchEvent";
+export * from "./RideDispatchControl";
+export * from "./OperationsIntervention";
 export * from "./StaffUser";
 export * from "./StaffRoleAssignment";
 export * from "./StaffSession";

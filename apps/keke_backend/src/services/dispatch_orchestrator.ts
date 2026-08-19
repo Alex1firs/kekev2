@@ -52,6 +52,12 @@ export type DispatchStopReason =
   | 'assigned_elsewhere'
   | 'lifetime_exceeded'
   | 'rounds_exhausted'
+  /**
+   * A named dispatcher took control of this ride. NOT a failure: the ride is
+   * still searching and a human is actively finding it a driver, so nothing
+   * downstream may mark it failed or tell the passenger nobody came.
+   */
+  | 'operations_control'
   | 'aborted';
 
 export interface DispatchPorts {
@@ -65,6 +71,16 @@ export interface DispatchPorts {
   getRideStatus(rideId: string): Promise<string | null>;
   /** Whether some driver already holds this ride. */
   isRideAssigned(rideId: string): Promise<boolean>;
+  /**
+   * True while Operations holds a live takeover lease on this ride.
+   *
+   * Checked before every round rather than relying on the abort signal alone,
+   * because a takeover can land on a ride whose run this process does not own
+   * — after a restart, or on the other colour mid-deploy. Fails OPEN: if this
+   * cannot be determined, automatic dispatch continues, because a passenger
+   * waiting is worse than a dispatcher being interrupted.
+   */
+  isDispatchPaused?(rideId: string): Promise<boolean>;
   /** Deliver the offer over socket + push. */
   sendOffer(driverId: string, round: number): Promise<OfferDelivery>;
   /** Realtime event to the ride room (passenger). */
@@ -257,6 +273,9 @@ export class DispatchOrchestrator {
     if (status !== 'searching') return { ok: false, reason: 'assigned_elsewhere' };
     if (await this.ports.isRideAssigned(run.rideId)) {
       return { ok: false, reason: 'assigned_elsewhere' };
+    }
+    if (this.ports.isDispatchPaused && (await this.ports.isDispatchPaused(run.rideId))) {
+      return { ok: false, reason: 'operations_control' };
     }
 
     const now = this.ports.now();

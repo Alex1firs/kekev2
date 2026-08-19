@@ -3,6 +3,7 @@ import 'booking_notice.dart';
 import 'chat_message.dart';
 import 'nearby_keke.dart';
 import 'ride_coordination.dart';
+import 'resolved_place.dart';
 
 enum BookingStep {
   loading,
@@ -48,9 +49,18 @@ class BookingState {
 
   final LatLng? pickupLocation;
   final String? pickupAddress;
-  
+
   final LatLng? destinationLocation;
   final String? destinationAddress;
+
+  /// Structured geocoder output for each end of the trip, when it resolved.
+  ///
+  /// Held alongside the address strings rather than replacing them: the UI
+  /// still renders `pickupAddress`, and older code paths keep working. These
+  /// carry the locality/city/state that operations needs, and are simply
+  /// absent when the geocoder gave us nothing. See ResolvedPlace.
+  final ResolvedPlace? pickupPlace;
+  final ResolvedPlace? destinationPlace;
 
   final int? estimatedFareAmount;
   final String? estimatedDistance;
@@ -140,6 +150,8 @@ class BookingState {
     this.pickupAddress,
     this.destinationLocation,
     this.destinationAddress,
+    this.pickupPlace,
+    this.destinationPlace,
     this.estimatedFareAmount,
     this.estimatedDistance,
     this.estimatedTime,
@@ -191,6 +203,8 @@ class BookingState {
     String? pickupAddress,
     LatLng? destinationLocation,
     String? destinationAddress,
+    ResolvedPlace? pickupPlace,
+    ResolvedPlace? destinationPlace,
     int? estimatedFareAmount,
     String? estimatedDistance,
     String? estimatedTime,
@@ -254,6 +268,8 @@ class BookingState {
       pickupAddress: pickupAddress ?? this.pickupAddress,
       destinationLocation: destinationLocation ?? this.destinationLocation,
       destinationAddress: destinationAddress ?? this.destinationAddress,
+      pickupPlace: pickupPlace ?? this.pickupPlace,
+      destinationPlace: destinationPlace ?? this.destinationPlace,
       estimatedFareAmount: estimatedFareAmount ?? this.estimatedFareAmount,
       estimatedDistance: estimatedDistance ?? this.estimatedDistance,
       estimatedTime: estimatedTime ?? this.estimatedTime,

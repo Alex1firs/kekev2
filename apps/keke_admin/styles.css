@@ -2281,3 +2281,11 @@ body.authenticated .admin-container { display: flex; }
     .ro-table th:nth-child(4), .ro-table td:nth-child(4) { display: none; }
     .ro-filters select, .ro-filters input { flex: 1 1 140px; min-width: 0; }
 }
+
+/* An area we inferred from prose rather than one the geocoder named. Marked so
+   a supply decision is never made on a parse without the operator knowing. */
+.ro-area-parsed {
+    text-decoration: underline dotted var(--border-color);
+    text-underline-offset: 3px;
+}
+.ro-area-note { font-style: italic; opacity: 0.75; }

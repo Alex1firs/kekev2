@@ -185,6 +185,47 @@ export class Ride {
     @Column({ type: "varchar", length: 120, nullable: true })
     cancellationReason!: string | null;
 
+    // --- Structured locality, captured at request time -----------------
+    // The address strings above are whatever Google returned to the handset,
+    // and are frequently unusable: plus codes, "Location selected", or a
+    // street with no area. These are the geocoder's OWN structured fields,
+    // taken from the same response, so operations can group demand by real
+    // neighbourhood instead of parsing prose.
+    //
+    // All nullable. An older passenger build sends none of them, a failed
+    // geocode sends none of them, and neither is an error — the ride is built
+    // on coordinates, which are always present.
+
+    /** Neighbourhood — "Awada", "Upper Iweka". The most operationally useful. */
+    @Index()
+    @Column({ type: "varchar", length: 120, nullable: true })
+    pickupSubLocality!: string | null;
+
+    /** Town/area — "Obosi", "Nkpor". */
+    @Index()
+    @Column({ type: "varchar", length: 120, nullable: true })
+    pickupLocality!: string | null;
+
+    @Column({ type: "varchar", length: 120, nullable: true })
+    pickupCity!: string | null;
+
+    @Column({ type: "varchar", length: 120, nullable: true })
+    pickupState!: string | null;
+
+    @Index()
+    @Column({ type: "varchar", length: 120, nullable: true })
+    destinationSubLocality!: string | null;
+
+    @Index()
+    @Column({ type: "varchar", length: 120, nullable: true })
+    destinationLocality!: string | null;
+
+    @Column({ type: "varchar", length: 120, nullable: true })
+    destinationCity!: string | null;
+
+    @Column({ type: "varchar", length: 120, nullable: true })
+    destinationState!: string | null;
+
     // --- Terminal outcome, for Ride Operations -------------------------
     // `status` says what happened; these say why. Denormalised onto the ride
     // row on purpose: the operations table renders REASON for every row, and

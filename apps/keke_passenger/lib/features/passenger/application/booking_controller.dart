@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import '../domain/booking_notice.dart';
 import '../domain/booking_state.dart';
+import '../domain/resolved_place.dart';
 import '../domain/live_trip_diagnostics.dart';
 import '../../../core/diagnostics/boot_trace.dart';
 import 'active_ride_recovery.dart';
@@ -544,13 +545,27 @@ class BookingController extends StateNotifier<BookingState> {
       state = state.copyWith(destinationLocation: target, destinationAddress: 'Loading address...');
     }
     
-    final address = await _mapRepo.reverseGeocode(target);
-    
+    // Structured now, not just a display string. The locality and city are in
+    // the same geocoder response the address line is built from, so keeping
+    // them costs nothing and is the only moment they are available for free.
+    //
+    // Guarded, because this is reached from _initializeMap, which is reached
+    // from recoverActiveRide. Naming a pin is cosmetic; restoring a passenger's
+    // active ride is not. Nothing that happens here may escape into that path.
+    ResolvedPlace place;
+    try {
+      place = await _mapRepo.resolvePlace(target);
+    } catch (_) {
+      place = ResolvedPlace.unresolved();
+    }
+    if (!mounted) return;
+
     if (isPickup && (state.step == BookingStep.selectingPickup ||
         state.step == BookingStep.selectingDestination)) {
-      state = state.copyWith(pickupAddress: address);
+      state = state.copyWith(pickupAddress: place.address, pickupPlace: place);
     } else if (!isPickup && state.step == BookingStep.selectingDestinationOnMap) {
-      state = state.copyWith(destinationAddress: address);
+      state = state.copyWith(
+          destinationAddress: place.address, destinationPlace: place);
     }
   }
 
@@ -737,6 +752,13 @@ class BookingController extends StateNotifier<BookingState> {
         'estimatedDistanceM': _estimatedDistanceMeters,
       if (_estimatedDurationSeconds != null)
         'estimatedDurationSec': _estimatedDurationSeconds,
+      // Structured locality for Ride Operations. Spread rather than listed so
+      // a field the geocoder did not resolve is ABSENT from the payload — the
+      // backend then stores null, and reports can tell "never captured" from
+      // "captured as empty". Every key here is optional server-side; a request
+      // with none of them validates exactly as it did before.
+      ...?state.pickupPlace?.toRequestFields('pickup'),
+      ...?state.destinationPlace?.toRequestFields('destination'),
     });
     
     final attempts = state.searchAttempts + 1;

@@ -5,6 +5,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import '../../../core/config/env_config.dart';
 import '../../../core/network/api_client.dart';
+import '../domain/resolved_place.dart';
 
 class MapRepository {
   final Dio _dio;
@@ -40,7 +41,17 @@ class MapRepository {
     }
   }
 
-  Future<String?> reverseGeocode(LatLng target) async {
+  /// Resolve a pin to a displayable address, keeping the structure.
+  ///
+  /// This used to return one joined string built from name/thoroughfare/
+  /// subLocality and throw the rest of the Placemark away. The locality and
+  /// state were already in hand and free — discarding them is what left
+  /// operations unable to say which part of Onitsha a request came from.
+  ///
+  /// Never throws and never returns null: a failed geocode yields an
+  /// unresolved place, because booking a Keke must not depend on Google
+  /// answering. The coordinates are what the ride is actually built on.
+  Future<ResolvedPlace> resolvePlace(LatLng target) async {
     try {
       final placemarks = await geocoder
           .placemarkFromCoordinates(target.latitude, target.longitude)
@@ -50,13 +61,42 @@ class MapRepository {
         final parts = [place.name, place.thoroughfare, place.subLocality]
             .where((e) => e != null && e.isNotEmpty)
             .toList();
-        return parts.isEmpty ? 'Unknown Location' : parts.join(', ');
+
+        // A plus code is what Google returns for `name` when a pin has no
+        // street address. It is precise and meaningless to a human, so it is
+        // dropped from the display line when anything else survives.
+        final usable = parts.where((p) => !_isPlusCode(p!)).toList();
+        final line = usable.isNotEmpty
+            ? usable.join(', ')
+            : (parts.isNotEmpty ? parts.join(', ') : 'Location selected');
+
+        return ResolvedPlace(
+          address: line,
+          subLocality: place.subLocality,
+          locality: place.locality,
+          city: place.subAdministrativeArea?.isNotEmpty == true
+              ? place.subAdministrativeArea
+              : place.locality,
+          state: place.administrativeArea,
+        );
       }
     } catch (_) {
-      // Gracefully handle OS decoder failures / limits
+      // OS decoder failure, rate limit, or no network. Not an error the
+      // passenger should ever see: they picked a point on a map and that is
+      // all the ride needs.
     }
-    return 'Location selected';
+    return ResolvedPlace.unresolved();
   }
+
+  /// An Open Location Code such as `4QHQ+3WF`.
+  static bool _isPlusCode(String s) =>
+      RegExp(r'^[23456789CFGHJMPQRVWX]{4,8}\+[23456789CFGHJMPQRVWX]{2,3}$',
+              caseSensitive: false)
+          .hasMatch(s.trim());
+
+  /// Back-compatible string form, for callers that only want the display line.
+  Future<String?> reverseGeocode(LatLng target) async =>
+      (await resolvePlace(target)).address;
 
   final Options _mapHeaders = Options(headers: {
     'X-Ios-Bundle-Identifier': 'ng.kekeride.passenger',

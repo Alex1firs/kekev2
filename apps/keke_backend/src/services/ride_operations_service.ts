@@ -37,7 +37,7 @@ import {
     maskEmail,
     areaOf,
 } from './dispatch_monitor_query_service';
-import { outcomeLabel, classifyOutcome, RideOutcomeCode } from './ride_outcome';
+import { outcomeLabel, classifyOutcome, RideOutcomeCode, resolveAreaLine } from './ride_outcome';
 
 /** Hard ceiling on a page, whatever the caller asks for. */
 const MAX_PAGE_SIZE = 100;
@@ -77,8 +77,11 @@ export interface RideOperationsRow {
     driver: { id: string; name: string; phoneMasked: string | null } | null;
     pickupAddress: string | null;
     pickupArea: string | null;
+    /** 'structured' = the geocoder named it; 'parsed' = derived from prose. */
+    pickupAreaSource: 'structured' | 'parsed' | 'none';
     destinationAddress: string | null;
     destinationArea: string | null;
+    destinationAreaSource: 'structured' | 'parsed' | 'none';
     fare: number | null;
     paymentMode: string | null;
     acceptanceSeconds: number | null;
@@ -224,6 +227,10 @@ export class RideOperationsService {
             const d = r.driverId ? people.drivers.get(r.driverId) : undefined;
             const acceptedAt = r.acceptedAt ? new Date(r.acceptedAt).getTime() : null;
             const createdAt = new Date(r.createdAt).getTime();
+            const pickupArea = resolveAreaLine(
+                r.pickupSubLocality, r.pickupLocality, areaOf(r.pickupAddress));
+            const destArea = resolveAreaLine(
+                r.destinationSubLocality, r.destinationLocality, areaOf(r.destinationAddress));
 
             return {
                 rideId: r.rideId,
@@ -251,9 +258,13 @@ export class RideOperationsService {
                       }
                     : null,
                 pickupAddress: r.pickupAddress ?? null,
-                pickupArea: areaOf(r.pickupAddress),
+                // Structured locality wins when the app captured it; the
+                // address parse is the fallback for everything older.
+                pickupArea: pickupArea.area,
+                pickupAreaSource: pickupArea.source,
                 destinationAddress: r.destinationAddress ?? null,
-                destinationArea: areaOf(r.destinationAddress),
+                destinationArea: destArea.area,
+                destinationAreaSource: destArea.source,
                 fare: r.finalFare != null ? Number(r.finalFare)
                     : r.fare != null ? Number(r.fare)
                     : null,

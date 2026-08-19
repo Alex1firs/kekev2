@@ -21,7 +21,7 @@ import { DispatchEvent, DispatchEventType, OfferDeliveryState } from '../models/
 import { DispatchMonitorService } from './dispatch_monitor_service';
 import { StaleRideService, RideSnapshot } from './stale_ride_service';
 import { loadStaleRideConfig } from '../config/stale_ride_config';
-import { outcomeLabel, classifyOutcome, RideOutcomeCode } from './ride_outcome';
+import { outcomeLabel, classifyOutcome, RideOutcomeCode, resolveAreaLine } from './ride_outcome';
 
 /** Ride statuses the monitor treats as "live". */
 export const LIVE_RIDE_STATUSES: RideStatus[] = [
@@ -606,10 +606,20 @@ export class DispatchMonitorQueryService {
                 // — and neither is re-geocoded here, so opening a ride costs no
                 // third-party API call.
                 pickupAddress: ride.pickupAddress ?? null,
-                pickupArea: areaOf(ride.pickupAddress),
+                pickupArea: resolveAreaLine(
+                    ride.pickupSubLocality, ride.pickupLocality, areaOf(ride.pickupAddress)).area,
+                pickupAreaSource: resolveAreaLine(
+                    ride.pickupSubLocality, ride.pickupLocality, areaOf(ride.pickupAddress)).source,
+                pickupCity: ride.pickupCity ?? null,
+                pickupState: ride.pickupState ?? null,
                 destination: this.coords(ride.destinationLat, ride.destinationLng),
                 destinationAddress: ride.destinationAddress ?? null,
-                destinationArea: areaOf(ride.destinationAddress),
+                destinationArea: resolveAreaLine(
+                    ride.destinationSubLocality, ride.destinationLocality,
+                    areaOf(ride.destinationAddress)).area,
+                destinationAreaSource: resolveAreaLine(
+                    ride.destinationSubLocality, ride.destinationLocality,
+                    areaOf(ride.destinationAddress)).source,
                 estimatedFare: ride.fare != null ? Number(ride.fare) : null,
                 finalFare: ride.finalFare != null ? Number(ride.finalFare) : null,
                 estimatedDistanceM: ride.estimatedDistanceM ?? null,

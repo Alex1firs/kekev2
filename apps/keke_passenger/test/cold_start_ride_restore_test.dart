@@ -18,9 +18,18 @@ import 'package:keke_passenger/core/services/sound_service.dart';
 import 'package:keke_passenger/features/passenger/application/active_ride_recovery.dart';
 import 'package:keke_passenger/features/passenger/application/booking_controller.dart';
 import 'package:keke_passenger/features/passenger/data/map_repository.dart';
+import 'package:keke_passenger/features/passenger/domain/resolved_place.dart';
 import 'package:keke_passenger/features/passenger/domain/booking_state.dart';
 
 class _FakeMapRepository implements MapRepository {
+  // Explicit rather than left to noSuchMethod: resolvePlace returns a
+  // NON-nullable ResolvedPlace, and Future.value(null) does not satisfy that.
+  // A fake that silently fails the cast would exercise an error path the real
+  // repository never takes.
+  @override
+  Future<ResolvedPlace> resolvePlace(LatLng target) async =>
+      const ResolvedPlace(address: 'Test Location', subLocality: 'Awada', locality: 'Obosi');
+
   @override
   Future<LatLng?> getCurrentLocation() async => const LatLng(6.2109, 7.0740);
 

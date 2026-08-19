@@ -117,6 +117,20 @@ const Schemas = {
         estimatedDurationSec: z.number().int().min(0).max(86_400).optional(),
         appVersion:           z.string().max(32).optional(),
         platform:             z.enum(['android', 'ios']).optional(),
+        // Structured locality, captured by the passenger app from the same
+        // geocoder response the address line comes from. Optional exactly like
+        // the fields above: an older build sends none of these and validates
+        // unchanged, and a geocoder that returned nothing simply omits them.
+        // Never used for pricing, dispatch or eligibility — coordinates remain
+        // authoritative for everything the ride actually depends on.
+        pickupSubLocality:      z.string().max(120).optional(),
+        pickupLocality:         z.string().max(120).optional(),
+        pickupCity:             z.string().max(120).optional(),
+        pickupState:            z.string().max(120).optional(),
+        destinationSubLocality: z.string().max(120).optional(),
+        destinationLocality:    z.string().max(120).optional(),
+        destinationCity:        z.string().max(120).optional(),
+        destinationState:       z.string().max(120).optional(),
     }),
     chatMessage: z.object({
         rideId:     id(),
@@ -604,6 +618,19 @@ export class SocketHandler {
                         pickupCode,
                         estimatedDistanceM: request.estimatedDistanceM ?? null,
                         estimatedDurationSec: request.estimatedDurationSec ?? null,
+                        // Structured locality, when the app resolved it. Null
+                        // for older builds and for any pin the geocoder could
+                        // not name — which is the honest record, and is why
+                        // Ride Operations shows "Area not recorded" rather
+                        // than guessing a neighbourhood from coordinates.
+                        pickupSubLocality: request.pickupSubLocality ?? null,
+                        pickupLocality: request.pickupLocality ?? null,
+                        pickupCity: request.pickupCity ?? null,
+                        pickupState: request.pickupState ?? null,
+                        destinationSubLocality: request.destinationSubLocality ?? null,
+                        destinationLocality: request.destinationLocality ?? null,
+                        destinationCity: request.destinationCity ?? null,
+                        destinationState: request.destinationState ?? null,
                     });
                     await rideRepo.save(ride);
                 } catch (err) {

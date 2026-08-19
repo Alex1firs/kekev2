@@ -740,6 +740,21 @@ function renderRideOpsCards(s) {
     ].join('');
 }
 
+
+/**
+ * An area cell that distinguishes three states an operator must not confuse:
+ * a locality the geocoder actually named, one we inferred from an address
+ * string, and none at all. The inferred case is dotted-underlined so nobody
+ * builds a recruitment decision on a parse without knowing it was a parse.
+ */
+function roPlaceCell(area, source) {
+    if (!area) return '<div class="ro-place ro-none">Area not recorded</div>';
+    if (source === 'parsed') {
+        return `<div class="ro-place ro-area-parsed" title="Derived from the address text — the app did not capture a locality for this ride">${escapeHtml(area)}</div>`;
+    }
+    return `<div class="ro-place">${escapeHtml(area)}</div>`;
+}
+
 function renderRideOpsRows(rows) {
     const list = document.getElementById('ride-history-list');
     if (!rows.length) {
@@ -753,8 +768,8 @@ function renderRideOpsRows(rows) {
                 <div class="ro-name">${escapeHtml(r.passenger?.name || 'Unknown')}</div>
                 <div class="ro-sub">${escapeHtml(r.passenger?.phoneMasked || '')}</div>
             </td>
-            <td><div class="ro-place">${escapeHtml(r.pickupArea || 'Area not recorded')}</div></td>
-            <td><div class="ro-place">${escapeHtml(r.destinationArea || 'Area not recorded')}</div></td>
+            <td>${roPlaceCell(r.pickupArea, r.pickupAreaSource)}</td>
+            <td>${roPlaceCell(r.destinationArea, r.destinationAreaSource)}</td>
             <td>${roOutcomeBadge(r)}</td>
             <td>${r.driver
                     ? `<div class="ro-name">${escapeHtml(r.driver.name)}</div>
@@ -4557,6 +4572,7 @@ function renderRideInvestigation(d) {
             <span class="ro-dot ro-dot-pickup"></span>
             <div>
               <div class="ro-leg-area">${escapeHtml(r.pickupArea || 'Area not recorded')}</div>
+              ${r.pickupAreaSource === 'parsed' ? '<div class="ro-sub ro-area-note">derived from the address text</div>' : ''}
               <div class="ro-sub">${escapeHtml(r.pickupAddress || 'No address captured')}</div>
             </div>
           </div>
@@ -4564,6 +4580,7 @@ function renderRideInvestigation(d) {
             <span class="ro-dot ro-dot-dest"></span>
             <div>
               <div class="ro-leg-area">${escapeHtml(r.destinationArea || 'Area not recorded')}</div>
+              ${r.destinationAreaSource === 'parsed' ? '<div class="ro-sub ro-area-note">derived from the address text</div>' : ''}
               <div class="ro-sub">${escapeHtml(r.destinationAddress || 'No address captured')}</div>
             </div>
           </div>

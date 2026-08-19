@@ -201,3 +201,40 @@ export function outcomeLabel(code: string | null | undefined): string {
     if (!code) return LEGACY_UNAVAILABLE.label;
     return OUTCOME_LABELS[code as RideOutcomeCode] ?? code;
 }
+
+/**
+ * The area line for a ride, preferring what was actually captured.
+ *
+ * Structured locality is what the geocoder itself said the place was called.
+ * `areaOf(address)` is a best-effort parse of prose and is only reached when
+ * no structured fields exist — which is every ride created before the
+ * passenger app started sending them, and any pin the geocoder could not name.
+ *
+ * Returns null rather than a guess when neither source has anything. The
+ * console renders "Area not recorded", which is the truthful statement.
+ */
+export function resolveAreaLine(
+    subLocality: string | null | undefined,
+    locality: string | null | undefined,
+    parsedFromAddress: string | null | undefined,
+): { area: string | null; source: 'structured' | 'parsed' | 'none' } {
+    const parts = [subLocality, locality]
+        .map((p) => (p ?? '').trim())
+        .filter(Boolean);
+    if (parts.length) {
+        // Deduplicate: a geocoder that reports the same name for both fields
+        // would otherwise render "Awada, Awada".
+        const seen = new Set<string>();
+        const unique = parts.filter((p) => {
+            const k = p.toLowerCase();
+            if (seen.has(k)) return false;
+            seen.add(k);
+            return true;
+        });
+        return { area: unique.join(', '), source: 'structured' };
+    }
+    const parsed = (parsedFromAddress ?? '').trim();
+    return parsed
+        ? { area: parsed, source: 'parsed' }
+        : { area: null, source: 'none' };
+}

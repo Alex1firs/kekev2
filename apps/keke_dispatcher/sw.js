@@ -22,7 +22,7 @@
  * Bump on every shell change. The old cache is deleted on activate, so a stale
  * build cannot outlive a deploy.
  */
-const VERSION = 'v5.11.0';  // Operations: reassign reachable + accurate refusals
+const VERSION = 'v5.12.0';  // Operations: driver ride-request ringtone
 const SHELL_CACHE = `kd-shell-${VERSION}`;
 
 const SHELL = [
@@ -30,6 +30,10 @@ const SHELL = [
     './index.html',
     './styles.css',
     './operations.css',
+    // The ride-request ringtone, byte-identical to the Driver app's asset.
+    // Precached deliberately: an alert that has to download first is an alert
+    // that arrives late, and this is the sound the whole surface depends on.
+    './sounds/keke_ring.wav',
     './app.js',
     './operations.js',
     './manifest.webmanifest',

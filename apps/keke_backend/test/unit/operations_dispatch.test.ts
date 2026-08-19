@@ -589,3 +589,79 @@ describe('a refusal says what is actually true of the ride', () => {
         expect(src).toContain('Use the incident/cancellation workflow instead.');
     });
 });
+
+// ══════════════════════════════════════════════════════════════════════
+//  The incoming-request ring
+// ══════════════════════════════════════════════════════════════════════
+
+describe('Operations rings with the Driver app\'s own ride-request sound', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const root = path.join(__dirname, '../../..');
+    const driverAsset = path.join(root, 'keke_driver/assets/sounds/keke_ring.wav');
+    const opsAsset = path.join(root, 'keke_dispatcher/sounds/keke_ring.wav');
+    const src = () => fs.readFileSync(path.join(root, 'keke_dispatcher/operations.js'), 'utf8');
+
+    it('uses the identical file, not a lookalike', () => {
+        // Two runtimes (Flutter + audioplayers, and a PWA) cannot share code,
+        // so the SOUND is the shared thing. This test is what stops the two
+        // copies drifting into "nearly the same ringtone".
+        expect(fs.existsSync(opsAsset)).toBe(true);
+        expect(fs.readFileSync(opsAsset).equals(fs.readFileSync(driverAsset))).toBe(true);
+    });
+
+    it('loops until answered, like the driver side', () => {
+        // The driver plays it with ReleaseMode.loop and stops on accept,
+        // decline or timeout. Same contract here.
+        const s = src();
+        expect(s).toContain("new Audio('./sounds/keke_ring.wav')");
+        expect(s).toContain('ringAudio.loop = true');
+    });
+
+    it('cannot stack loops for the same ride', () => {
+        // Queue polls every 8s, sockets can duplicate, and a push can be
+        // re-delivered. Any of those calling startRing again must be inert.
+        const s = src();
+        expect(s).toContain('if (ringingFor === rideId) return;');
+    });
+
+    it('is driven by the queue, not by events', () => {
+        // Deriving "is anything ringing" from current state rather than from
+        // event arrivals is what makes duplicates harmless by construction.
+        const s = src();
+        expect(s).toContain('function evaluateRing()');
+        expect(s).toContain('OPS.rides.filter(isActionable)');
+    });
+
+    it('does not ring through the backlog when the surface opens', () => {
+        const s = src();
+        expect(s).toContain('if (!OPS.primed)');
+        expect(s).toContain('OPS.primed = false');
+    });
+
+    it('stops when the ride is opened, handled, or no longer actionable', () => {
+        const s = src();
+        expect(s).toContain('OPS.selected === ringingFor) stopRing()');
+        expect(s).toContain('if (ringingFor === rideId) stopRing();');
+        expect(s).toContain("['AUTO_HEALTHY', 'NEEDS_ATTENTION'].includes(r.queueState)");
+    });
+
+    it('offers a way to silence it without opening anything', () => {
+        const s = src();
+        expect(s).toContain('data-silence');
+        expect(s).toContain('tap to silence');
+    });
+
+    it('is precached, so the first alert is not late', () => {
+        const sw = fs.readFileSync(path.join(root, 'keke_dispatcher/sw.js'), 'utf8');
+        expect(sw).toContain("'./sounds/keke_ring.wav'");
+    });
+
+    it('leaves the Driver app untouched', () => {
+        // Scope check: this was an Operations audio change only.
+        const driverSound = fs.readFileSync(
+            path.join(root, 'keke_driver/lib/core/services/sound_service.dart'), 'utf8');
+        expect(driverSound).toContain("AssetSource('sounds/keke_ring.wav')");
+        expect(driverSound).toContain('ReleaseMode.loop');
+    });
+});

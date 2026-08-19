@@ -25,6 +25,10 @@
         config: null,
         /** Rides this dispatcher currently holds a lease on. */
         owned: new Set(),
+        /** Ride ids already alerted for, so a refresh never re-rings. */
+        alerted: new Set(),
+        /** True once the first queue load has happened. */
+        primed: false,
         renewTimer: null,
         pollTimer: null,
         busy: false,
@@ -35,6 +39,69 @@
     };
 
     const $$ = (id) => document.getElementById(id);
+
+    // ══════════════════════════════════════════════════════════════════
+    //  Incoming-request ring
+    // ══════════════════════════════════════════════════════════════════
+    //
+    // The same asset the Driver app plays, and the same behaviour: loop until
+    // somebody deals with it, like an incoming call. The driver side is
+    // Flutter + audioplayers with ReleaseMode.loop; this is a PWA, so the code
+    // cannot be shared — but the SOUND is literally the same file, copied
+    // byte-for-byte from apps/keke_driver/assets/sounds/keke_ring.wav, with a
+    // test asserting the two stay identical so they cannot quietly diverge.
+    //
+    // Replaces a synthesised two-note Web Audio beep that was too easy to miss
+    // in a park.
+
+    /** One element, reused. A second element would mean a second loop. */
+    let ringAudio = null;
+    /** The ride currently being rung for. Null when silent. */
+    let ringingFor = null;
+
+    function ringEl() {
+        if (!ringAudio) {
+            ringAudio = new Audio('./sounds/keke_ring.wav');
+            ringAudio.loop = true;      // matches ReleaseMode.loop on the driver
+            ringAudio.preload = 'auto';
+        }
+        return ringAudio;
+    }
+
+    /**
+     * Start ringing for a ride.
+     *
+     * Idempotent per ride: called again for the SAME ride — a queue refresh, a
+     * duplicate socket event, a re-delivered push — it does nothing, so the
+     * loops can never stack. A genuinely different ride restarts the sound so
+     * the second request is still noticed.
+     */
+    function startRing(rideId) {
+        if (!rideId) return;
+        if (ringingFor === rideId) return;      // already ringing for this one
+        const el = ringEl();
+        try {
+            el.currentTime = 0;
+            const p = el.play();
+            // Autoplay is refused until the operator has interacted with the
+            // page at least once. Not an error worth shouting about — the push
+            // notification is the out-of-app alert, and the first tap unlocks
+            // audio for the rest of the session.
+            if (p?.catch) p.catch(() => {});
+            ringingFor = rideId;
+        } catch { /* audio is an aid, never a requirement */ }
+    }
+
+    function stopRing() {
+        ringingFor = null;
+        try { ringAudio?.pause(); if (ringAudio) ringAudio.currentTime = 0; } catch { /* noop */ }
+    }
+
+    /** Is this ride still worth ringing about? */
+    function isActionable(r) {
+        return r && ['AUTO_HEALTHY', 'NEEDS_ATTENTION'].includes(r.queueState);
+    }
+
     const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
         ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -104,6 +171,8 @@
                 if (!mineNow.has(id)) OPS.owned.delete(id);
             }
             for (const id of mineNow) OPS.owned.add(id);
+
+            evaluateRing();
             render();
         } catch (e) {
             // A failed poll leaves the last board up rather than blanking it.
@@ -128,6 +197,43 @@
                 if (/409/.test(String(e?.message))) OPS.owned.delete(rideId);
             }
         }
+    }
+
+
+    /**
+     * Decide whether to be ringing, from the current queue.
+     *
+     * Driven by the queue rather than by events, so it is naturally immune to
+     * duplicate sockets, overlapping polls and re-delivered pushes: the same
+     * ride produces the same answer however many times it arrives.
+     */
+    function evaluateRing() {
+        const actionable = OPS.rides.filter(isActionable);
+
+        // The first load is not "new arrivals" — it is the backlog. Ringing
+        // through it would mean the app screams the moment it opens.
+        if (!OPS.primed) {
+            for (const r of actionable) OPS.alerted.add(r.rideId);
+            OPS.primed = true;
+            return;
+        }
+
+        // Stop if what we were ringing for has been handled, has gone, or is
+        // the ride now open on screen — opening it IS the acknowledgement.
+        if (ringingFor) {
+            const still = OPS.rides.find((r) => r.rideId === ringingFor);
+            if (!isActionable(still) || OPS.selected === ringingFor) stopRing();
+        }
+
+        const fresh = actionable.find((r) => !OPS.alerted.has(r.rideId));
+        if (fresh) {
+            OPS.alerted.add(fresh.rideId);
+            // Do not ring for a ride the operator is already looking at.
+            if (OPS.selected !== fresh.rideId) startRing(fresh.rideId);
+        }
+
+        // Bounded: a long shift must not grow this without limit.
+        if (OPS.alerted.size > 500) OPS.alerted.clear();
     }
 
     // ── Actions ─────────────────────────────────────────────────────────
@@ -588,6 +694,10 @@
         const list = OPS.tab === 'attention' ? attention : live;
 
         root.innerHTML = `
+          ${ringingFor ? `
+            <button class="ops-silence" data-silence="1">
+              <span class="ops-silence-dot"></span> New request ringing — tap to silence
+            </button>` : ''}
           <div class="ops-tabs">
             <button class="${OPS.tab==='attention'?'on':''}" data-tab="attention">
               Needs attention ${attention.length ? `<span class="ops-badge">${attention.length}</span>` : ''}
@@ -623,6 +733,10 @@
         if (tab) { OPS.tab = tab.dataset.tab; render(); return; }
 
         if (e.target.closest('[data-close]')) { OPS.selected = null; render(); return; }
+
+        // An explicit way to stop the noise without opening anything — the
+        // operator may already be on the phone about it.
+        if (e.target.closest('[data-silence]')) { stopRing(); render(); return; }
 
         const to = e.target.closest('[data-takeover]');
         if (to) { takeover(to.dataset.takeover).then(() => loadDrivers(to.dataset.takeover)); return; }
@@ -687,6 +801,7 @@
 
         const card = e.target.closest('[data-ride]');
         if (card) {
+            if (ringingFor === card.dataset.ride) stopRing();
             OPS.selected = card.dataset.ride;
             OPS.interventions = [];
             OPS.drivers = [];
@@ -711,6 +826,9 @@
      */
     function openRide(rideId) {
         if (!OPS.active) enter();
+        // Opening the ride is the acknowledgement — same contract as the
+        // driver app, where answering stops the ring.
+        if (ringingFor === rideId) stopRing();
         OPS.selected = rideId;
         OPS.interventions = [];
         OPS.drivers = [];
@@ -727,6 +845,8 @@
     function enter() {
         if (!canOps()) { toast('You do not have Operations access.', 'warn'); return; }
         OPS.active = true;
+        // A fresh session re-primes rather than ringing through the backlog.
+        OPS.primed = false;
         $$('ops-screen').classList.remove('hidden');
         document.getElementById('workspace')?.classList.add('hidden');
         document.getElementById('shift-gate')?.classList.add('hidden');
@@ -742,6 +862,7 @@
     }
 
     function leave() {
+        stopRing();
         OPS.active = false;
         clearInterval(OPS.pollTimer); OPS.pollTimer = null;
         clearInterval(OPS.renewTimer); OPS.renewTimer = null;

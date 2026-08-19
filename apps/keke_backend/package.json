@@ -23,7 +23,8 @@
     "staff:bootstrap:prod": "node dist/scripts/bootstrap_staff.js",
     "rides:sweep": "npx ts-node src/scripts/sweep_stale_rides.ts",
     "rides:sweep:prod": "node dist/scripts/sweep_stale_rides.js",
-    "ride:story": "ts-node src/scripts/ride_story.ts"
+    "ride:story": "ts-node src/scripts/ride_story.ts",
+    "ride:story:prod": "node dist/scripts/ride_story.js"
   },
   "keywords": [],
   "author": "",

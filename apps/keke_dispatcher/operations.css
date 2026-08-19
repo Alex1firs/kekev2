@@ -180,9 +180,24 @@
     padding: 16px 16px calc(32px + env(safe-area-inset-bottom));
 }
 
+/* The ride's state, on its own line. It is prose and was wrapping to three
+   lines inside the numeric grid on a 360px phone. */
+.ops-status-line {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin-bottom: 10px;
+    font-size: 0.88rem;
+    font-weight: 600;
+}
+.ops-status-line span { font-weight: 400; color: var(--text-dim); }
+.ops-status-control { border-color: var(--amber); color: var(--amber); }
+
 .ops-facts {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    /* 4 across at 390+, 3 at the narrowest, so a label never wraps. */
+    grid-template-columns: repeat(auto-fit, minmax(74px, 1fr));
     gap: 8px;
     margin-bottom: 16px;
 }
@@ -218,7 +233,16 @@
     min-height: 44px;
     cursor: pointer;
 }
-.ops-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+/* Muted amber still reads as "press me" on a phone in daylight, and a
+   dispatcher tapping a driver who cannot take the ride is a wasted second
+   they do not have. A disabled action is grey and flat. */
+.ops-btn:disabled {
+    background: var(--surface-2);
+    color: var(--text-dim);
+    border: 1px solid var(--border);
+    opacity: 0.7;
+    cursor: not-allowed;
+}
 .ops-btn-ghost {
     background: transparent;
     border: 1px solid var(--border);

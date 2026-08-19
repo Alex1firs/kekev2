@@ -304,8 +304,16 @@
         </div>
 
         <div class="ops-sheet-body">
+          <!-- The state is a sentence, not a number. Keeping it in the numeric
+               grid made "You have control" wrap to three lines on a 360px
+               phone and threw the whole row out of alignment. -->
+          <div class="ops-status-line ${r.queueState === 'OPERATIONS_CONTROL' ? 'ops-status-control' : ''}">
+            ${esc(STATE_TEXT[r.queueState] || r.queueState)}
+            ${r.control?.mode === 'operations' && r.control?.ownerLabel
+              ? `<span>· ${esc(r.control.ownerLabel)}</span>` : ''}
+          </div>
+
           <div class="ops-facts">
-            <div><span>Status</span><strong>${esc(STATE_TEXT[r.queueState] || r.queueState)}</strong></div>
             <div><span>Round</span><strong>${r.dispatchRound ?? '—'}</strong></div>
             <div><span>Radius</span><strong>${r.radiusKm != null ? r.radiusKm + ' km' : '—'}</strong></div>
             <div><span>Found</span><strong>${r.candidateCount}</strong></div>
@@ -445,6 +453,22 @@
         }
     }
 
+    /**
+     * Show one ride. Observation only — no side effects on dispatch.
+     */
+    function openRide(rideId) {
+        if (!OPS.active) enter();
+        OPS.selected = rideId;
+        OPS.interventions = [];
+        OPS.drivers = [];
+        render();
+        loadInterventions(rideId);
+        refresh().then(() => {
+            const r = OPS.rides.find((x) => x.rideId === rideId);
+            if (r?.control?.ownerStaffId === me()?.staffUserId) loadDrivers(rideId);
+        });
+    }
+
     function enter() {
         if (!canOps()) { toast('You do not have Operations access.', 'warn'); return; }
         OPS.active = true;
@@ -457,6 +481,9 @@
         // missed tick never costs the lease.
         const renewMs = Math.max(10_000, (OPS.config?.leaseRenewIntervalMs || 30_000));
         OPS.renewTimer = setInterval(renewLeases, renewMs);
+
+        const deepLink = pendingDeepLink();
+        if (deepLink) { clearDeepLink(); openRide(deepLink); }
     }
 
     function leave() {
@@ -466,14 +493,46 @@
         $$('ops-screen').classList.add('hidden');
     }
 
+    /**
+     * A notification tap lands here with ?ops=1&ride=<id>.
+     *
+     * Opening a ride from an alert must NEVER take control — the dispatcher is
+     * looking, not committing, and automatic dispatch carries on exactly as it
+     * was. Takeover is only ever the explicit button.
+     */
+    function pendingDeepLink() {
+        try {
+            const q = new URLSearchParams(location.search);
+            if (q.get('ops') !== '1') return null;
+            return q.get('ride') || null;
+        } catch { return null; }
+    }
+
+    /** Consume the deep link so a later reload does not reopen the same ride. */
+    function clearDeepLink() {
+        try {
+            const u = new URL(location.href);
+            u.searchParams.delete('ops');
+            u.searchParams.delete('ride');
+            history.replaceState({}, '', u.toString());
+        } catch { /* a browser that refuses is not a reason to fail */ }
+    }
+
     function init() {
         document.addEventListener('click', onClick);
         document.addEventListener('change', onChange);
+
+        // A push tap while the app is already open arrives as a message from
+        // the service worker rather than as a fresh page load.
+        navigator.serviceWorker?.addEventListener?.('message', (ev) => {
+            const rideId = ev?.data?.rideId;
+            if (ev?.data?.type === 'OPS_OPEN_RIDE' && rideId) openRide(rideId);
+        });
         $$('ops-exit')?.addEventListener('click', () => {
             leave();
             document.getElementById('shift-gate')?.classList.remove('hidden');
         });
     }
 
-    window.__kdOps = { init, enter, leave, canOps, refresh: () => refresh(), state: OPS };
+    window.__kdOps = { init, enter, leave, canOps, openRide, pendingDeepLink, refresh: () => refresh(), state: OPS };
 })();

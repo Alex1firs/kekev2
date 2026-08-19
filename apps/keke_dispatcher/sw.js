@@ -22,7 +22,7 @@
  * Bump on every shell change. The old cache is deleted on activate, so a stale
  * build cannot outlive a deploy.
  */
-const VERSION = 'v5.6.0';   // Operations Dispatch surface
+const VERSION = 'v5.8.0';   // Operations: phone-width fixes + deep link
 const SHELL_CACHE = `kd-shell-${VERSION}`;
 
 const SHELL = [
@@ -144,13 +144,24 @@ self.addEventListener('notificationclick', (event) => {
         const url = data.url || '/dispatch/index.html';
         const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
 
+        // An Operations alert names a ride rather than a park job. Opening it
+        // must land on that exact ride — a dispatcher woken by a buzz should
+        // not have to find the request in a list.
+        const opsRide = data.type === 'OPS_QUEUE' ? (data.rideId || null) : null;
+
         for (const c of clients) {
             if (c.url.includes('/dispatch/')) {
-                c.postMessage({ type: 'KD_NOTIFICATION_OPENED', jobId: data.jobId || null });
+                c.postMessage(opsRide
+                    ? { type: 'OPS_OPEN_RIDE', rideId: opsRide }
+                    : { type: 'KD_NOTIFICATION_OPENED', jobId: data.jobId || null });
                 return c.focus();
             }
         }
-        return self.clients.openWindow(url);
+        return self.clients.openWindow(
+            opsRide
+                ? `/dispatch/index.html?ops=1&ride=${encodeURIComponent(opsRide)}`
+                : url,
+        );
     })());
 });
 

@@ -358,3 +358,70 @@ describe('the admin staff form can actually grant the role', () => {
         }
     });
 });
+
+// ══════════════════════════════════════════════════════════════════════
+//  What a lock screen may say
+// ══════════════════════════════════════════════════════════════════════
+
+describe('an Operations alert carries no passenger identity', () => {
+    const row = (over: any = {}) => ({
+        rideId: 'RIDE-9',
+        waitingSeconds: 95,
+        pickupArea: 'Awada, Obosi',
+        destinationArea: 'Main Market',
+        passenger: { id: 'p1', name: 'Chinedu O.', phoneMasked: '2348••••221' },
+        candidateCount: 4,
+        eligibleDriverCount: 2,
+        offersSent: 2,
+        ...over,
+    }) as any;
+
+    it('never puts the passenger name or number on the lock screen', () => {
+        // Readable by anyone holding the phone, mirrored to a watch, and it
+        // can sit in a shade for hours. A dispatcher does not need to know WHO
+        // is waiting to decide whether to act — only where, how long, and
+        // whether dispatch is coping. Identity is one authenticated tap away.
+        const { title, body } = OperationsNotificationService.compose(
+            row(), { urgent: false, reason: 'EVERY_REQUEST' });
+        const text = `${title} ${body}`;
+        expect(text).not.toContain('Chinedu');
+        expect(text).not.toContain('2348');
+        expect(text).not.toMatch(/\d{7,}/);
+    });
+
+    it('says where, where to, how long, and what dispatch is doing', () => {
+        const { title, body } = OperationsNotificationService.compose(
+            row(), { urgent: false, reason: 'EVERY_REQUEST' });
+        expect(title).toContain('Awada, Obosi');
+        expect(body).toContain('Main Market');
+        expect(body).toContain('2m');
+        expect(body).toContain('2 offered, none accepted');
+    });
+
+    it('reports "no drivers found" when nothing was discovered', () => {
+        const { body } = OperationsNotificationService.compose(
+            row({ candidateCount: 0, eligibleDriverCount: 0, offersSent: 0 }),
+            { urgent: true, reason: 'NO_ELIGIBLE_DRIVER' });
+        expect(body).toContain('no drivers found');
+    });
+
+    it('leads with the problem when there is one', () => {
+        const { title } = OperationsNotificationService.compose(
+            row(), { urgent: true, reason: 'NO_ELIGIBLE_DRIVER' });
+        expect(title).toContain('Needs attention');
+    });
+
+    it('says "Area not recorded" rather than inventing a place', () => {
+        const { title, body } = OperationsNotificationService.compose(
+            row({ pickupArea: null, destinationArea: null }),
+            { urgent: false, reason: 'EVERY_REQUEST' });
+        expect(title).toContain('Area not recorded');
+        expect(body).toContain('destination not recorded');
+    });
+
+    it('shows seconds while a request is fresh', () => {
+        const { body } = OperationsNotificationService.compose(
+            row({ waitingSeconds: 12 }), { urgent: false, reason: 'EVERY_REQUEST' });
+        expect(body).toContain('12s');
+    });
+});

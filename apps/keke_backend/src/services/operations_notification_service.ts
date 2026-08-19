@@ -148,13 +148,7 @@ export class OperationsNotificationService {
             this.recentlyNotified.set(key, now);
             if (this.recentlyNotified.size > 2000) this.recentlyNotified.clear();
 
-            const area = row.pickupArea ?? 'an unrecorded area';
-            const title = decision.urgent
-                ? `No driver — ${area}`
-                : `New request — ${area}`;
-            const body = decision.reason === 'EVERY_REQUEST'
-                ? `${row.passenger?.name ?? 'A passenger'} · ${area} → ${row.destinationArea ?? 'destination'}`
-                : `${this.explain(decision.reason)} · waiting ${Math.round(row.waitingSeconds / 60)}m`;
+            const { title, body } = this.compose(row, decision);
 
             await StaffPushService.sendToPermission(
                 'ops:queue_read',
@@ -164,6 +158,49 @@ export class OperationsNotificationService {
         } catch (err: any) {
             console.warn(`[OPS_NOTIFY] failed for ${row.rideId}: ${err?.message}`);
         }
+    }
+
+
+    /**
+     * What a lock screen is allowed to say.
+     *
+     * Deliberately contains NO passenger identity — not even the masked
+     * "Chinedu O." form. A lock-screen notification is readable by anyone
+     * holding the phone, is mirrored to a watch, and may sit in a
+     * notification shade for hours. The dispatcher does not need to know WHO
+     * is waiting in order to decide whether to act; they need to know WHERE,
+     * HOW LONG, and whether automatic dispatch is coping.
+     *
+     * Identity is one tap away, inside an authenticated session, where it is
+     * masked by default and revealing it is audited.
+     */
+    static compose(
+        row: QueueRow,
+        decision: { urgent: boolean; reason: NotificationTrigger | null },
+    ): { title: string; body: string } {
+        const pickup = row.pickupArea ?? 'Area not recorded';
+        const dest = row.destinationArea ?? 'destination not recorded';
+        const waited = row.waitingSeconds < 60
+            ? `${row.waitingSeconds}s`
+            : `${Math.round(row.waitingSeconds / 60)}m`;
+
+        // What automatic dispatch is doing right now, in one clause. This is
+        // the fact that decides whether a dispatcher opens the phone.
+        const autoState =
+            decision.reason === 'NO_ELIGIBLE_DRIVER' || row.candidateCount === 0
+                ? 'no drivers found'
+                : row.offersSent > 0
+                    ? `${row.offersSent} offered, none accepted`
+                    : row.eligibleDriverCount > 0
+                        ? `${row.eligibleDriverCount} eligible, searching`
+                        : 'searching';
+
+        const title = decision.urgent
+            ? `Needs attention — ${pickup}`
+            : `New KekeRide request — ${pickup}`;
+
+        const body = `→ ${dest} · waiting ${waited} · ${autoState}`;
+        return { title, body };
     }
 
     static explain(t: NotificationTrigger | null): string {

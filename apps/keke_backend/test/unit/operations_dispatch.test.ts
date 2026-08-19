@@ -326,3 +326,35 @@ describe('a dispatcher is told WHY a driver cannot take the ride', () => {
             .toContain('some_new_rule');
     });
 });
+
+describe('the admin staff form can actually grant the role', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const adminApp = path.join(__dirname, '../../../keke_admin/app.js');
+
+    // The role list in the admin UI is hand-maintained and is the ONLY way to
+    // assign a role to a person. OPERATIONS_DISPATCHER was added to the server
+    // enum and left out of that list, so the role existed, was authorised, was
+    // tested — and could not be given to anybody. Found when a staff account
+    // was being created and the checkbox was not there.
+    const listed = () => {
+        const src = fs.readFileSync(adminApp, 'utf8');
+        const m = src.match(/const STAFF_ROLES = \[([\s\S]*?)\];/);
+        return m ? m[1].match(/'([A-Z_]+)'/g)?.map((q: string) => q.replace(/'/g, '')) ?? [] : [];
+    };
+
+    it('offers every server-side role', () => {
+        const { ALL_STAFF_ROLES } = require('../../src/config/staff_permissions');
+        const inForm = listed();
+        for (const role of ALL_STAFF_ROLES) {
+            expect(inForm).toContain(role);
+        }
+    });
+
+    it('offers no role the server would reject', () => {
+        const { isStaffRole } = require('../../src/config/staff_permissions');
+        for (const role of listed()) {
+            expect(isStaffRole(role)).toBe(true);
+        }
+    });
+});

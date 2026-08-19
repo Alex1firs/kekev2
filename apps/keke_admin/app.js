@@ -1610,8 +1610,13 @@ function setupSettingsForm() {
 //  Staff Management
 // ═══════════════════════════════════════════════════════════════════════════
 
+/*
+ * Mirrors StaffRole on the server. A role missing here cannot be granted at
+ * all — the form is the only way to assign one — so this list has to be kept
+ * in step when the enum gains a member.
+ */
 const STAFF_ROLES = [
-    'SUPER_ADMIN', 'OPERATIONS_ADMIN', 'PARK_SUPERVISOR',
+    'SUPER_ADMIN', 'OPERATIONS_ADMIN', 'OPERATIONS_DISPATCHER', 'PARK_SUPERVISOR',
     'PARK_DISPATCHER', 'CASHIER', 'SUPPORT_OFFICER', 'READ_ONLY_ANALYST',
 ];
 

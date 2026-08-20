@@ -2,7 +2,7 @@ import { Router, Request, Response } from "express";
 import { AdminService } from "../services/admin_service";
 import { adminAuth } from "../middleware/admin_auth";
 import { attachAdminIdentity, requirePermission, AdminRequest } from "../middleware/admin_permissions";
-import { resolveActor, requireStaffAuth, requireRealStaff } from "../middleware/staff_auth";
+import { resolveActor, requireStaffAuth, requireRealStaff, requireStaffPermission } from "../middleware/staff_auth";
 import { SYSTEM_LEGACY_ADMIN } from "../services/audit_service";
 import staffAdminRoutes from "./staff_admin_routes";
 import parkAdminRoutes from "./park_admin_routes";
@@ -10,6 +10,8 @@ import communicationsRoutes from "./communications_routes";
 import { DispatchMonitorQueryService } from "../services/dispatch_monitor_query_service";
 import { RideOperationsService, RideOperationsFilters } from "../services/ride_operations_service";
 import { RideOperationsSwitch } from "../services/ride_operations_switch";
+import { StaffPermission } from "../config/staff_permissions";
+import { DriverWalletQueryService } from "../services/driver_wallet_query_service";
 import { adminLimiter } from "../middleware/rate_limit";
 import { adminRejectionSchema } from "../services/validation_service";
 import { DriverStatus, DriverProfile } from "../models/DriverProfile";
@@ -103,6 +105,49 @@ router.get("/live-requests", requirePermission('monitor:read'), async (req: Admi
         res.json(data);
     } catch (err: any) {
         console.error('[ADMIN] live-requests error:', err?.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+//  DRIVER WALLETS
+//
+//  Financial data, gated on wallet:read — which SUPER_ADMIN, OPERATIONS_ADMIN
+//  and the finance roles hold and PARK_DISPATCHER deliberately does not. A
+//  dispatcher assigning rides at a park has no reason to see what every driver
+//  in the city is owed.
+// ═══════════════════════════════════════════════════════════════════════
+
+/** GET /admin/driver-wallets — paged, searchable, filterable. */
+router.get("/driver-wallets", requireRealStaff, requireStaffPermission(StaffPermission.WALLET_READ), async (req: AdminRequest, res: Response) => {
+    try {
+        res.json(await DriverWalletQueryService.list({
+            q: req.query.q ? String(req.query.q) : undefined,
+            filter: (req.query.filter as any) || 'all',
+            page: req.query.page ? Number(req.query.page) : undefined,
+            pageSize: req.query.pageSize ? Number(req.query.pageSize) : undefined,
+        }));
+    } catch (err: any) {
+        console.error('[ADMIN] driver-wallets error:', err?.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * GET /admin/driver-wallets/:driverId
+ * The full ledger for one driver. Opening it is audited: this is a person's
+ * complete financial history.
+ */
+router.get("/driver-wallets/:driverId", requireRealStaff, requireStaffPermission(StaffPermission.WALLET_READ), async (req: AdminRequest, res: Response) => {
+    try {
+        const data = await DriverWalletQueryService.ledger(String(req.params.driverId));
+        if (!data) return res.status(404).json({ error: 'Wallet not found' });
+        await auditAdmin(req, 'VIEW_DRIVER_WALLET', 'WALLET', String(req.params.driverId), {
+            debt: data.wallet.outstandingDebt,
+        });
+        res.json(data);
+    } catch (err: any) {
+        console.error('[ADMIN] driver-wallet ledger error:', err?.message);
         res.status(500).json({ error: err.message });
     }
 });

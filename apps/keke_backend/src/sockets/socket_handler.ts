@@ -26,6 +26,7 @@ import { RideOperationsSwitch } from '../services/ride_operations_switch';
 import { RideControlService } from '../services/ride_control_service';
 import { OperationsDispatchService } from '../services/operations_dispatch_service';
 import { OperationsBroadcastService } from '../services/operations_broadcast_service';
+import { WalletBroadcastService } from '../services/wallet_broadcast_service';
 import {
     RideOutcomeCode,
     CancelActorRole,
@@ -322,6 +323,12 @@ export class SocketHandler {
         // reference, no dispatch state, and cannot reach any other path — so
         // there is no way for a manual assignment to diverge from an automatic
         // one, which is the whole point of routing it through here.
+        // A driver's wallet screen updates itself when money moves, rather than
+        // showing a figure that was true when the screen opened.
+        WalletBroadcastService.setEmitter((driverId, event, payload) => {
+            this.io.to(`driver:${driverId}`).emit(event, payload);
+        });
+
         OperationsBroadcastService.setEmitter((event, payload) => {
             this.io.to('ops').emit(event, payload);
         });

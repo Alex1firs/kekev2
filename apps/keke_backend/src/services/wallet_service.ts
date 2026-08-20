@@ -1,8 +1,10 @@
+import { EntityManager } from 'typeorm';
 import { AppDataSource } from "../config/data_source";
 import { Wallet } from "../models/Wallet";
 import { LedgerEntry, BalanceType, TransactionType } from "../models/LedgerEntry";
 import { Transaction, TransactionStatus } from "../models/Transaction";
 import { PayoutRecord, PayoutStatus } from "../models/PayoutRecord";
+import { WalletBroadcastService } from "./wallet_broadcast_service";
 import { AuditLog } from "../models/AuditLog";
 import { SettingService } from "./setting_service";
 
@@ -64,7 +66,146 @@ export class WalletService {
             await manager.save(ledger);
 
             return wallet;
+        }).then((wallet) => {
+            // Commission charges, admin adjustments and reversals all land
+            // here. Only driver balances are broadcast — a passenger wallet
+            // has no driver socket to tell.
+            if (balanceType !== BalanceType.PASSENGER) {
+                WalletBroadcastService.walletChanged(userId, wallet, {
+                    reason: String(transactionType),
+                    rideId: metadata?.rideId ?? null,
+                    amount,
+                });
+            }
+            return wallet;
         });
+    }
+
+    /**
+     * Credit a driver, settling outstanding debt FIRST.
+     *
+     * ── The rule this exists to enforce ──────────────────────────────────
+     * Money entering a driver's wallet pays what they owe KekeRide before any
+     * of it becomes theirs to withdraw:
+     *
+     *     debt ₦3,000 + credit ₦5,000  →  debt ₦0,     available ₦2,000
+     *     debt ₦5,000 + credit ₦2,000  →  debt ₦3,000, available ₦0
+     *
+     * ── Why this method exists at all ────────────────────────────────────
+     * finalizeTopup used to call mutateBalance(DRIVER_AVAILABLE) directly, so
+     * a top-up credited the whole amount and left the debt standing. Settling
+     * it was a SEPARATE manual action the driver had to take ("PAY NOW"), and
+     * nothing in the funding path ever called it. Observed in production: a
+     * driver charged ₦300.27 commission at 13:20 was funded ₦1,000 at 13:34
+     * and still owed ₦300.27 afterwards.
+     *
+     * ── One transaction, one lock ────────────────────────────────────────
+     * The wallet row is locked FOR UPDATE for the whole operation, so a
+     * concurrent top-up, commission posting or payout serialises behind it
+     * rather than reading a balance that is about to change.
+     *
+     * Runs inside a caller's transaction when given a manager, so funding and
+     * settlement commit together or not at all.
+     */
+    static async creditDriverSettlingDebt(
+        driverId: string,
+        amount: number,
+        transactionType: TransactionType,
+        metadata: any = {},
+        existingManager?: EntityManager,
+    ): Promise<{ appliedToDebt: number; credited: number; remainingDebt: number; available: number }> {
+        const run = async (manager: EntityManager) => {
+            if (!(amount > 0)) throw new Error('Credit amount must be positive');
+
+            let wallet = await manager.findOne(Wallet, {
+                where: { userId: driverId },
+                lock: { mode: 'pessimistic_write' },
+            });
+            if (!wallet) {
+                wallet = manager.create(Wallet, { userId: driverId });
+                await manager.save(wallet);
+            }
+
+            const availableBefore = Number(wallet.driverAvailableBalance);
+            const debtBefore = Number(wallet.driverCommissionDebt);
+
+            // Debt first, then whatever is left.
+            const appliedToDebt = Math.round(Math.min(debtBefore, amount) * 100) / 100;
+            const credited = Math.round((amount - appliedToDebt) * 100) / 100;
+
+            wallet.driverCommissionDebt = Math.round((debtBefore - appliedToDebt) * 100) / 100;
+            wallet.driverAvailableBalance = Math.round((availableBefore + credited) * 100) / 100;
+            await manager.save(wallet);
+
+            // The incoming money is always recorded at full value against
+            // driver_available, so the ledger shows what arrived...
+            await manager.save(manager.create(LedgerEntry, {
+                walletId: driverId,
+                balanceType: BalanceType.DRIVER_AVAILABLE,
+                transactionType,
+                amount,
+                balanceBefore: availableBefore,
+                balanceAfter: Math.round((availableBefore + amount) * 100) / 100,
+                metadata: { ...metadata, gross: amount, appliedToDebt, credited },
+            }));
+
+            if (appliedToDebt > 0) {
+                // ...and the settlement is recorded as its own pair, so an
+                // investigator can see money arrive and then be applied,
+                // rather than a single netted figure that hides both.
+                await manager.save(manager.create(LedgerEntry, {
+                    walletId: driverId,
+                    balanceType: BalanceType.DRIVER_AVAILABLE,
+                    transactionType: TransactionType.DEBT_RECOVERY,
+                    amount: -appliedToDebt,
+                    balanceBefore: Math.round((availableBefore + amount) * 100) / 100,
+                    balanceAfter: wallet.driverAvailableBalance,
+                    metadata: { ...metadata, source: 'auto_settle_on_credit', appliedToDebt },
+                }));
+                await manager.save(manager.create(LedgerEntry, {
+                    walletId: driverId,
+                    balanceType: BalanceType.DRIVER_COMMISSION_DEBT,
+                    transactionType: TransactionType.DEBT_RECOVERY,
+                    amount: -appliedToDebt,
+                    balanceBefore: debtBefore,
+                    balanceAfter: wallet.driverCommissionDebt,
+                    metadata: { ...metadata, source: 'auto_settle_on_credit', appliedToDebt },
+                }));
+            }
+
+            return {
+                appliedToDebt,
+                credited,
+                remainingDebt: wallet.driverCommissionDebt,
+                available: wallet.driverAvailableBalance,
+                wallet,
+            };
+        };
+
+        const result = existingManager
+            ? await run(existingManager)
+            : await AppDataSource.transaction((m) => run(m));
+
+        // After the money is committed, never before, and never able to undo it.
+        WalletBroadcastService.walletChanged(driverId, result.wallet, {
+            reason: result.appliedToDebt > 0 ? 'debt_recovery' : String(transactionType),
+            amount: amount,
+            reference: metadata?.reference ?? null,
+        });
+        return result;
+    }
+
+    /**
+     * What a driver may actually withdraw.
+     *
+     * Available balance MINUS outstanding debt. Money sitting against a debt
+     * is not the driver's to take, and a UI that merely hides the button is
+     * not a control — this is the number the server enforces.
+     */
+    static withdrawableFrom(wallet: Wallet): number {
+        const available = Number(wallet.driverAvailableBalance);
+        const debt = Number(wallet.driverCommissionDebt);
+        return Math.max(0, Math.round((available - debt) * 100) / 100);
     }
 
     /**
@@ -101,11 +242,25 @@ export class WalletService {
             tx.status = TransactionStatus.SUCCESS;
             await manager.save(tx);
 
-            const balanceType = ((tx as any).metadata?.role ?? (tx as any).role) === 'driver'
-                ? BalanceType.DRIVER_AVAILABLE
-                : BalanceType.PASSENGER;
+            const isDriver = ((tx as any).metadata?.role ?? (tx as any).role) === 'driver';
 
-            await this.mutateBalance(tx.userId, amount, balanceType, TransactionType.TOPUP, { reference });
+            if (isDriver) {
+                // Debt first. Inside THIS transaction and this manager, so the
+                // top-up and the settlement commit together — a crash between
+                // them cannot leave money credited but debt standing.
+                //
+                // Idempotency is the `tx.status === SUCCESS` check above, under
+                // a pessimistic_write lock on the transaction row: a retried
+                // Paystack webhook or a duplicate confirmation finds the row
+                // already SUCCESS and returns without crediting twice.
+                await this.creditDriverSettlingDebt(
+                    tx.userId, amount, TransactionType.TOPUP, { reference }, manager,
+                );
+            } else {
+                await this.mutateBalance(
+                    tx.userId, amount, BalanceType.PASSENGER, TransactionType.TOPUP, { reference },
+                );
+            }
         });
     }
 
@@ -121,11 +276,26 @@ export class WalletService {
             });
             if (!wallet) throw new Error('Wallet not found');
 
-            const available = Number(wallet.driverAvailableBalance);
-            if (available < amount) {
-                throw new Error(`Insufficient balance: available ₦${available}, requested ₦${amount}`);
-            }
             if (amount <= 0) throw new Error('Amount must be positive');
+
+            const available = Number(wallet.driverAvailableBalance);
+            const debt = Number(wallet.driverCommissionDebt);
+            const withdrawable = this.withdrawableFrom(wallet);
+
+            // Debt is reserved, not merely displayed. This used to check
+            // `available < amount` alone, so a driver holding ₦1,000 available
+            // and ₦300 debt could withdraw the lot and leave the debt behind.
+            //
+            // The wallet row is locked FOR UPDATE above, so a commission
+            // posting or top-up racing this payout serialises behind it and
+            // this reads the settled figures rather than stale ones.
+            if (amount > withdrawable) {
+                throw new Error(
+                    debt > 0
+                        ? `Insufficient withdrawable balance: ₦${withdrawable} available after ₦${debt} owed to KekeRide, requested ₦${amount}`
+                        : `Insufficient balance: available ₦${available}, requested ₦${amount}`,
+                );
+            }
 
             const pendingBefore = Number(wallet.driverPendingBalance);
             wallet.driverAvailableBalance = available - amount;
@@ -265,7 +435,7 @@ export class WalletService {
         totalFare: number,
         commissionAmount: number
     ): Promise<void> {
-        await AppDataSource.transaction(async (manager) => {
+        const wallet = await AppDataSource.transaction(async (manager) => {
             let wallet = await manager.findOne(Wallet, {
                 where: { userId: driverId },
                 lock: { mode: "pessimistic_write" }
@@ -338,6 +508,16 @@ export class WalletService {
                 balanceAfter: 0,
                 metadata: { rideId, source: 'cash_ride', commissionAmount, totalFare },
             }));
+
+            return wallet;
+        });
+
+        // The driver's wallet screen updates itself the moment the commission
+        // posts, rather than showing a figure that was true before the ride.
+        WalletBroadcastService.walletChanged(driverId, wallet, {
+            reason: 'ride_commission',
+            rideId,
+            amount: commissionAmount,
         });
     }
 

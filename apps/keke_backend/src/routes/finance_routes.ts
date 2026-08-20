@@ -71,7 +71,18 @@ router.get("/balance/:userId", authMiddleware, async (req: AuthRequest, res: Res
         const ledgerCommissionSum = Number(ledgerChargesResult?.sum || 0);
         const totalCommissionPaid = Math.round((walletCommissionSum + ledgerCommissionSum) * 100) / 100;
 
-        res.json({ balance: wallet, history, totalTrips, totalCommissionPaid });
+        // `withdrawable` is computed server-side and returned explicitly. The
+        // driver app must never have to derive it by subtracting debt itself —
+        // a client that gets that arithmetic wrong shows money the driver
+        // cannot actually take.
+        res.json({
+            balance: wallet,
+            withdrawable: WalletService.withdrawableFrom(wallet),
+            outstandingDebt: Number(wallet.driverCommissionDebt),
+            history,
+            totalTrips,
+            totalCommissionPaid,
+        });
     } catch (err: any) {
         console.error('[FINANCE] Balance fetch error:', err?.message);
         res.status(500).json(errBody(ErrorCode.INTERNAL_ERROR, "We couldn't load your balance right now. Please try again."));

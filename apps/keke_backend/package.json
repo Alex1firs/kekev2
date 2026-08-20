@@ -24,7 +24,9 @@
     "rides:sweep": "npx ts-node src/scripts/sweep_stale_rides.ts",
     "rides:sweep:prod": "node dist/scripts/sweep_stale_rides.js",
     "ride:story": "ts-node src/scripts/ride_story.ts",
-    "ride:story:prod": "node dist/scripts/ride_story.js"
+    "ride:story:prod": "node dist/scripts/ride_story.js",
+    "wallet:reconcile": "ts-node src/scripts/wallet_reconcile.ts",
+    "wallet:reconcile:prod": "node dist/scripts/wallet_reconcile.js"
   },
   "keywords": [],
   "author": "",

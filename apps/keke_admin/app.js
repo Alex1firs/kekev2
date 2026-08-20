@@ -187,6 +187,8 @@ function switchSection(id) {
     if (id === 'payouts')       fetchPayouts();
     if (id === 'history')       enterRideOperations();
     if (id === 'live-operations') enterLiveOperations();
+    if (id === 'driver-wallets') enterDriverWallets();
+    if (id === 'financial-exceptions') fetchFinancialExceptions();
     else stopLiveOperationsRefresh();
     if (id === 'live-riders')   { fetchLiveRiders(); toggleLiveAutoRefresh(); }
     if (id === 'live-requests')  enterLiveRequests();
@@ -4918,3 +4920,186 @@ function enterLiveOperations() {
 function stopLiveOperationsRefresh() {
     if (loState.timer) { clearInterval(loState.timer); loState.timer = null; }
 }
+
+// ===================== Driver Wallets =====================
+// Financial data, gated on wallet:read. Server-side paging and search — the
+// browser never receives the whole wallet table.
+
+let dwState = { page: 1, q: '', filter: 'all', debounce: null };
+
+const naira = (n) => '₦' + Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2 });
+
+async function fetchDriverWallets() {
+    const list = document.getElementById('dw-list');
+    try {
+        const p = new URLSearchParams({ page: dwState.page, pageSize: 25, filter: dwState.filter });
+        if (dwState.q) p.set('q', dwState.q);
+        const data = await adminFetch('/driver-wallets?' + p.toString());
+        renderDriverWallets(data);
+    } catch (e) {
+        const staffOnly = /named staff account|403|forbidden/i.test(e?.message || '');
+        list.innerHTML = `<tr><td colspan="9" class="ro-empty">${staffOnly
+            ? 'Driver wallets need a named staff account with finance permission.'
+            : escapeHtml(e?.message || 'Could not load wallets.')}</td></tr>`;
+    }
+}
+
+function renderDriverWallets(data) {
+    const inDebt = data.rows.filter(r => r.outstandingDebt > 0);
+    const cards = document.getElementById('dw-cards');
+    if (cards) {
+        const card = (l, v, cls) => `<div class="ro-card ${cls||''}"><div class="ro-card-v">${v}</div>
+            <div class="ro-card-l">${escapeHtml(l)}</div></div>`;
+        cards.innerHTML = [
+            card('Drivers (page)', data.rows.length),
+            card('In debt', inDebt.length, 'ro-c-bad'),
+            card('Total debt', naira(inDebt.reduce((s,r)=>s+r.outstandingDebt,0)), 'ro-c-bad'),
+            card('Total available', naira(data.rows.reduce((s,r)=>s+r.availableBalance,0)), 'ro-c-ok'),
+            card('Matching filter', data.total),
+        ].join('');
+    }
+
+    const list = document.getElementById('dw-list');
+    if (!data.rows.length) {
+        list.innerHTML = '<tr><td colspan="9" class="ro-empty">No drivers match.</td></tr>';
+    } else {
+        list.innerHTML = data.rows.map(r => `
+            <tr class="ro-row" onclick="openDriverLedger('${escapeHtml(r.driverId)}')">
+              <td><div class="ro-name">${escapeHtml(r.name)}</div>
+                  <div class="ro-sub">${escapeHtml(r.phoneMasked || '')}</div></td>
+              <td><div class="ro-sub">${escapeHtml(r.vehiclePlate || '—')}${r.unitNumber ? ' · ' + escapeHtml(r.unitNumber) : ''}</div></td>
+              <td class="ro-num">${naira(r.availableBalance)}</td>
+              <td class="ro-num ${r.outstandingDebt > 0 ? 'dw-debt' : ''}">${naira(r.outstandingDebt)}</td>
+              <td class="ro-num">${naira(r.withdrawable)}</td>
+              <td class="ro-num">${naira(r.totalFunded)}</td>
+              <td class="ro-num">${naira(r.totalCommissionCharged)}</td>
+              <td><div class="ro-sub">${r.lastTransactionAt
+                    ? escapeHtml(new Date(r.lastTransactionAt).toLocaleString()) + '<br>' + escapeHtml(r.lastTransactionType || '')
+                    : 'never'}</div></td>
+              <td class="ro-num"><span class="ro-view">Ledger</span></td>
+            </tr>`).join('');
+    }
+
+    const pager = document.getElementById('dw-pager');
+    const pages = Math.max(1, Math.ceil(data.total / data.pageSize));
+    pager.innerHTML = `<span class="ro-pager-info">${data.total.toLocaleString()} drivers</span>
+        <button class="ro-btn-ghost" ${data.page<=1?'disabled':''} onclick="dwPage(${data.page-1})">Previous</button>
+        <span class="ro-pager-info">Page ${data.page} of ${pages}</span>
+        <button class="ro-btn-ghost" ${data.page>=pages?'disabled':''} onclick="dwPage(${data.page+1})">Next</button>`;
+}
+
+window.dwPage = function (p) { dwState.page = Math.max(1, p); fetchDriverWallets(); };
+
+window.openDriverLedger = async function (driverId) {
+    const drawer = document.getElementById('ro-drawer');
+    const body = document.getElementById('ro-d-body');
+    drawer.classList.remove('hidden');
+    document.getElementById('ro-d-title').textContent = 'Loading…';
+    document.getElementById('ro-d-sub').textContent = '';
+    body.innerHTML = '<div class="ro-loading">Loading ledger…</div>';
+    try {
+        const d = await adminFetch('/driver-wallets/' + encodeURIComponent(driverId));
+        const row = (l, v) => `<div class="ro-kv"><span>${escapeHtml(l)}</span><span>${v}</span></div>`;
+        document.getElementById('ro-d-title').textContent = d.driver.name;
+        document.getElementById('ro-d-sub').innerHTML =
+            `${escapeHtml(d.driver.vehiclePlate || 'no plate')} · <span class="ro-mono">${escapeHtml(driverId)}</span>`;
+        body.innerHTML = `
+          <section class="ro-panel">
+            <h4>Wallet</h4>
+            ${row('Available', naira(d.wallet.availableBalance))}
+            ${row('Outstanding debt', `<span class="${d.wallet.outstandingDebt>0?'dw-debt':''}">${naira(d.wallet.outstandingDebt)}</span>`)}
+            ${row('Withdrawable', `<strong>${naira(d.wallet.withdrawable)}</strong>`)}
+            ${row('Pending payout', naira(d.wallet.pendingBalance))}
+          </section>
+          <section class="ro-panel">
+            <h4>Ledger <span class="ro-sub">${d.entries.length} entries</span></h4>
+            ${d.entries.length ? `<div class="dw-ledger">${d.entries.map(e => `
+              <div class="dw-entry ${e.informational ? 'dw-informational' : ''}">
+                <div class="dw-entry-top">
+                  <span class="ro-sub">${escapeHtml(new Date(e.at).toLocaleString())}</span>
+                  <span class="dw-amount ${Number(e.amount)<0?'dw-neg':'dw-pos'}">${naira(e.amount)}</span>
+                </div>
+                <div class="ro-sub">${escapeHtml(e.transactionType)} · ${escapeHtml(e.balanceType)}</div>
+                <div class="ro-sub">${naira(e.balanceBefore)} → ${naira(e.balanceAfter)}${
+                  e.informational ? ' <em>(record only — balance unchanged)</em>' : ''}</div>
+                ${e.rideId ? `<div class="ro-sub ro-mono">ride ${escapeHtml(e.rideId)}</div>` : ''}
+                ${e.reference ? `<div class="ro-sub ro-mono">ref ${escapeHtml(e.reference)}</div>` : ''}
+                ${e.source ? `<div class="ro-sub">source: ${escapeHtml(e.source)}</div>` : ''}
+              </div>`).join('')}</div>`
+              : '<div class="ro-empty">No ledger entries.</div>'}
+          </section>`;
+    } catch (e) {
+        body.innerHTML = `<div class="ro-empty">${escapeHtml(e?.message || 'Could not load ledger.')}</div>`;
+    }
+};
+
+function enterDriverWallets() {
+    const q = document.getElementById('dw-q');
+    if (q && !q.dataset.bound) {
+        q.dataset.bound = '1';
+        q.addEventListener('input', () => {
+            clearTimeout(dwState.debounce);
+            dwState.debounce = setTimeout(() => { dwState.q = q.value.trim(); dwState.page = 1; fetchDriverWallets(); }, 350);
+        });
+    }
+    const f = document.getElementById('dw-filter');
+    if (f && !f.dataset.bound) {
+        f.dataset.bound = '1';
+        f.addEventListener('change', () => { dwState.filter = f.value; dwState.page = 1; fetchDriverWallets(); });
+    }
+    fetchDriverWallets();
+}
+
+// ===================== Financial Exceptions =====================
+
+async function fetchFinancialExceptions() {
+    const list = document.getElementById('fx-list');
+    try {
+        const d = await adminFetch('/financial-exceptions');
+        const cards = document.getElementById('fx-cards');
+        if (cards) {
+            cards.innerHTML = `
+              <div class="ro-card ro-c-bad"><div class="ro-card-v">${d.count}</div>
+                <div class="ro-card-l">Unposted rides</div></div>
+              <div class="ro-card ro-c-bad"><div class="ro-card-v">${naira(d.totalCommission)}</div>
+                <div class="ro-card-l">Commission at stake</div></div>`;
+        }
+        if (!d.rows.length) {
+            list.innerHTML = '<tr><td colspan="8" class="ro-empty">No unresolved financial exceptions.</td></tr>';
+            return;
+        }
+        list.innerHTML = d.rows.map(r => `
+            <tr>
+              <td class="ro-time">${escapeHtml(new Date(r.completedAt).toLocaleString())}</td>
+              <td class="ro-sub ro-mono">${escapeHtml(r.rideId)}</td>
+              <td class="ro-sub ro-mono">${escapeHtml(String(r.driverId || '').slice(0,8))}…</td>
+              <td>${escapeHtml(String(r.paymentMode || '').toUpperCase())}</td>
+              <td class="ro-num">${naira(r.fare)}</td>
+              <td class="ro-num">${naira(r.commission)}</td>
+              <td><span class="ro-badge ${r.paymentHeld ? 'ro-b-cancel' : 'ro-b-tech'}">${
+                    r.paymentHeld ? 'HELD FOR REVIEW' : 'POSTING FAILED'}</span></td>
+              <td class="ro-num"><button class="ro-btn" onclick="retryFinancials('${escapeHtml(r.rideId)}', this)">Post now</button></td>
+            </tr>`).join('');
+    } catch (e) {
+        const staffOnly = /named staff account|403|forbidden/i.test(e?.message || '');
+        list.innerHTML = `<tr><td colspan="8" class="ro-empty">${staffOnly
+            ? 'Financial exceptions need a named staff account with finance permission.'
+            : escapeHtml(e?.message || 'Could not load.')}</td></tr>`;
+    }
+}
+
+window.retryFinancials = async function (rideId, btn) {
+    if (btn) { btn.disabled = true; btn.textContent = 'Posting…'; }
+    try {
+        await adminFetch('/financial-exceptions/' + encodeURIComponent(rideId) + '/retry', 'POST', {});
+        showToast('Financials posted.', 'success');
+        fetchFinancialExceptions();
+    } catch (e) {
+        // ALREADY_POSTED is a correct outcome, not a fault — the ledger guard
+        // did its job and stopped a double charge.
+        const already = /already/i.test(e?.message || '');
+        showToast(already ? 'Already posted — nothing was charged twice.' : (e?.message || 'Retry failed'),
+                  already ? 'success' : 'error');
+        fetchFinancialExceptions();
+    }
+};

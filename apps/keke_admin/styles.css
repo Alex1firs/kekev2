@@ -2350,3 +2350,18 @@ body.authenticated .admin-container { display: flex; }
     .lo-row { grid-template-columns: 70px 1fr; }
     .lo-supply, .lo-status { display: none; }
 }
+
+/* Driver wallets */
+.dw-debt { color: var(--accent-rose); font-weight: 600; }
+.dw-ledger { display: flex; flex-direction: column; gap: 8px; }
+.dw-entry {
+    background: var(--card-bg); border: 1px solid var(--border-color);
+    border-radius: 8px; padding: 10px 12px;
+}
+/* A record that did not move money — cash the driver collected, or platform
+   revenue. Dimmed so an investigator does not read it as a balance change. */
+.dw-informational { opacity: 0.65; border-style: dashed; }
+.dw-entry-top { display: flex; justify-content: space-between; align-items: baseline; }
+.dw-amount { font-variant-numeric: tabular-nums; font-weight: 700; }
+.dw-pos { color: var(--accent-emerald); }
+.dw-neg { color: var(--accent-rose); }

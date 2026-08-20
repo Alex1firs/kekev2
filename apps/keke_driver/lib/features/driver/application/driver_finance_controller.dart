@@ -1,21 +1,65 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:dio/dio.dart' as dio;
 import '../../auth/application/auth_controller.dart';
 import '../../auth/domain/auth_state.dart';
 import '../domain/driver_finance_state.dart';
 import '../../../core/network/api_client.dart';
+import '../../../core/network/socket_service.dart';
+import '../../../core/network/socket_provider.dart';
 import 'package:jwt_decoder/jwt_decoder.dart';
 
 class DriverFinanceController extends StateNotifier<DriverFinanceState> {
   final ApiClient _apiClient;
   final String _userId;
 
-  DriverFinanceController(this._apiClient, this._userId) : super(DriverFinanceState(isLoading: true)) {
+  StreamSubscription<Map<String, dynamic>>? _walletSub;
+
+  DriverFinanceController(this._apiClient, this._userId, {SocketService? socket})
+      : super(DriverFinanceState(isLoading: true)) {
     if (_userId != 'guest' && _userId != 'error') {
       _loadData();
+      _listenForWalletChanges(socket);
     } else {
       state = DriverFinanceState();
     }
+  }
+
+  /// Apply wallet changes the moment the server publishes them.
+  ///
+  /// Before this the screen only ever learned about a commission charge or a
+  /// top-up by being opened — so a driver watching it while a ride completed,
+  /// or while an operator funded them at the park, saw a stale number with no
+  /// way to know it was stale.
+  ///
+  /// The event carries the authoritative figures rather than a nudge to
+  /// refetch, so there is no window in which the screen is still wrong. A
+  /// missed event self-corrects on the next refresh: the endpoint stays the
+  /// source of truth and this is an accelerator, not a second one.
+  void _listenForWalletChanges(SocketService? socket) {
+    if (socket == null) return;
+    _walletSub = socket.events.listen((event) {
+      if (event['event'] != 'wallet:updated') return;
+      final data = event['data'] as Map<String, dynamic>? ?? event;
+      if (!mounted) return;
+      state = state.copyWith(
+        availableBalance: (data['availableBalance'] as num?)?.toDouble() ?? state.availableBalance,
+        commissionDebt: (data['outstandingDebt'] as num?)?.toDouble() ?? state.commissionDebt,
+        pendingBalance: (data['pendingBalance'] as num?)?.toDouble() ?? state.pendingBalance,
+        withdrawable: (data['withdrawable'] as num?)?.toDouble() ?? state.withdrawable,
+        isLoading: false,
+      );
+      // The balances are already correct on screen. Refresh the history in the
+      // background so the transaction list catches up too, without blocking.
+      _loadData();
+    });
+  }
+
+  @override
+  void dispose() {
+    _walletSub?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadData() async {
@@ -34,6 +78,7 @@ class DriverFinanceController extends StateNotifier<DriverFinanceState> {
       if (!mounted) return;
       state = state.copyWith(
         availableBalance: double.tryParse(balance['driverAvailableBalance']?.toString() ?? '0') ?? 0,
+        withdrawable: double.tryParse(data['withdrawable']?.toString() ?? '0') ?? 0,
         pendingBalance: double.tryParse(balance['driverPendingBalance']?.toString() ?? '0') ?? 0,
         commissionDebt: double.tryParse(balance['driverCommissionDebt']?.toString() ?? '0') ?? 0,
         totalCommissionPaid: double.tryParse(data['totalCommissionPaid']?.toString() ?? '0') ?? 0.0,
@@ -135,6 +180,9 @@ class DriverFinanceController extends StateNotifier<DriverFinanceState> {
 final driverFinanceControllerProvider = StateNotifierProvider<DriverFinanceController, DriverFinanceState>((ref) {
   final authState = ref.watch(authControllerProvider);
   final apiClient = ref.watch(apiClientProvider);
+  // Read, not watch: a socket reconnect must not tear down and rebuild the
+  // finance controller, which would drop the balances off screen mid-shift.
+  final socket = ref.read(socketServiceProvider);
 
   if (authState.status != AuthStatus.authenticated || authState.token == null) {
     return DriverFinanceController(apiClient, 'guest');
@@ -144,7 +192,7 @@ final driverFinanceControllerProvider = StateNotifierProvider<DriverFinanceContr
     final decoded = JwtDecoder.decode(authState.token!);
     final userId = decoded['userId']?.toString();
     if (userId == null) throw 'Missing userId';
-    return DriverFinanceController(apiClient, userId);
+    return DriverFinanceController(apiClient, userId, socket: socket);
   } catch (e) {
     return DriverFinanceController(apiClient, 'error');
   }

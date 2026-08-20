@@ -1,5 +1,11 @@
 class DriverFinanceState {
   final double availableBalance;
+  /// What the driver may actually take out: balance minus what they owe.
+  ///
+  /// Computed by the SERVER and carried here verbatim. The app must never
+  /// derive it by subtracting debt itself — a client that gets that wrong
+  /// shows money the driver cannot have, and they find out at the bank.
+  final double withdrawable;
   final double pendingBalance;
   final double commissionDebt;
   final double totalCommissionPaid;
@@ -10,6 +16,7 @@ class DriverFinanceState {
 
   DriverFinanceState({
     this.availableBalance = 0.0,
+    this.withdrawable = 0.0,
     this.pendingBalance = 0.0,
     this.commissionDebt = 0.0,
     this.totalCommissionPaid = 0.0,
@@ -21,6 +28,7 @@ class DriverFinanceState {
 
   DriverFinanceState copyWith({
     double? availableBalance,
+    double? withdrawable,
     double? pendingBalance,
     double? commissionDebt,
     double? totalCommissionPaid,
@@ -31,6 +39,7 @@ class DriverFinanceState {
   }) {
     return DriverFinanceState(
       availableBalance: availableBalance ?? this.availableBalance,
+      withdrawable: withdrawable ?? this.withdrawable,
       pendingBalance: pendingBalance ?? this.pendingBalance,
       commissionDebt: commissionDebt ?? this.commissionDebt,
       totalCommissionPaid: totalCommissionPaid ?? this.totalCommissionPaid,

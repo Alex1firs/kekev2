@@ -26,7 +26,9 @@
     "ride:story": "ts-node src/scripts/ride_story.ts",
     "ride:story:prod": "node dist/scripts/ride_story.js",
     "wallet:reconcile": "ts-node src/scripts/wallet_reconcile.ts",
-    "wallet:reconcile:prod": "node dist/scripts/wallet_reconcile.js"
+    "wallet:reconcile:prod": "node dist/scripts/wallet_reconcile.js",
+    "wallet:reconcile-debt": "ts-node src/scripts/reconcile_debt_wallets.ts",
+    "wallet:reconcile-debt:prod": "node dist/scripts/reconcile_debt_wallets.js"
   },
   "keywords": [],
   "author": "",

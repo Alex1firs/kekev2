@@ -4,6 +4,7 @@ import { Wallet } from "../models/Wallet";
 import { LedgerEntry, BalanceType, TransactionType } from "../models/LedgerEntry";
 import { Transaction, TransactionStatus } from "../models/Transaction";
 import { PayoutRecord, PayoutStatus } from "../models/PayoutRecord";
+import { Ride } from "../models/Ride";
 import { WalletBroadcastService } from "./wallet_broadcast_service";
 import { AuditLog } from "../models/AuditLog";
 import { SettingService } from "./setting_service";
@@ -350,7 +351,17 @@ export class WalletService {
      * Called when driver taps "PAY NOW" and already has wallet funds.
      * Returns { applied, remainingDebt }.
      */
-    static async repayDebtFromBalance(driverId: string): Promise<{ applied: number; remainingDebt: number }> {
+    static async repayDebtFromBalance(
+        driverId: string,
+        /**
+         * Who or what caused this settlement. Defaults to the driver tapping
+         * "PAY NOW", which is what this method originally only ever served.
+         * An operations reconciliation passes its own source so the ledger
+         * says who did it — a repayment nobody can attribute is not auditable.
+         */
+        source: string = 'manual_repay',
+        extraMetadata: Record<string, unknown> = {},
+    ): Promise<{ applied: number; remainingDebt: number }> {
         return await AppDataSource.transaction(async (manager) => {
             const wallet = await manager.findOne(Wallet, {
                 where: { userId: driverId },
@@ -375,7 +386,7 @@ export class WalletService {
                 amount: -applied,
                 balanceBefore: available,
                 balanceAfter: wallet.driverAvailableBalance,
-                metadata: { source: 'manual_repay', debtBefore: debt, applied },
+                metadata: { ...extraMetadata, source, debtBefore: debt, applied },
             }));
 
             await manager.save(manager.create(LedgerEntry, {
@@ -385,11 +396,112 @@ export class WalletService {
                 amount: -applied,
                 balanceBefore: debt,
                 balanceAfter: wallet.driverCommissionDebt,
-                metadata: { source: 'manual_repay', applied },
+                metadata: { ...extraMetadata, source, applied },
             }));
 
             return { applied, remainingDebt: wallet.driverCommissionDebt };
         });
+    }
+
+    /**
+     * Re-post financials for a ride whose original posting failed.
+     *
+     * ── Why this needs to exist ──────────────────────────────────────────
+     * `paymentFailed = true` was a dead end. The completion handler caught the
+     * error, set the flag, told the admin socket, and nothing ever looked at it
+     * again. 99 completed cash rides carrying ₦88,345.20 of commission sat in
+     * that state for a month with nobody able to act on them from anywhere in
+     * the product.
+     *
+     * ── Idempotent by checking the ledger, not the flag ──────────────────
+     * The guard is "does this ride already have ledger entries", not "is the
+     * flag still set". A flag can be cleared by hand or by a half-finished
+     * retry; the ledger is the money. Two operators pressing Retry at the same
+     * moment both find entries after the first commits, so the second is a
+     * no-op rather than a double charge.
+     */
+    static async retryFailedPosting(
+        rideId: string,
+        actor: { staffUserId: string; label: string },
+    ): Promise<{ ok: true; posted: true } | { ok: false; code: string; message: string }> {
+        const ride = await AppDataSource.getRepository(Ride).findOne({ where: { rideId } });
+        if (!ride) return { ok: false, code: 'RIDE_NOT_FOUND', message: 'Ride not found.' };
+        if (String(ride.status) !== 'completed') {
+            return { ok: false, code: 'NOT_COMPLETED', message: `This ride is ${ride.status}, not completed.` };
+        }
+        if (!ride.driverId) {
+            return { ok: false, code: 'NO_DRIVER', message: 'This ride has no driver to charge.' };
+        }
+
+        // THE idempotency guard. Anything already in the ledger for this ride
+        // means the money has been posted, whatever the flag says.
+        const existing = await AppDataSource.getRepository(LedgerEntry)
+            .createQueryBuilder('le')
+            .where(`le.metadata->>'rideId' = :rideId`, { rideId })
+            .getCount();
+        if (existing > 0) {
+            // Self-heal the stale flag so the exception disappears from the
+            // queue rather than being retried forever.
+            await AppDataSource.getRepository(Ride).update(rideId, { paymentFailed: false } as any);
+            return { ok: false, code: 'ALREADY_POSTED', message: 'This ride already has financial entries.' };
+        }
+
+        const totalFare = Number(ride.finalFare ?? ride.fare);
+        if (!(totalFare > 0)) {
+            return { ok: false, code: 'NO_FARE', message: 'This ride has no fare to charge against.' };
+        }
+
+        await this.postRideFinancials({
+            rideId,
+            passengerId: ride.passengerId,
+            driverId: ride.driverId,
+            totalFare,
+            isCash: ride.paymentMode === 'cash',
+        });
+
+        await AppDataSource.getRepository(Ride).update(rideId, { paymentFailed: false } as any);
+
+        // Attributable: who re-posted this, and when.
+        await AppDataSource.getRepository(LedgerEntry).save(
+            AppDataSource.getRepository(LedgerEntry).create({
+                walletId: ride.driverId,
+                balanceType: BalanceType.DRIVER_COMMISSION_DEBT,
+                transactionType: TransactionType.COMMISSION_CHARGE,
+                amount: 0,
+                balanceBefore: 0,
+                balanceAfter: 0,
+                metadata: {
+                    rideId,
+                    note: 'audit marker — financial posting retried by operations',
+                    retriedBy: actor.staffUserId,
+                    retriedByLabel: actor.label,
+                    at: new Date().toISOString(),
+                },
+            }),
+        );
+
+        return { ok: true, posted: true };
+    }
+
+    /**
+     * Completed rides whose money never posted. The queue an operator works.
+     */
+    static async financialExceptions(limit = 200): Promise<Array<Record<string, unknown>>> {
+        return AppDataSource.query(
+            `SELECT r."rideId", r."completedAt", r."driverId", r."paymentMode",
+                    COALESCE(r."finalFare", r.fare) AS fare,
+                    ROUND(COALESCE(r."finalFare", r.fare) * 0.10, 2) AS commission,
+                    COALESCE(r."paymentFailed", false) AS "paymentFailed",
+                    COALESCE(r."paymentHeld", false) AS "paymentHeld",
+                    r."reviewReason"
+               FROM ride r
+              WHERE r.status = 'completed'
+                AND (COALESCE(r."paymentFailed", false) = true OR COALESCE(r."paymentHeld", false) = true)
+                AND NOT EXISTS (SELECT 1 FROM ledger_entry le WHERE le.metadata->>'rideId' = r."rideId")
+              ORDER BY r."completedAt" DESC
+              LIMIT $1`,
+            [Math.min(limit, 500)],
+        );
     }
 
     /**

@@ -152,6 +152,53 @@ router.get("/driver-wallets/:driverId", requireRealStaff, requireStaffPermission
     }
 });
 
+/**
+ * GET /admin/financial-exceptions
+ * Completed rides whose money never posted. `paymentFailed = true` used to be
+ * a marker nobody could act on; this is the queue that makes it actionable.
+ */
+router.get("/financial-exceptions", requireRealStaff, requireStaffPermission(StaffPermission.WALLET_READ), async (_req: AdminRequest, res: Response) => {
+    try {
+        const rows = await WalletService.financialExceptions();
+        const totalCommission = rows.reduce((s: number, r: any) => s + Number(r.commission || 0), 0);
+        res.json({
+            rows,
+            count: rows.length,
+            totalCommission: Math.round(totalCommission * 100) / 100,
+        });
+    } catch (err: any) {
+        console.error('[ADMIN] financial-exceptions error:', err?.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * POST /admin/financial-exceptions/:rideId/retry
+ * Re-post one ride's financials. Idempotent against the LEDGER, so a double
+ * tap or two operators cannot double-charge a driver.
+ *
+ * wallet:adjust, not wallet:read — this moves money.
+ */
+router.post("/financial-exceptions/:rideId/retry", requireRealStaff, requireStaffPermission(StaffPermission.WALLET_ADJUST), async (req: AdminRequest, res: Response) => {
+    try {
+        const rideId = String(req.params.rideId);
+        const actor = {
+            staffUserId: req.actor?.staffUserId ?? 'unknown',
+            label: req.admin?.label ?? 'staff',
+        };
+        const result = await WalletService.retryFailedPosting(rideId, actor);
+        if (!result.ok) {
+            return res.status(result.code === 'ALREADY_POSTED' ? 409 : 400)
+                .json({ code: result.code, message: result.message });
+        }
+        await auditAdmin(req, 'RETRY_RIDE_FINANCIALS', 'RIDE', rideId, { by: actor.staffUserId });
+        res.json({ ok: true });
+    } catch (err: any) {
+        console.error('[ADMIN] retry financials error:', err?.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // ═══════════════════════════════════════════════════════════════════════
 //  RIDE OPERATIONS
 //

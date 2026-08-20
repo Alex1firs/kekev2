@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Keke Admin | Dashboard</title>
-    <link rel="stylesheet" href="styles.css?v=4.8">
+    <link rel="stylesheet" href="styles.css?v=4.9">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 </head>
@@ -107,6 +107,12 @@
                 </li>
                 <li data-section="history">
                     <i class="fas fa-clipboard-list"></i> <span>Ride Operations</span>
+                </li>
+                <li data-section="driver-wallets" data-requires-permission="wallet:read">
+                    <i class="fas fa-sack-dollar"></i> <span>Driver Wallets</span>
+                </li>
+                <li data-section="financial-exceptions" data-requires-permission="wallet:read">
+                    <i class="fas fa-triangle-exclamation"></i> <span>Financial Exceptions</span>
                 </li>
                 <li data-section="finance">
                     <i class="fas fa-money-bill-wave"></i> <span>Finance</span>
@@ -596,6 +602,65 @@
 
                     <div id="lo-list" class="lo-list"></div>
                 </section>
+
+                <!-- Driver Wallets -->
+                <section id="driver-wallets" class="content-section hidden">
+                    <div class="lr-banner">
+                        <i class="fas fa-lock"></i>
+                        <span>Driver financial data. Visible only to staff holding
+                              <strong>wallet:read</strong>; dispatchers cannot open this.</span>
+                    </div>
+                    <div class="ro-cards" id="dw-cards"></div>
+                    <div class="ro-toolbar">
+                        <div class="ro-search">
+                            <i class="fas fa-search"></i>
+                            <input type="text" id="dw-q" placeholder="Driver name, phone, plate or unit number…">
+                        </div>
+                        <div class="ro-filters">
+                            <select id="dw-filter">
+                                <option value="all">All drivers</option>
+                                <option value="in_debt">In debt</option>
+                                <option value="positive_balance">Positive balance</option>
+                                <option value="zero">Zero balance</option>
+                                <option value="recently_funded">Recently funded</option>
+                                <option value="recently_active">Recently active</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="table-container">
+                        <table class="ro-table">
+                            <thead><tr>
+                                <th>Driver</th><th>Vehicle</th>
+                                <th class="ro-num">Available</th><th class="ro-num">Debt</th>
+                                <th class="ro-num">Withdrawable</th><th class="ro-num">Funded</th>
+                                <th class="ro-num">Charged</th><th>Last activity</th><th></th>
+                            </tr></thead>
+                            <tbody id="dw-list"></tbody>
+                        </table>
+                    </div>
+                    <div class="ro-pager" id="dw-pager"></div>
+                </section>
+
+                <!-- Financial Exceptions -->
+                <section id="financial-exceptions" class="content-section hidden">
+                    <div class="lr-banner">
+                        <i class="fas fa-triangle-exclamation"></i>
+                        <span>Completed rides whose money never posted. Retrying is
+                              <strong>idempotent against the ledger</strong> — a ride that already
+                              has entries cannot be charged twice.</span>
+                    </div>
+                    <div class="ro-cards" id="fx-cards"></div>
+                    <div class="table-container">
+                        <table class="ro-table">
+                            <thead><tr>
+                                <th>Completed</th><th>Ride</th><th>Driver</th><th>Payment</th>
+                                <th class="ro-num">Fare</th><th class="ro-num">Commission</th>
+                                <th>State</th><th></th>
+                            </tr></thead>
+                            <tbody id="fx-list"></tbody>
+                        </table>
+                    </div>
+                </section>
                 <!-- Ride investigation drawer -->
                 <div id="ro-drawer" class="ro-drawer hidden">
                     <div class="ro-drawer-backdrop" onclick="closeRideInvestigation()"></div>
@@ -1027,7 +1092,7 @@
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="live_requests.js?v=1.2"></script>
-    <script src="app.js?v=4.8"></script>
+    <script src="app.js?v=4.9"></script>
     <script src="communications_pro.js?v=1.0"></script>
 </body>
 </html>

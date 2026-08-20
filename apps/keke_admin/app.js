@@ -621,7 +621,9 @@ async function fetchHeldRides() {
             </div>
             <div class="held-actions">
                 <button class="btn-primary" onclick="releaseRide('${escapeHtml(r.rideId)}')">Release payment</button>
-                <button class="btn-danger" onclick="voidRide('${escapeHtml(r.rideId)}')">Void (no charge)</button>
+                ${can('ride:void')
+                    ? `<button class="btn-danger" onclick="voidRide('${escapeHtml(r.rideId)}')">Void (no charge)</button>`
+                    : ''}
             </div>
         </div>`;
     }).join('');
@@ -635,25 +637,87 @@ window.releaseRide = async function(rideId) {
     } catch (e) { alert('Release failed: ' + (e?.message || 'error')); }
 };
 
+const VOID_REASONS = [
+    ['TRAINING_DEMO',          'Training/demo ride'],
+    ['FRAUD_TEST',             'Fraud/test ride'],
+    ['DUPLICATE',              'Duplicate ride'],
+    ['DISPUTE',                'Passenger/driver dispute'],
+    ['OPERATIONAL_CORRECTION', 'Operational correction'],
+    ['OTHER',                  'Other — explain below'],
+];
+
 window.voidRide = async function(rideId) {
-    // Ask why. The first hundred voids recorded no reason at all, so months
-    // later there was nothing on the record to distinguish a training ride
-    // from a fraud dismissal — the reason had to be reconstructed from fare
-    // shape and timing.
-    const reason = prompt(
-        `Void ${rideId}?\n\n`
-        + `The ride is dismissed with NO charge to the passenger, NO payout to `
-        + `the driver and NO commission to KekeRide. Any money already posted `
-        + `for it is reversed.\n\n`
-        + `Why is this ride being voided?`,
-        'Field-training ride — not a genuine passenger journey');
-    if (reason === null) return;                       // cancelled
-    if (!reason.trim()) { alert('A reason is required.'); return; }
-    try {
-        const r = await adminFetch(`/rides/${rideId}/void`, 'POST', { reason: reason.trim() });
-        if (typeof showToast === 'function') showToast(r?.message || 'Ride voided.', 'success');
-        fetchHeldRides();
-    } catch (e) { alert('Void failed: ' + (e?.message || 'error')); }
+    // A reason is required, from a fixed list. The first hundred voids
+    // recorded none at all, so months later nothing on the record separated
+    // a training ride from a fraud dismissal.
+    const existing = document.getElementById('void-modal');
+    if (existing) existing.remove();
+
+    const modal = document.createElement('div');
+    modal.id = 'void-modal';
+    modal.className = 'modal';
+    modal.innerHTML = `
+      <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="void-modal-title">
+        <h3 id="void-modal-title">Void ${escapeHtml(rideId)}</h3>
+        <p class="void-note">
+          No charge to the passenger, no payout to the driver, no commission to
+          KekeRide. Anything already posted for this ride is reversed.
+        </p>
+        <label class="void-field">
+          <span>Why is this ride being voided?</span>
+          <select id="void-reason-code">
+            ${VOID_REASONS.map(([c, l]) =>
+                `<option value="${c}">${escapeHtml(l)}</option>`).join('')}
+          </select>
+        </label>
+        <label class="void-field">
+          <span>Explanation <em id="void-detail-req"></em></span>
+          <input id="void-reason-detail" type="text" maxlength="160"
+                 placeholder="Optional context kept on the record">
+        </label>
+        <div class="modal-actions">
+          <button class="ro-btn" id="void-cancel">Cancel</button>
+          <button class="btn-danger" id="void-confirm">Void ride</button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+
+    const codeEl = modal.querySelector('#void-reason-code');
+    const detailEl = modal.querySelector('#void-reason-detail');
+    const reqEl = modal.querySelector('#void-detail-req');
+    const syncRequired = () => {
+        const other = codeEl.value === 'OTHER';
+        reqEl.textContent = other ? '(required)' : '';
+        detailEl.placeholder = other
+            ? 'Required — say what happened'
+            : 'Optional context kept on the record';
+    };
+    codeEl.addEventListener('change', syncRequired);
+    syncRequired();
+
+    const close = () => modal.remove();
+    modal.querySelector('#void-cancel').addEventListener('click', close);
+    modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+
+    modal.querySelector('#void-confirm').addEventListener('click', async (e) => {
+        const reasonCode = codeEl.value;
+        const reasonDetail = detailEl.value.trim();
+        if (reasonCode === 'OTHER' && reasonDetail.length < 3) {
+            detailEl.focus();
+            showToast('"Other" needs an explanation.', 'error');
+            return;
+        }
+        e.target.disabled = true; e.target.textContent = 'Voiding…';
+        try {
+            const r = await adminFetch(`/rides/${rideId}/void`, 'POST', { reasonCode, reasonDetail });
+            close();
+            showToast(r?.message || 'Ride voided.', 'success');
+            fetchHeldRides();
+        } catch (err) {
+            e.target.disabled = false; e.target.textContent = 'Void ride';
+            showToast('Void failed: ' + (err?.message || 'error'), 'error');
+        }
+    });
 };
 
 async function fetchFinanceSummary() {

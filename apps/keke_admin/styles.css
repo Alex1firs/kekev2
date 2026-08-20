@@ -235,6 +235,18 @@ td {
     margin-top: 24px;
 }
 
+/* Void dialog: reuses .modal / .modal-content; only the fields are new. */
+.void-note   { color: var(--text-secondary); font-size: 14px; line-height: 1.5; margin: 8px 0 20px; }
+.void-field  { display: block; margin-bottom: 16px; }
+.void-field > span { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+.void-field > span em { color: var(--danger, #e5484d); font-style: normal; font-weight: 500; }
+.void-field select,
+.void-field input {
+    width: 100%; padding: 10px 12px; border-radius: 10px;
+    border: 1px solid var(--border-color); background: var(--input-bg, var(--card-bg));
+    color: var(--text-primary); font-size: 14px; font-family: inherit;
+}
+
 /* Document Gallery */
 .doc-gallery {
     display: grid;

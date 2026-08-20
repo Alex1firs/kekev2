@@ -128,6 +128,17 @@ export const StaffPermission = {
     RIDE_INTERVENE: 'ride:intervene',
     RIDE_CANCEL_OVERRIDE: 'ride:cancel_override',
     RIDE_REVEAL_CONTACT: 'ride:reveal_contact',
+    /**
+     * Dismiss a ride as non-collectible: no earnings, no commission, no debt,
+     * and a reversal of anything already posted.
+     *
+     * Financial, not operational. It lives beside the ride permissions because
+     * it acts on a ride, but its blast radius is money — which is why it is
+     * its own capability and not folded into RIDE_INTERVENE. A park dispatcher
+     * who can hand a ride to another driver must not thereby be able to erase
+     * the commission on a commercial trip.
+     */
+    RIDE_VOID: 'ride:void',
 
     // ── Audit ───────────────────────────────────────────────────────────
     AUDIT_READ: 'audit:read',
@@ -198,6 +209,8 @@ export const LEGACY_FORBIDDEN_PERMISSIONS: ReadonlySet<string> = new Set<string>
     StaffPermission.WALLET_TOPUP_CREATE,
     StaffPermission.WALLET_TOPUP_CONFIRM,
     StaffPermission.WALLET_ADJUST,
+    // Voiding reverses money and must name the person who did it.
+    StaffPermission.RIDE_VOID,
     StaffPermission.WALLET_REVERSE,
     StaffPermission.SETTLEMENT_APPROVE,
     // Operations Dispatch. Reading the queue is fine from a shared key;
@@ -238,6 +251,14 @@ const ROLE_MATRIX: Record<StaffRole, StaffPermissionType[]> = {
      */
     [StaffRole.OPERATIONS_ADMIN]: [
         StaffPermission.OPS_QUEUE_READ,
+        /*
+         * May void a ride. Operations is who decides a training run or a
+         * disputed trip does not count, so withholding this would just push
+         * the work back to SUPER_ADMIN. Dispatchers below this level do not
+         * get it: assigning a driver and cancelling the money owed on a
+         * commercial ride are different powers.
+         */
+        StaffPermission.RIDE_VOID,
         StaffPermission.STAFF_READ,
         StaffPermission.PARK_CREATE,
         StaffPermission.PARK_READ,

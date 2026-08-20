@@ -985,23 +985,75 @@ router.post("/rides/:rideId/release", async (req: Request, res: Response) => {
 });
 
 /**
- * POST /admin/rides/:rideId/void
- * Dismiss a held ride without charging (e.g. confirmed fraud / no valid trip).
+ * Reasons a ride may be voided. A fixed vocabulary rather than free text so
+ * the set stays countable — "how many training rides did we run in August"
+ * has to be answerable without reading prose.
+ *
+ * OTHER exists because the list will never be complete, and it is the one
+ * value that demands an explanation alongside it.
  */
-router.post("/rides/:rideId/void", async (req: Request, res: Response) => {
+const VOID_REASONS = {
+    TRAINING_DEMO: 'Training/demo ride',
+    FRAUD_TEST: 'Fraud/test ride',
+    DUPLICATE: 'Duplicate ride',
+    DISPUTE: 'Passenger/driver dispute',
+    OPERATIONAL_CORRECTION: 'Operational correction',
+    OTHER: 'Other',
+} as const;
+type VoidReasonCode = keyof typeof VOID_REASONS;
+
+router.post(
+    "/rides/:rideId/void",
+    // Voiding reverses money. It is a named-staff financial action, never
+    // something the shared admin key or a park dispatcher can reach.
+    requireRealStaff,
+    requireStaffPermission(StaffPermission.RIDE_VOID),
+    async (req: Request, res: Response) => {
     try {
         const rideId = req.params.rideId as string;
         const rideRepo = AppDataSource.getRepository(Ride);
         const ride = await rideRepo.findOne({ where: { rideId } });
         if (!ride) return res.status(404).json({ error: "Ride not found" });
 
-        const reason: string = String(req.body?.reason ?? '').trim() || 'No reason given';
+        // A reason is mandatory. The first hundred voids recorded none, and
+        // months later nothing on the record distinguished a training ride
+        // from a fraud dismissal — it had to be inferred from fare shape.
+        const reasonCode = String(req.body?.reasonCode ?? '').trim().toUpperCase() as VoidReasonCode;
+        if (!reasonCode || !(reasonCode in VOID_REASONS)) {
+            return res.status(400).json({
+                error: 'A void reason is required.',
+                allowedReasonCodes: Object.keys(VOID_REASONS),
+            });
+        }
+        const explanation = String(req.body?.reasonDetail ?? '').trim();
+        if (reasonCode === 'OTHER' && explanation.length < 3) {
+            return res.status(400).json({ error: '"Other" requires an explanation.' });
+        }
+        const reason = explanation
+            ? `${VOID_REASONS[reasonCode]} — ${explanation}`
+            : VOID_REASONS[reasonCode];
 
         if (ride.voided) {
             return res.json({
                 message: "This ride was already voided.", rideId, alreadyVoided: true,
             });
         }
+
+        // What the ride's money looked like the instant before the void, so
+        // the audit row stands on its own without re-deriving it later.
+        const financialStateBefore = {
+            fare: Number(ride.finalFare ?? ride.fare ?? 0),
+            paymentMode: ride.paymentMode ?? null,
+            paymentHeld: ride.paymentHeld === true,
+            paymentFailed: ride.paymentFailed === true,
+            quarantined: ride.financialQuarantine === true,
+            ledgerEntries: Number(
+                (await AppDataSource.query(
+                    `SELECT COUNT(*)::int AS n FROM ledger_entry WHERE metadata->>'rideId' = $1`,
+                    [rideId],
+                ))[0]?.n ?? 0,
+            ),
+        };
 
         // If money already posted for this ride, undo it with new opposite
         // ledger entries before marking the ride void. History is appended
@@ -1025,8 +1077,11 @@ router.post("/rides/:rideId/void", async (req: Request, res: Response) => {
         await AppDataSource.getRepository(AuditLog).save(AppDataSource.getRepository(AuditLog).create({
             adminId, action: "VOIDED_HELD_RIDE_PAYMENT", entityType: "RIDE", entityId: rideId,
             details: {
+                reasonCode,
                 reason,
+                explanation: explanation || null,
                 suspiciousReason: ride.suspiciousReason,
+                financialStateBefore,
                 reversal: { reversed: reversal.reversed, entries: reversal.entries, detail: reversal.detail },
             },
         }));

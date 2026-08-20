@@ -73,6 +73,10 @@ export class FinancialRecoveryWorker {
             // drivers for field-training rides an admin had deliberately
             // dismissed.
             .andWhere(`COALESCE(r."voided", false) = false`)
+            // A held ride is waiting on a human decision, not on a retry.
+            // Posting it automatically would pre-empt the review — and the
+            // review is often what decides the ride was a training run.
+            .andWhere(`COALESCE(r."paymentHeld", false) = false`)
             // The historical dataset is deliberately untouchable here.
             .andWhere(`COALESCE(r."financialQuarantine", false) = false`)
             .andWhere(`COALESCE(r."financialRetryCount", 0) < :max`, { max: MAX_ATTEMPTS })

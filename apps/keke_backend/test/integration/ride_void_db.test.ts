@@ -246,6 +246,20 @@ describeDb('voided ride — financial properties (database)', () => {
         expect(await wallet(d)).toEqual({ available: 5000, debt: 0 });
     });
 
+    it('the automatic worker leaves a ride that is held for review alone', async () => {
+        const d = await driver(5000, 0);
+        const rideId = await completedRide(d, {
+            paymentFailed: true, paymentHeld: true,
+            financialNextRetryAt: new Date(Date.now() - 60_000),
+        } as any);
+
+        const { FinancialRecoveryWorker } = require('../../src/services/financial_recovery_worker');
+        const due = await FinancialRecoveryWorker.findDue(100);
+
+        expect(due.map((r: any) => r.rideId)).not.toContain(rideId);
+        expect(await wallet(d)).toEqual({ available: 5000, debt: 0 });
+    });
+
     it('a genuine unvoided failure is still recovered — the guard is not a blanket off-switch', async () => {
         const d = await driver(5000, 0);
         const rideId = await completedRide(d, { paymentFailed: true } as any);

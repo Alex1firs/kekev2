@@ -31,9 +31,52 @@ const API_ROOT = (() => {
 const SOCKET_URL = API_ROOT.replace(/\/api\/v1$/, '');
 
 // ── State ────────────────────────────────────────────────────────────────
+
+/*
+ * Credential storage.
+ *
+ * sessionStorage was the bug. It is scoped to the browsing CONTEXT, and an
+ * installed PWA swiped away from Android recents — or killed by the OS to
+ * reclaim memory — destroys that context and everything in it. The dispatcher
+ * came back to a login screen having done nothing wrong, and while they were
+ * signed out no ride alert reached them.
+ *
+ * localStorage survives process death, app close, reboot and service-worker
+ * updates. It is cleared only by an explicit logout, clearing site data, or
+ * uninstalling.
+ *
+ * What is stored is a REVOCABLE server-side session, not a long-lived token:
+ * the access token lives an hour, the refresh token rotates on every use, and
+ * suspension, credential reset or logout kill it server-side immediately.
+ *
+ * Reads fall back to sessionStorage once, so a dispatcher already signed in
+ * when this shipped is carried across instead of being logged out by the fix.
+ */
+const KD_STORE = {
+    get(key) {
+        try {
+            const v = localStorage.getItem(key);
+            if (v != null) return v;
+            // One-time migration from the old location.
+            const legacy = sessionStorage.getItem(key);
+            if (legacy != null) { localStorage.setItem(key, legacy); return legacy; }
+            return null;
+        } catch { return null; }
+    },
+    set(key, value) {
+        try { localStorage.setItem(key, value); } catch { /* private mode */ }
+    },
+    clear() {
+        try {
+            for (const k of ['KD_TOKEN', 'KD_REFRESH', 'KD_SOUND']) localStorage.removeItem(k);
+            sessionStorage.clear();
+        } catch { /* private mode */ }
+    },
+};
+
 const S = {
-    accessToken: sessionStorage.getItem('KD_TOKEN') || '',
-    refreshToken: sessionStorage.getItem('KD_REFRESH') || '',
+    accessToken: KD_STORE.get('KD_TOKEN') || '',
+    refreshToken: KD_STORE.get('KD_REFRESH') || '',
     me: null,
     parkId: null,
     shift: null,
@@ -43,7 +86,7 @@ const S = {
     park: null,
     selectedJobId: null,
     socket: null,
-    soundOn: sessionStorage.getItem('KD_SOUND') !== 'off',
+    soundOn: KD_STORE.get('KD_SOUND') !== 'off',
     seenJobIds: new Set(),
     queueFilter: '',
     driverFilter: '',
@@ -144,8 +187,8 @@ async function refreshSession() {
         const data = await res.json();
         S.accessToken = data.accessToken;
         S.refreshToken = data.refreshToken;
-        sessionStorage.setItem('KD_TOKEN', S.accessToken);
-        sessionStorage.setItem('KD_REFRESH', S.refreshToken);
+        KD_STORE.set('KD_TOKEN', S.accessToken);
+        KD_STORE.set('KD_REFRESH', S.refreshToken);
         return true;
     } catch { return false; }
 }
@@ -731,8 +774,8 @@ $('login-form').addEventListener('submit', async (e) => {
         }
         S.accessToken = data.accessToken;
         S.refreshToken = data.refreshToken;
-        sessionStorage.setItem('KD_TOKEN', S.accessToken);
-        sessionStorage.setItem('KD_REFRESH', S.refreshToken);
+        KD_STORE.set('KD_TOKEN', S.accessToken);
+        KD_STORE.set('KD_REFRESH', S.refreshToken);
         await // Operations wires its own listeners once, before the first boot.
 window.__kdOps?.init();
 boot();
@@ -764,7 +807,7 @@ async function signOut() {
     }
 
     await clearServiceWorkerCaches();
-    sessionStorage.clear();
+    KD_STORE.clear();
     try { localStorage.removeItem('KD_LAST_PARK'); } catch { /* private mode */ }
 
     // Drop in-memory state too: a reload is not guaranteed to be immediate,
@@ -778,17 +821,133 @@ async function signOut() {
 
 // ── Boot ─────────────────────────────────────────────────────────────────
 
+
+/*
+ * The server is unreachable but the session is fine.
+ *
+ * Deliberately NOT the login screen: sending a dispatcher there implies they
+ * must do something, and the something they would do — sign in — cannot work
+ * while the API is unreachable anyway. It also throws away a perfectly valid
+ * session that will work again in ten seconds.
+ */
+let sessionRetryTimer = null;
+let sessionRetryDelay = 3000;
+
+function showReconnecting() {
+    showScreen('login');
+    const form = $('staff-login-form');
+    const legacy = $('login-form');
+    const tabs = document.querySelector('.login-mode-tabs');
+    form?.classList.add('hidden');
+    legacy?.classList.add('hidden');
+    tabs?.classList.add('hidden');
+    const sub = $('login-subtitle');
+    if (sub) sub.textContent = 'Reconnecting to KekeRide Operations…';
+    const err = $('login-error');
+    if (err) {
+        err.textContent = 'You are still signed in. Waiting for the server.';
+        err.classList.remove('hidden');
+    }
+}
+
+function hideReconnecting() {
+    $('staff-login-form')?.classList.remove('hidden');
+    document.querySelector('.login-mode-tabs')?.classList.remove('hidden');
+    const sub = $('login-subtitle');
+    if (sub) sub.textContent = 'Sign in with your KekeRide staff account.';
+    $('login-error')?.classList.add('hidden');
+}
+
+/** Keep trying, backing off, until the session restores or is refused. */
+function scheduleSessionRetry() {
+    if (sessionRetryTimer) return;
+    sessionRetryTimer = setTimeout(async () => {
+        sessionRetryTimer = null;
+        try {
+            S.me = await api('/dispatcher/me');
+            sessionRetryDelay = 3000;
+            hideReconnecting();
+            await boot();
+        } catch (err) {
+            if (err?.status === 401 || err?.status === 403) {
+                KD_STORE.clear();
+                S.accessToken = ''; S.refreshToken = '';
+                hideReconnecting();
+                showScreen('login');
+                $('login-error').textContent = 'Your session ended. Sign in again.';
+                $('login-error').classList.remove('hidden');
+                return;
+            }
+            // Capped so a long outage does not become a busy loop.
+            sessionRetryDelay = Math.min(sessionRetryDelay * 2, 30000);
+            scheduleSessionRetry();
+        }
+    }, sessionRetryDelay);
+}
+
+/* Coming back online is the strongest hint to retry immediately. */
+window.addEventListener('online', () => {
+    if (sessionRetryTimer) { clearTimeout(sessionRetryTimer); sessionRetryTimer = null; }
+    sessionRetryDelay = 1000;
+    if (!S.me && (S.accessToken || S.refreshToken)) scheduleSessionRetry();
+});
+
 async function boot() {
     renderNetwork();
     registerServiceWorker();
-    if (!S.accessToken) { showScreen('login'); return; }
+    if (!S.accessToken && !S.refreshToken) { showScreen('login'); return; }
+
+    /*
+     * Restore the session, and distinguish the reasons it might not restore.
+     *
+     * This used to be a bare `catch` that cleared credentials on ANY failure —
+     * so a dispatcher opening the app on a bad connection was logged out by
+     * the act of being offline, and then missed every alert until they noticed
+     * and signed in again. Losing signal is not a security event.
+     *
+     * api() already tries one transparent refresh on 401, so reaching the
+     * catch with 401/403 means the refresh itself was refused: the session is
+     * genuinely revoked, expired, or the account is no longer active. That is
+     * the ONLY case that clears anything.
+     */
     try {
         S.me = await api('/dispatcher/me');
-    } catch {
-        sessionStorage.clear();
-        showScreen('login');
+    } catch (err) {
+        const status = err?.status;
+
+        if (status === 401 || status === 403) {
+            // Genuinely no longer authorised — logout, suspension, credential
+            // reset, or a refresh token past its expiry.
+            KD_STORE.clear();
+            S.accessToken = ''; S.refreshToken = '';
+            showScreen('login');
+            $('login-error').textContent = 'Your session ended. Sign in again.';
+            $('login-error').classList.remove('hidden');
+            return;
+        }
+
+        // Offline, timeout, DNS, 5xx, mid-deploy 502 — the credentials are
+        // still good and are KEPT. Show that we are reconnecting rather than
+        // pretending the dispatcher has been signed out.
+        showReconnecting();
+        scheduleSessionRetry();
         return;
     }
+
+    /*
+     * Re-register push BEFORE the shift branch.
+     *
+     * This used to sit at the end of boot(), after the `onDuty` early return —
+     * so it only ever ran for a park dispatcher with an open shift. An
+     * Operations dispatcher has no park shift, took that early return every
+     * time, and never quietly re-registered. FCM tokens rotate, so the
+     * device's registration would go stale and alerts would stop arriving with
+     * nothing on screen to say so.
+     *
+     * Detached and swallowed: push is an aid, and a failure here must not stop
+     * the surface loading.
+     */
+    setUpPush({ interactive: false }).catch(() => {});
 
     if (!S.me.onDuty) { showShiftGate(); return; }
 
@@ -819,7 +978,9 @@ async function boot() {
         history.replaceState(null, '', location.pathname);
     }
 
-    // Re-register quietly: tokens rotate, and a shift binds the device to a park.
+    // Once more now the shift is known: a shift binds this device to a park,
+    // which the park-dispatch push audience keys on. Harmless for Operations,
+    // whose registration was already refreshed above.
     setUpPush({ interactive: false }).catch(() => {});
 }
 
@@ -1332,7 +1493,7 @@ async function refreshDashboard(initial = false) {
          * and it discards anything already typed.
          */
         if (err.status === 401) {
-            sessionStorage.clear();
+            KD_STORE.clear();
             S.accessToken = '';
             S.refreshToken = '';
             $('workspace').classList.add('hidden');
@@ -2039,7 +2200,7 @@ $('driver-search').addEventListener('input', (e) => {
 
 $('btn-sound').addEventListener('click', () => {
     S.soundOn = !S.soundOn;
-    sessionStorage.setItem('KD_SOUND', S.soundOn ? 'on' : 'off');
+    KD_STORE.set('KD_SOUND', S.soundOn ? 'on' : 'off');
     renderHeader();
     if (S.soundOn) chime();
 });

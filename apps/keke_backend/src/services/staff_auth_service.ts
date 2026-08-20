@@ -60,6 +60,20 @@ export const StaffAuthConfig = {
     get accessTokenMinutes(): number { return num('STAFF_ACCESS_TOKEN_MINUTES', 60); },
     /** One working day. A staff member signs in once per shift, not per hour. */
     get refreshTokenHours(): number { return num('STAFF_REFRESH_TOKEN_HOURS', 12); },
+    /**
+     * Operations Dispatch runs on a dedicated device that must stay
+     * operational across days, not shifts. Twelve hours is right for a shared
+     * park tablet passed between people at shift change; it is wrong for the
+     * one phone that receives every ride alert in the city, where being signed
+     * out overnight means missing requests before anyone notices.
+     *
+     * Raised for that role only. A park dispatcher's session is unchanged.
+     *
+     * This is still a REVOCABLE server-side session, not a long-lived token:
+     * suspension, credential reset and explicit logout all kill it instantly
+     * (see refresh(), which re-checks status and credentialVersion every time).
+     */
+    get operationsSessionHours(): number { return num('STAFF_OPERATIONS_SESSION_HOURS', 720); },
     get maxFailedLogins(): number { return num('STAFF_MAX_FAILED_LOGINS', 5); },
     get lockoutMinutes(): number { return num('STAFF_LOCKOUT_MINUTES', 15); },
     /** Invitation / reset links. Long enough to reach a person, short enough to matter. */
@@ -344,6 +358,21 @@ export class StaffAuthService {
         await repo.save(staff);
     }
 
+
+    /**
+     * How long this person's session should live, from their roles.
+     *
+     * Applied at login AND on every refresh, so a session's window is derived
+     * from current roles rather than frozen at sign-in — losing the Operations
+     * role shortens the session on its next refresh rather than leaving a
+     * month-long session behind.
+     */
+    static sessionHoursFor(roles: StaffRole[]): number {
+        return roles.includes(StaffRole.OPERATIONS_DISPATCHER)
+            ? StaffAuthConfig.operationsSessionHours
+            : StaffAuthConfig.refreshTokenHours;
+    }
+
     static async openSession(
         staff: StaffUser,
         ctx: { ipAddress: string | null; userAgent: string | null; deviceId: string | null },
@@ -356,7 +385,9 @@ export class StaffAuthService {
             refreshTokenHash: this.hashOpaqueToken(refreshToken),
             credentialVersion: staff.credentialVersion,
             deviceId: ctx.deviceId,
-            expiresAt: new Date(Date.now() + StaffAuthConfig.refreshTokenHours * 3600_000),
+            expiresAt: new Date(
+                Date.now() + this.sessionHoursFor(await this.loadRoles(staff.id)) * 3600_000,
+            ),
             ipAddress: ctx.ipAddress,
             userAgent: ctx.userAgent ? ctx.userAgent.slice(0, 300) : null,
         }));
@@ -393,7 +424,9 @@ export class StaffAuthService {
         const nextRefresh = this.generateRefreshToken();
         session.refreshTokenHash = this.hashOpaqueToken(nextRefresh);
         session.lastUsedAt = new Date();
-        session.expiresAt = new Date(Date.now() + StaffAuthConfig.refreshTokenHours * 3600_000);
+        session.expiresAt = new Date(
+            Date.now() + this.sessionHoursFor(await this.loadRoles(staff.id)) * 3600_000,
+        );
         await sessionRepo.save(session);
 
         return {

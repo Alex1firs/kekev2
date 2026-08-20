@@ -665,3 +665,94 @@ describe('Operations rings with the Driver app\'s own ride-request sound', () =>
         expect(driverSound).toContain('ReleaseMode.loop');
     });
 });
+
+// ══════════════════════════════════════════════════════════════════════
+//  Session persistence
+// ══════════════════════════════════════════════════════════════════════
+
+describe('an Operations session survives the phone', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const app = () => fs.readFileSync(
+        path.join(__dirname, '../../../keke_dispatcher/app.js'), 'utf8');
+
+    it('stores credentials somewhere that outlives the process', () => {
+        // sessionStorage was the bug. It is scoped to the browsing CONTEXT,
+        // and swiping an installed PWA from Android recents destroys that
+        // context — so the dispatcher was signed out by closing the app, and
+        // received no alerts until they noticed.
+        const s = app();
+        expect(s).toContain("localStorage.getItem(key)");
+        expect(s).not.toContain("accessToken: sessionStorage.getItem('KD_TOKEN')");
+        expect(s).not.toContain("sessionStorage.setItem('KD_TOKEN'");
+    });
+
+    it('migrates a session that was already signed in', () => {
+        // Otherwise the fix itself logs everybody out once.
+        expect(app()).toContain('sessionStorage.getItem(key)');
+    });
+
+    it('does NOT clear credentials when the server is unreachable', () => {
+        // The second bug: a bare catch cleared on any failure, so losing
+        // signal logged the dispatcher out. Losing signal is not a security
+        // event.
+        const s = app();
+        expect(s).not.toMatch(/S\.me = await api\('\/dispatcher\/me'\);\s*\}\s*catch\s*\{\s*sessionStorage\.clear\(\)/);
+        expect(s).toContain('showReconnecting()');
+        expect(s).toContain('scheduleSessionRetry()');
+    });
+
+    it('clears ONLY on a genuine authorisation refusal', () => {
+        const s = app();
+        expect(s).toContain('if (status === 401 || status === 403)');
+        expect(s).toContain('Reconnecting to KekeRide Operations…');
+    });
+
+    it('retries with backoff and on regaining connectivity', () => {
+        const s = app();
+        expect(s).toContain("addEventListener('online'");
+        expect(s).toContain('Math.min(sessionRetryDelay * 2, 30000)');
+    });
+
+    it('re-registers push before the shift branch, not after', () => {
+        // setUpPush sat after the `onDuty` early return, so an Operations
+        // dispatcher — who has no park shift — never re-registered. FCM tokens
+        // rotate, so alerts would quietly stop arriving.
+        const s = app();
+        const pushIdx = s.indexOf("setUpPush({ interactive: false })");
+        const shiftIdx = s.indexOf('if (!S.me.onDuty) { showShiftGate(); return; }');
+        expect(pushIdx).toBeGreaterThan(-1);
+        expect(shiftIdx).toBeGreaterThan(-1);
+        expect(pushIdx).toBeLessThan(shiftIdx);
+    });
+});
+
+describe('the staff session TTL is role-aware', () => {
+    const { StaffAuthService, StaffAuthConfig } = require('../../src/services/staff_auth_service');
+    const { StaffRole } = require('../../src/config/staff_permissions');
+
+    it('gives the Operations device a session measured in weeks', () => {
+        // A dedicated phone that must stay operational across days, not the
+        // shared park tablet the 12-hour default was written for.
+        const hours = StaffAuthService.sessionHoursFor([StaffRole.OPERATIONS_DISPATCHER]);
+        expect(hours).toBe(720);
+        expect(hours / 24).toBe(30);
+    });
+
+    it('leaves a park dispatcher on the existing one-shift session', () => {
+        expect(StaffAuthService.sessionHoursFor([StaffRole.PARK_DISPATCHER]))
+            .toBe(StaffAuthConfig.refreshTokenHours);
+        expect(StaffAuthConfig.refreshTokenHours).toBe(12);
+    });
+
+    it('applies the longer window when Operations is one of several roles', () => {
+        expect(StaffAuthService.sessionHoursFor(
+            [StaffRole.SUPPORT_OFFICER, StaffRole.OPERATIONS_DISPATCHER])).toBe(720);
+    });
+
+    it('keeps the access token short-lived — this is not a long-lived JWT', () => {
+        // The session is durable; the bearer token is not. Revocation still
+        // bites within an access-token lifetime at worst.
+        expect(StaffAuthConfig.accessTokenMinutes).toBe(60);
+    });
+});

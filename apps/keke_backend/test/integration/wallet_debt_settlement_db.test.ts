@@ -267,3 +267,24 @@ describeDb('driver wallet — debt settlement (database)', () => {
         expect(await read(d)).toEqual({ available: 1000, debt: 0 });
     });
 });
+
+// ══════════════════════════════════════════════════════════════════════
+//  Commission rule, recovery, and quarantine
+// ══════════════════════════════════════════════════════════════════════
+
+describeDb('commission, recovery and quarantine (database)', () => {
+    it('commission is a 10% MARKUP ON NET, not 10% of gross', () => {
+        // platformFeePercent = 10 means driverNet = fare / 1.1, so the
+        // commission is 9.0909% of the gross fare. Reading it as 10% of gross
+        // overstates every figure derived from it — which is exactly what my
+        // own reconciliation script did, inflating the 99-ride exposure by
+        // ₦8,031.38.
+        const fare = 3033;
+        const net = Math.round((fare / 1.1) * 100) / 100;
+        const commission = Math.round((fare - net) * 100) / 100;
+        expect(net).toBe(2757.27);
+        expect(commission).toBe(275.73);          // matches production exactly
+        expect(commission / fare).toBeCloseTo(0.090909, 5);
+        expect(commission).not.toBe(fare * 0.10);
+    });
+});

@@ -87,7 +87,7 @@ async function main(): Promise<void> {
     problems += dupTopup.length;
 
     section('Rides vs commission');
-    const [missing] = await q(`SELECT COUNT(*) c, COALESCE(ROUND(SUM(COALESCE("finalFare",fare))*0.10,2),0) v
+    const [missing] = await q(`SELECT COUNT(*) c, COALESCE(ROUND(SUM(COALESCE("finalFare",fare) - COALESCE("finalFare",fare)/1.1),2),0) v
         FROM ride r WHERE r.status='completed' AND r."paymentMode"='cash'
           AND COALESCE(r."paymentHeld",false)=false
           AND NOT EXISTS (SELECT 1 FROM ledger_entry le WHERE le.metadata->>'rideId'=r."rideId")`);

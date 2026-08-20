@@ -185,6 +185,47 @@ export class Ride {
     @Column({ type: "varchar", length: 120, nullable: true })
     cancellationReason!: string | null;
 
+    /**
+     * A completed ride whose money was never posted and which has been
+     * deliberately EXCLUDED from automatic recovery.
+     *
+     * The 99 rides from 19 Jul – 12 Aug 2026 are quarantined here. Their
+     * original cause could not be established, they average roughly three
+     * times a normal fare, all are already flagged suspicious, and charging
+     * ~₦80k retrospectively across 46 active drivers is a commercial decision
+     * rather than a technical one.
+     *
+     * Quarantine means: preserved exactly as they are, reviewable one at a
+     * time by finance, and never picked up by the automatic retry worker.
+     * Nothing about the fare, the suspicious flag or the ride record is
+     * altered by setting it.
+     */
+    @Index()
+    @Column({ default: false })
+    financialQuarantine!: boolean;
+
+    /** Why it was quarantined. Stable code, set once. */
+    @Column({ type: "varchar", length: 64, nullable: true })
+    financialQuarantineReason!: string | null;
+
+    @Column({ type: "timestamp", nullable: true })
+    financialQuarantinedAt!: Date | null;
+
+    /**
+     * How many times automatic recovery has tried to post this ride's money,
+     * and when it may next try. A transient database blip must not cost
+     * KekeRide its commission, but nor should a permanently broken ride be
+     * retried forever.
+     */
+    @Column({ type: "int", default: 0 })
+    financialRetryCount!: number;
+
+    @Column({ type: "timestamp", nullable: true })
+    financialNextRetryAt!: Date | null;
+
+    @Column({ type: "varchar", length: 300, nullable: true })
+    financialLastError!: string | null;
+
     // --- Structured locality, captured at request time -----------------
     // The address strings above are whatever Google returned to the handset,
     // and are frequently unusable: plus codes, "Location selected", or a

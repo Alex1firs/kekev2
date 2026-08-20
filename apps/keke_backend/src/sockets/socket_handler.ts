@@ -2788,7 +2788,15 @@ export class SocketHandler {
                 paymentSucceeded = true;
             } catch (e: any) {
                 log.error(JSON.stringify({ level: 'error', event: 'payment_failed', rideId, error: e.message }));
-                await rideRepo.update(rideId, { paymentFailed: true } as any);
+                // Schedule automatic recovery rather than leaving the flag for
+                // somebody to notice. A transient database or network problem
+                // must not permanently cost KekeRide its commission — which is
+                // exactly what happened to 99 rides over a month.
+                await rideRepo.update(rideId, {
+                    paymentFailed: true,
+                    financialLastError: String(e?.message ?? 'unknown').slice(0, 300),
+                    financialNextRetryAt: new Date(Date.now() + 60_000),
+                } as any);
                 this.io.to('admin').emit('ride:payment_failed', { rideId, error: e.message });
             }
         }

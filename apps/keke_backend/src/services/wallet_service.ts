@@ -432,6 +432,17 @@ export class WalletService {
         if (!ride.driverId) {
             return { ok: false, code: 'NO_DRIVER', message: 'This ride has no driver to charge.' };
         }
+        // Quarantined rides are excluded from BOTH automatic recovery and the
+        // ordinary Retry button. Charging one is a deliberate finance decision
+        // and needs the explicit release path, not a button that looks the
+        // same as every other retry.
+        if (ride.financialQuarantine) {
+            return {
+                ok: false,
+                code: 'QUARANTINED',
+                message: 'Historical exception — financial posting not applied. Release it from quarantine first.',
+            };
+        }
 
         // THE idempotency guard. Anything already in the ledger for this ride
         // means the money has been posted, whatever the flag says.
@@ -490,15 +501,19 @@ export class WalletService {
         return AppDataSource.query(
             `SELECT r."rideId", r."completedAt", r."driverId", r."paymentMode",
                     COALESCE(r."finalFare", r.fare) AS fare,
-                    ROUND(COALESCE(r."finalFare", r.fare) * 0.10, 2) AS commission,
+                    ROUND(ROUND(COALESCE(r."finalFare", r.fare) - COALESCE(r."finalFare", r.fare) / 1.1, 2), 2) AS commission,
                     COALESCE(r."paymentFailed", false) AS "paymentFailed",
                     COALESCE(r."paymentHeld", false) AS "paymentHeld",
+                    COALESCE(r."financialQuarantine", false) AS "quarantined",
+                    r."financialQuarantineReason" AS "quarantineReason",
+                    COALESCE(r."financialRetryCount", 0) AS "retryCount",
+                    r."financialLastError" AS "lastError",
                     r."reviewReason"
                FROM ride r
               WHERE r.status = 'completed'
                 AND (COALESCE(r."paymentFailed", false) = true OR COALESCE(r."paymentHeld", false) = true)
                 AND NOT EXISTS (SELECT 1 FROM ledger_entry le WHERE le.metadata->>'rideId' = r."rideId")
-              ORDER BY r."completedAt" DESC
+              ORDER BY COALESCE(r."financialQuarantine", false) ASC, r."completedAt" DESC
               LIMIT $1`,
             [Math.min(limit, 500)],
         );

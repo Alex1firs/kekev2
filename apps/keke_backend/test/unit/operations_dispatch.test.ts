@@ -756,3 +756,63 @@ describe('the staff session TTL is role-aware', () => {
         expect(StaffAuthConfig.accessTokenMinutes).toBe(60);
     });
 });
+
+// ══════════════════════════════════════════════════════════════════════
+//  Financial recovery: bounded, idempotent, and blind to quarantine
+// ══════════════════════════════════════════════════════════════════════
+
+describe('automatic financial recovery', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const worker = () => fs.readFileSync(
+        path.join(__dirname, '../../src/services/financial_recovery_worker.ts'), 'utf8');
+    const svc = () => fs.readFileSync(
+        path.join(__dirname, '../../src/services/wallet_service.ts'), 'utf8');
+
+    it('never touches a quarantined ride', () => {
+        // The 99 historical failures are quarantined precisely so that turning
+        // recovery on cannot silently post ~₦80k across 46 drivers who have
+        // spent a month believing they owed nothing.
+        expect(worker()).toContain('COALESCE(r."financialQuarantine", false) = false');
+        expect(svc()).toContain("code: 'QUARANTINED'");
+    });
+
+    it('is bounded — it escalates instead of retrying forever', () => {
+        const w = worker();
+        expect(w).toContain('MAX_ATTEMPTS');
+        expect(w).toContain('escalated_to_exceptions');
+        expect(w).toMatch(/backoffMs|Math\.pow/);
+    });
+
+    it('treats ALREADY_POSTED as success, not as a failure to retry', () => {
+        // The money is there, which is the outcome wanted. Retrying it would
+        // burn attempts and eventually escalate a ride that is actually fine.
+        expect(worker()).toContain("(result as any).code === 'ALREADY_POSTED'");
+    });
+
+    it('stops immediately on a refusal that can never succeed', () => {
+        // No driver, no fare, not completed — burning five attempts on a
+        // structurally impossible posting helps nobody.
+        expect(worker()).toContain('financialRetryCount: MAX_ATTEMPTS');
+    });
+
+    it('guards idempotency on the LEDGER, not on the flag', () => {
+        const s = svc();
+        expect(s).toContain("le.metadata->>'rideId' = :rideId");
+        expect(s).toContain("code: 'ALREADY_POSTED'");
+    });
+
+    it('a completion failure schedules its own retry', () => {
+        const handler = fs.readFileSync(
+            path.join(__dirname, '../../src/sockets/socket_handler.ts'), 'utf8');
+        expect(handler).toContain('financialNextRetryAt: new Date(Date.now() + 60_000)');
+    });
+
+    it('the quarantine migration marks, and never charges', () => {
+        const mig = fs.readFileSync(
+            path.join(__dirname, '../../src/migrations/1806000000000-FinancialRecovery.ts'), 'utf8');
+        expect(mig).toContain('"financialQuarantine" = true');
+        // No balance, debt or ledger write anywhere in it.
+        expect(mig).not.toMatch(/driverCommissionDebt|driverAvailableBalance|INSERT INTO "ledger_entry"/);
+    });
+});

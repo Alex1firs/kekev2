@@ -24,6 +24,7 @@ import passengerRoutes from "./routes/passenger_routes";
 import { NotificationService } from './services/notification_service';
 import { StaleRideSweeper } from './services/stale_ride_sweeper';
 import { OperationsControlSweeper } from './services/operations_control_sweeper';
+import { FinancialRecoveryWorker } from './services/financial_recovery_worker';
 import { ParkJobSweeper } from './services/park_job_sweeper';
 import { redis } from './config/redis';
 import publicCommsRoutes from "./routes/public_comms_routes";
@@ -380,6 +381,7 @@ AppDataSource.initialize()
     try {
       StaleRideSweeper.start();
       OperationsControlSweeper.start();
+      FinancialRecoveryWorker.start();
     } catch (e: any) {
       console.error(JSON.stringify({ level: 'error', message: 'Failed to start stale-ride sweeper', error: e.message }));
     }
@@ -433,6 +435,7 @@ AppDataSource.initialize()
           // cannot query a destroyed connection during a deploy.
           StaleRideSweeper.stop();
           OperationsControlSweeper.stop();
+          FinancialRecoveryWorker.stop();
           await AppDataSource.destroy();
           redis.disconnect();
         } catch (e) {}

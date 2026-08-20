@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:dio/dio.dart' as dio;
 import '../../auth/application/auth_controller.dart';
@@ -10,7 +11,8 @@ import '../../../core/network/socket_service.dart';
 import '../../../core/network/socket_provider.dart';
 import 'package:jwt_decoder/jwt_decoder.dart';
 
-class DriverFinanceController extends StateNotifier<DriverFinanceState> {
+class DriverFinanceController extends StateNotifier<DriverFinanceState>
+    with WidgetsBindingObserver {
   final ApiClient _apiClient;
   final String _userId;
 
@@ -21,6 +23,7 @@ class DriverFinanceController extends StateNotifier<DriverFinanceState> {
     if (_userId != 'guest' && _userId != 'error') {
       _loadData();
       _listenForWalletChanges(socket);
+      WidgetsBinding.instance.addObserver(this);
     } else {
       state = DriverFinanceState();
     }
@@ -56,8 +59,25 @@ class DriverFinanceController extends StateNotifier<DriverFinanceState> {
     });
   }
 
+  /// Refetch on resume, rather than trusting that an event arrived.
+  ///
+  /// Android drops the socket while backgrounded, so a commission charged or a
+  /// top-up applied during that time produces a `wallet:updated` nobody is
+  /// listening for. Coming back to a screen showing money that is no longer
+  /// correct is the failure this exists to prevent.
+  ///
+  /// The event is an accelerator; the endpoint is the source of truth. This is
+  /// what makes a missed event self-correcting rather than permanent.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState lifecycleState) {
+    if (lifecycleState == AppLifecycleState.resumed && mounted) {
+      _loadData();
+    }
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _walletSub?.cancel();
     super.dispose();
   }

@@ -64,13 +64,25 @@ async function main(): Promise<void> {
     const dupTopup = await q(`SELECT metadata->>'reference' r, COUNT(*) c FROM ledger_entry
         WHERE "transactionType"='topup' AND metadata->>'reference' IS NOT NULL
         GROUP BY 1 HAVING COUNT(*)>1`);
-    const dupComm = await q(`SELECT metadata->>'rideId' r, COUNT(*) c FROM ledger_entry
+    /*
+     * A single commission can legitimately produce TWO commission_charge rows:
+     * one debiting driver_available for what the balance could cover, and one
+     * adding the shortfall to driver_commission_debt. They are two legs of one
+     * charge, not two charges.
+     *
+     * Counting rows per ride reported RIDE-1783964367780 as double-charged
+     * when it was correctly split ₦111.07 from balance + ₦74.02 to debt. A
+     * reconciliation tool that cries wolf is worse than none, so this counts
+     * charges per (ride, balanceType).
+     */
+    const dupComm = await q(`SELECT metadata->>'rideId' r, "balanceType" bt, COUNT(*) c
+        FROM ledger_entry
         WHERE "transactionType"='commission_charge' AND metadata->>'rideId' IS NOT NULL
-        GROUP BY 1 HAVING COUNT(*)>1`);
+        GROUP BY 1,2 HAVING COUNT(*)>1`);
     console.log(dupTopup.length ? `  ✗ ${dupTopup.length} reference(s) credited more than once` : '  ✓ no duplicate funding');
     if (dupComm.length) { problems += dupComm.length;
         console.log(`  ✗ ${dupComm.length} ride(s) charged commission more than once:`);
-        for (const d of dupComm) console.log(`      ride ${d.r} × ${d.c}`);
+        for (const d of dupComm) console.log(`      ride ${d.r} (${d.bt}) × ${d.c}`);
     } else console.log('  ✓ no duplicate commission');
     problems += dupTopup.length;
 

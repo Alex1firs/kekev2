@@ -186,6 +186,37 @@ export class Ride {
     cancellationReason!: string | null;
 
     /**
+     * An admin dismissed this ride as non-collectible.
+     *
+     * Used for field-training and demo rides: a request is made, a driver
+     * accepts, starts and ends it, but no genuine passenger journey happened,
+     * so it must generate no earnings, no commission and no debt.
+     *
+     * ── Why this is a column and not just an audit row ───────────────────
+     * Voiding used to leave NO state on the ride at all — only a
+     * VOIDED_HELD_RIDE_PAYMENT row in audit_log — and it set
+     * `paymentFailed = true`. Nothing downstream could tell a voided ride
+     * apart from one whose posting genuinely failed, because on the ride row
+     * they were identical. The automatic recovery worker selects on exactly
+     * that flag, so it would have charged drivers for training rides.
+     *
+     * A void is a financial decision about the ride. It belongs on the ride.
+     */
+    @Index()
+    @Column({ default: false })
+    voided!: boolean;
+
+    @Column({ type: "timestamp", nullable: true })
+    voidedAt!: Date | null;
+
+    @Column({ type: "varchar", length: 200, nullable: true })
+    voidedReason!: string | null;
+
+    /** Who voided it. Attributable, like every other money decision. */
+    @Column({ type: "varchar", length: 160, nullable: true })
+    voidedBy!: string | null;
+
+    /**
      * A completed ride whose money was never posted and which has been
      * deliberately EXCLUDED from automatic recovery.
      *

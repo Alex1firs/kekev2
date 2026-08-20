@@ -995,14 +995,48 @@ router.post("/rides/:rideId/void", async (req: Request, res: Response) => {
         const ride = await rideRepo.findOne({ where: { rideId } });
         if (!ride) return res.status(404).json({ error: "Ride not found" });
 
-        await rideRepo.update(rideId, { paymentHeld: false, paymentFailed: true } as any);
+        const reason: string = String(req.body?.reason ?? '').trim() || 'No reason given';
+
+        if (ride.voided) {
+            return res.json({
+                message: "This ride was already voided.", rideId, alreadyVoided: true,
+            });
+        }
+
+        // If money already posted for this ride, undo it with new opposite
+        // ledger entries before marking the ride void. History is appended
+        // to, never rewritten.
+        const reversal = await WalletService.reverseRideFinancials(rideId, reason);
+
+        // NOTE: this deliberately does NOT set paymentFailed. Void used to,
+        // and that made a voided training ride indistinguishable from a ride
+        // whose posting genuinely failed — the automatic recovery worker
+        // selects on exactly that flag and would have charged the driver.
+        // A void is its own state.
+        await rideRepo.update(rideId, {
+            paymentHeld: false,
+            voided: true,
+            voidedAt: new Date(),
+            voidedReason: reason.slice(0, 200),
+            voidedBy: legacyAuditActor(req as AdminRequest),
+        } as any);
 
         const adminId = legacyAuditActor(req as AdminRequest);
         await AppDataSource.getRepository(AuditLog).save(AppDataSource.getRepository(AuditLog).create({
             adminId, action: "VOIDED_HELD_RIDE_PAYMENT", entityType: "RIDE", entityId: rideId,
-            details: { reason: (req.body?.reason ?? null), suspiciousReason: ride.suspiciousReason },
+            details: {
+                reason,
+                suspiciousReason: ride.suspiciousReason,
+                reversal: { reversed: reversal.reversed, entries: reversal.entries, detail: reversal.detail },
+            },
         }));
-        res.json({ message: "Held payment voided — passenger not charged.", rideId });
+        res.json({
+            message: reversal.reversed
+                ? `Ride voided. ${reversal.detail}`
+                : "Ride voided — no commission, no earnings, no debt.",
+            rideId,
+            reversal,
+        });
     } catch (err: any) {
         res.status(500).json({ error: err.message });
     }

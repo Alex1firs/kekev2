@@ -636,9 +636,22 @@ window.releaseRide = async function(rideId) {
 };
 
 window.voidRide = async function(rideId) {
-    if (!confirm(`Void ${rideId}? The ride is dismissed with NO charge to the passenger and NO payout to the driver.`)) return;
+    // Ask why. The first hundred voids recorded no reason at all, so months
+    // later there was nothing on the record to distinguish a training ride
+    // from a fraud dismissal — the reason had to be reconstructed from fare
+    // shape and timing.
+    const reason = prompt(
+        `Void ${rideId}?\n\n`
+        + `The ride is dismissed with NO charge to the passenger, NO payout to `
+        + `the driver and NO commission to KekeRide. Any money already posted `
+        + `for it is reversed.\n\n`
+        + `Why is this ride being voided?`,
+        'Field-training ride — not a genuine passenger journey');
+    if (reason === null) return;                       // cancelled
+    if (!reason.trim()) { alert('A reason is required.'); return; }
     try {
-        await adminFetch(`/rides/${rideId}/void`, 'POST');
+        const r = await adminFetch(`/rides/${rideId}/void`, 'POST', { reason: reason.trim() });
+        if (typeof showToast === 'function') showToast(r?.message || 'Ride voided.', 'success');
         fetchHeldRides();
     } catch (e) { alert('Void failed: ' + (e?.message || 'error')); }
 };
@@ -693,6 +706,16 @@ function roOutcomeBadge(row) {
         intentional: 'ro-b-cancel',
         unknown: 'ro-b-unknown',
     }[row.outcomeClass] || 'ro-b-unknown';
+
+    // A voided ride completed, but an admin decided it earns nothing —
+    // a training run, a demo, a disputed trip. Showing it as a plain
+    // COMPLETED invites someone to treat it as collectible revenue.
+    if (row.voided) {
+        return `<span class="ro-badge ro-b-void" title="${escapeHtml(row.voidedReason || 'No reason recorded')}">
+                    <strong>VOIDED</strong>
+                    <span class="ro-badge-sep">·</span>No charge
+                </span>`;
+    }
 
     const status = String(row.status || '').toUpperCase().replace('CANCELED', 'CANCELLED');
     // Live rides have no outcome yet — that is not the same as an unrecorded

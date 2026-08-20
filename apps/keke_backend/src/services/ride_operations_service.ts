@@ -72,6 +72,9 @@ export interface RideOperationsRow {
     outcomeLabel: string;
     outcomeClass: string;
     outcomeRecorded: boolean;
+    /** An admin dismissed this ride as non-collectible (training, demo, dispute). */
+    voided: boolean;
+    voidedReason: string | null;
     cancelledByRole: string | null;
     passenger: { id: string; name: string; phoneMasked: string | null } | null;
     driver: { id: string; name: string; phoneMasked: string | null } | null;
@@ -242,6 +245,8 @@ export class RideOperationsService {
                 // Lets the UI style "we never recorded this" differently from a
                 // known outcome, instead of showing an em dash for both.
                 outcomeRecorded: r.outcomeReason != null,
+                voided: r.voided === true,
+                voidedReason: r.voidedReason ?? null,
                 cancelledByRole: r.cancelledByRole ?? null,
                 passenger: p
                     ? {

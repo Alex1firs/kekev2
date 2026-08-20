@@ -639,6 +639,16 @@ export class DispatchMonitorQueryService {
                 outcomeClass: classifyOutcome(ride.outcomeReason as RideOutcomeCode | null),
                 outcomeRecorded: ride.outcomeReason != null,
                 outcomeDetail: ride.outcomeDetail ?? null,
+
+                // A voided ride completed but earns nothing — a training run,
+                // a demo, a disputed trip. Without this the investigation view
+                // shows a normal COMPLETED ride with a fare, and someone
+                // reasonably concludes commission is owed on it.
+                voided: ride.voided === true,
+                voidedReason: ride.voidedReason ?? null,
+                voidedAt: ride.voidedAt ? new Date(ride.voidedAt).toISOString() : null,
+                voidedBy: ride.voidedBy ?? null,
+
                 cancelledByRole: ride.cancelledByRole ?? null,
                 cancellationReason: ride.cancellationReason ?? null,
 

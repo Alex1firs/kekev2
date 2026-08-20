@@ -436,6 +436,16 @@ export class WalletService {
         // ordinary Retry button. Charging one is a deliberate finance decision
         // and needs the explicit release path, not a button that looks the
         // same as every other retry.
+        // A voided ride is not a failure to recover from — it is a decision
+        // that no money is owed. Training and demo rides live here, and
+        // charging a driver for one would be charging them for being taught.
+        if (ride.voided) {
+            return {
+                ok: false,
+                code: 'VOIDED',
+                message: 'This ride was voided — no commission is due.',
+            };
+        }
         if (ride.financialQuarantine) {
             return {
                 ok: false,
@@ -511,6 +521,7 @@ export class WalletService {
                     r."reviewReason"
                FROM ride r
               WHERE r.status = 'completed'
+                AND COALESCE(r."voided", false) = false
                 AND (COALESCE(r."paymentFailed", false) = true OR COALESCE(r."paymentHeld", false) = true)
                 AND NOT EXISTS (SELECT 1 FROM ledger_entry le WHERE le.metadata->>'rideId' = r."rideId")
               ORDER BY COALESCE(r."financialQuarantine", false) ASC, r."completedAt" DESC
@@ -532,6 +543,114 @@ export class WalletService {
      *   2. Credit driver 90% net.
      *   3. Apply debt recovery from those earnings if driver has outstanding debt.
      */
+    /**
+     * Reverse every financial effect a ride had, using new opposite ledger
+     * entries. Nothing is ever deleted or edited.
+     *
+     * Called when an admin voids a ride whose money had already posted —
+     * a field-training ride the driver had already been charged commission
+     * for, say. The driver gets their money back and the history stays
+     * readable: you can see the charge, and you can see the reversal.
+     *
+     * Idempotent. A second call finds its own reversal entries and stops.
+     */
+    static async reverseRideFinancials(
+        rideId: string,
+        reason: string,
+    ): Promise<{ reversed: boolean; entries: number; detail: string }> {
+        return AppDataSource.transaction(async (manager) => {
+            // Match on the jsonb key, not on the whole object: TypeORM's
+            // `where: { metadata: { rideId } }` compiles to an equality test
+            // against the entire JSON document, so it matches nothing once the
+            // entry carries any other metadata — which every real entry does.
+            const existing: LedgerEntry[] = await manager
+                .createQueryBuilder(LedgerEntry, 'le')
+                .where(`le.metadata->>'rideId' = :rideId`, { rideId })
+                .orderBy('le.createdAt', 'ASC')
+                .getMany();
+
+            if (existing.length === 0) {
+                return { reversed: false, entries: 0, detail: 'No financial entries existed for this ride.' };
+            }
+            if (existing.some((e) => (e.metadata as any)?.reversalOf)) {
+                return { reversed: false, entries: 0, detail: 'Already reversed.' };
+            }
+
+            // Net effect per wallet + balance type. Informational rows
+            // (balanceBefore == balanceAfter) moved no money, so they
+            // contribute nothing to reverse.
+            const net = new Map<string, { walletId: string; balanceType: BalanceType; delta: number }>();
+            for (const e of existing) {
+                const before = Number(e.balanceBefore);
+                const after = Number(e.balanceAfter);
+                const delta = Math.round((after - before) * 100) / 100;
+                if (delta === 0) continue;
+                const key = `${e.walletId}::${e.balanceType}`;
+                const cur = net.get(key) ?? { walletId: e.walletId, balanceType: e.balanceType, delta: 0 };
+                cur.delta = Math.round((cur.delta + delta) * 100) / 100;
+                net.set(key, cur);
+            }
+
+            const FIELD: Record<string, keyof Wallet> = {
+                [BalanceType.PASSENGER]: 'passengerBalance',
+                [BalanceType.DRIVER_AVAILABLE]: 'driverAvailableBalance',
+                [BalanceType.DRIVER_PENDING]: 'driverPendingBalance',
+                [BalanceType.DRIVER_COMMISSION_DEBT]: 'driverCommissionDebt',
+            };
+
+            let written = 0;
+            for (const { walletId, balanceType, delta } of net.values()) {
+                if (delta === 0) continue;
+                const field = FIELD[balanceType];
+                // PLATFORM_REVENUE has no wallet row — record the reversal for
+                // the audit trail without a balance to move.
+                if (!field) {
+                    await manager.save(manager.create(LedgerEntry, {
+                        walletId,
+                        balanceType,
+                        transactionType: TransactionType.REFUND,
+                        amount: -delta,
+                        balanceBefore: 0,
+                        balanceAfter: 0,
+                        metadata: { rideId, reversalOf: rideId, reason, note: 'Ride voided — platform revenue reversed' },
+                    }));
+                    written++;
+                    continue;
+                }
+
+                const wallet = await manager.findOne(Wallet, {
+                    where: { userId: walletId },
+                    lock: { mode: 'pessimistic_write' },
+                });
+                if (!wallet) continue;
+
+                const before = Number(wallet[field] as any);
+                const after = Math.round((before - delta) * 100) / 100;
+                (wallet as any)[field] = after;
+                await manager.save(wallet);
+                await manager.save(manager.create(LedgerEntry, {
+                    walletId,
+                    balanceType,
+                    transactionType: TransactionType.REFUND,
+                    amount: -delta,
+                    balanceBefore: before,
+                    balanceAfter: after,
+                    metadata: { rideId, reversalOf: rideId, reason, note: 'Ride voided — financial effect reversed' },
+                }));
+                written++;
+            }
+
+            return {
+                reversed: written > 0,
+                entries: written,
+                detail: written > 0
+                    ? `Reversed ${written} balance effect(s) with new ledger entries.`
+                    : 'Ride had only informational entries — no balances to reverse.',
+            };
+        });
+    }
+
+
     static async postRideFinancials(data: {
         rideId: string;
         passengerId: string;

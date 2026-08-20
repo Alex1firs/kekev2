@@ -54,6 +54,34 @@ export class FinancialRecoveryWorker {
         this.timer = null;
     }
 
+    /**
+     * The rides this worker is allowed to charge for.
+     *
+     * Public so the exclusions can be tested directly rather than inferred
+     * from what tick() happened to do — the voided-ride exclusion in
+     * particular is the difference between charging a driver for a training
+     * ride and not.
+     */
+    static async findDue(limit = BATCH): Promise<Ride[]> {
+        return AppDataSource.getRepository(Ride)
+            .createQueryBuilder('r')
+            .where(`r.status = 'completed'`)
+            .andWhere(`COALESCE(r."paymentFailed", false) = true`)
+            // A voided ride generates no commission by definition. Void
+            // sets paymentFailed = true, which is exactly what this query
+            // selects on — without this clause the worker would charge
+            // drivers for field-training rides an admin had deliberately
+            // dismissed.
+            .andWhere(`COALESCE(r."voided", false) = false`)
+            // The historical dataset is deliberately untouchable here.
+            .andWhere(`COALESCE(r."financialQuarantine", false) = false`)
+            .andWhere(`COALESCE(r."financialRetryCount", 0) < :max`, { max: MAX_ATTEMPTS })
+            .andWhere(`r."financialNextRetryAt" IS NOT NULL AND r."financialNextRetryAt" <= now()`)
+            .orderBy('r."financialNextRetryAt"', 'ASC')
+            .limit(limit)
+            .getMany();
+    }
+
     static async tick(): Promise<{ attempted: number; recovered: number; exhausted: number }> {
         if (this.running) return { attempted: 0, recovered: 0, exhausted: 0 };
         this.running = true;
@@ -61,17 +89,7 @@ export class FinancialRecoveryWorker {
 
         try {
             const repo = AppDataSource.getRepository(Ride);
-            const due = await repo
-                .createQueryBuilder('r')
-                .where(`r.status = 'completed'`)
-                .andWhere(`COALESCE(r."paymentFailed", false) = true`)
-                // The historical dataset is deliberately untouchable here.
-                .andWhere(`COALESCE(r."financialQuarantine", false) = false`)
-                .andWhere(`COALESCE(r."financialRetryCount", 0) < :max`, { max: MAX_ATTEMPTS })
-                .andWhere(`r."financialNextRetryAt" IS NOT NULL AND r."financialNextRetryAt" <= now()`)
-                .orderBy('r."financialNextRetryAt"', 'ASC')
-                .limit(BATCH)
-                .getMany();
+            const due = await this.findDue(BATCH);
 
             for (const ride of due) {
                 out.attempted += 1;

@@ -2148,6 +2148,10 @@ body.authenticated .admin-container { display: flex; }
 .ro-b-cancel    { background: rgba(148, 163, 184, 0.12); color: #cbd5e1; border-color: rgba(148, 163, 184, 0.3); }
 /* Deliberately muted: "we never recorded this" must not look like a finding. */
 .ro-b-unknown   { background: transparent; color: var(--text-secondary); border-color: var(--border-color); border-style: dashed; }
+/* Voided: struck out, not coloured like a failure. Nothing went wrong —
+   somebody decided this ride does not count. */
+.ro-b-void      { background: transparent; color: var(--text-secondary); border-color: var(--border-color);
+                  text-decoration: line-through; text-decoration-thickness: 1px; opacity: .85; }
 .ro-b-live      { background: rgba(255, 204, 0, 0.12); color: var(--accent-amber); border-color: rgba(255, 204, 0, 0.3); }
 .ro-tel-off     { background: rgba(244, 63, 94, 0.15) !important; color: #fb7185 !important; }
 

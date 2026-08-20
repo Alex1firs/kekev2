@@ -32,8 +32,20 @@ describeDb('driver wallet — debt settlement (database)', () => {
     let seq = 0;
 
     beforeAll(async () => {
+        // Own schema: concurrent synchronize() on `public` from two suites
+        // races on enum-type creation.
+        const bootstrap = new DataSource({ type: 'postgres', url: TEST_DB });
+        await bootstrap.initialize();
+        await bootstrap.query('CREATE SCHEMA IF NOT EXISTS wallet_debt_test');
+        await bootstrap.destroy();
+
         ds = new DataSource({
-            type: 'postgres', url: TEST_DB,
+            type: 'postgres', url: TEST_DB, schema: 'wallet_debt_test',
+            // TypeORM's `schema` steers the query builder but not raw SQL, and
+            // the services under test use raw SQL with unqualified table names
+            // (correctly — production runs in `public`). Pin the connection's
+            // search_path so those queries land in this suite's schema.
+            extra: { options: '-c search_path=wallet_debt_test,public' },
             entities: [Wallet, LedgerEntry, Transaction, PayoutRecord, User, Setting, AuditLog],
             synchronize: true, logging: false,
         });
@@ -47,7 +59,7 @@ describeDb('driver wallet — debt settlement (database)', () => {
 
     beforeEach(async () => {
         for (const t of ['ledger_entry', 'payout_record', 'transaction', 'wallet', 'audit_log']) {
-            await ds.query(`TRUNCATE TABLE "${t}" CASCADE`);
+            await ds.query(`TRUNCATE TABLE wallet_debt_test."${t}" CASCADE`);
         }
     });
 

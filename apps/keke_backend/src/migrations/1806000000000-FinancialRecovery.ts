@@ -38,9 +38,18 @@ export class FinancialRecovery1806000000000 implements MigrationInterface {
                 ON "ride" ("financialNextRetryAt") WHERE "financialNextRetryAt" IS NOT NULL
         `);
 
-        // ── Quarantine every EXISTING unposted completed ride ────────────
-        // Scoped by completedAt < now() so it captures exactly what already
-        // exists at migration time and nothing created afterwards.
+        // ── Quarantine the HISTORICAL unposted rides ─────────────────────
+        //
+        // Bounded by an explicit date, not by `now()`. "Whenever the migration
+        // happens to run" is a fragile definition of historical: if this ships
+        // days after it was written, any failure in between would be swept
+        // into quarantine and never auto-recovered — the precise outcome the
+        // recovery worker exists to prevent.
+        //
+        // The observed failures run 19 Jul – 12 Aug 2026. The cutoff sits
+        // safely after them and before this work, so the set is exactly the
+        // one that was audited, and anything failing from now on is recovered
+        // automatically.
         await queryRunner.query(`
             UPDATE "ride"
                SET "financialQuarantine" = true,
@@ -48,7 +57,7 @@ export class FinancialRecovery1806000000000 implements MigrationInterface {
                    "financialQuarantinedAt" = now()
              WHERE status = 'completed'
                AND COALESCE("paymentFailed", false) = true
-               AND "completedAt" < now()
+               AND "completedAt" < TIMESTAMP '2026-08-19 00:00:00'
                AND NOT EXISTS (
                    SELECT 1 FROM ledger_entry le WHERE le.metadata->>'rideId' = "ride"."rideId")
         `);

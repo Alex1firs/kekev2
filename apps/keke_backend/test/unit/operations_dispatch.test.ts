@@ -816,3 +816,17 @@ describe('automatic financial recovery', () => {
         expect(mig).not.toMatch(/driverCommissionDebt|driverAvailableBalance|INSERT INTO "ledger_entry"/);
     });
 });
+
+describe('quarantine is bounded by a date, not by deploy time', () => {
+    it('uses an explicit cutoff so later failures are still auto-recovered', () => {
+        // `completedAt < now()` would sweep any failure occurring between
+        // writing the migration and shipping it into permanent quarantine —
+        // exactly what the recovery worker exists to prevent.
+        const fs = require('fs');
+        const path = require('path');
+        const mig = fs.readFileSync(
+            path.join(__dirname, '../../src/migrations/1806000000000-FinancialRecovery.ts'), 'utf8');
+        expect(mig).toContain("TIMESTAMP '2026-08-19 00:00:00'");
+        expect(mig).not.toContain('"completedAt" < now()');
+    });
+});

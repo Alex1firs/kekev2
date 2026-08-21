@@ -314,17 +314,25 @@ export class AudienceService {
                   j AS (
                     SELECT a.id,
                            u.email,
-                           p."marketing"      AS master,
-                           p."marketingEmail" AS m_email,
-                           p."marketingPush"  AS m_push,
-                           p."marketingSms"   AS m_sms,
+                           -- COALESCE, not the raw column. A passenger with no
+                           -- preference row at all yields NULL, and NULL
+                           -- propagates through the NOT(...) below so they
+                           -- silently vanish from the unreachable count — the
+                           -- exact people the count exists to show.
+                           COALESCE(p."marketing", false)      AS master,
+                           COALESCE(p."marketingEmail", false) AS m_email,
+                           COALESCE(p."marketingPush", false)  AS m_push,
+                           COALESCE(p."marketingSms", false)   AS m_sms,
                            (s.email IS NOT NULL) AS suppressed,
                            EXISTS (SELECT 1 FROM device_token d
-                                    WHERE d."userId" = a.id
+                                    WHERE d."userId"::text = a.id
                                       AND COALESCE(d."isActive", true)) AS has_token
                       FROM aud a
-                      JOIN "user" u ON u.id = a.id
-                      LEFT JOIN passenger_communication_preference p ON p."userId" = a.id
+                      -- Every join is cast to text explicitly: user.id is a
+                      -- uuid column while the other tables key on varchar, and
+                      -- an un-cast comparison is a hard error, not a coercion.
+                      JOIN "user" u ON u.id::text = a.id
+                      LEFT JOIN passenger_communication_preference p ON p."userId"::text = a.id
                       LEFT JOIN email_suppression s ON lower(s.email) = lower(u.email)
                   )
              SELECT

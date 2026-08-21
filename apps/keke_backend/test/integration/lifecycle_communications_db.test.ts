@@ -391,7 +391,8 @@ describeDb('lifecycle communications (database)', () => {
         const tokens = ds.getRepository(DeviceToken);
         for (const t of ['tok-a', 'tok-b', 'tok-a']) {
             await tokens.save(tokens.create({
-                userId: p.id, role: UserRole.PASSENGER, token: t, isActive: true,
+                userId: p.id, role: UserRole.PASSENGER, token: t,
+                platform: 'android', isActive: true,
             } as any)).catch(() => undefined);
         }
         await trigger();
@@ -498,6 +499,44 @@ describeDb('lifecycle communications (database)', () => {
 
         const row = (await dispatches())[0];
         expect(row.status).toBe(DispatchStatus.FAILED);
+    });
+
+    // ══ Audience eligibility ════════════════════════════════════════════
+
+    it('the channel breakdown runs against real column types and separates the reasons', async () => {
+        // This exists because the first version of the query compared a uuid
+        // column to text and failed outright — a 500 on a screen that had
+        // worked, caught only by opening it.
+        const { AudienceService } = require('../../src/services/audience_service');
+
+        const reachable = await passenger();
+        await consent(reachable.id);
+        const tokens = ds.getRepository(DeviceToken);
+        await tokens.save(tokens.create({
+            userId: reachable.id, role: UserRole.PASSENGER, token: 'tok-1',
+            platform: 'android', isActive: true,
+        } as any));
+
+        const noConsent = await passenger();
+        const bounced = await passenger();
+        await consent(bounced.id);
+        await suppress(bounced.email);
+
+        const ids = [reachable.id, noConsent.id, bounced.id];
+        const b = await AudienceService.channelBreakdown(ids);
+
+        expect(b.total).toBe(3);
+        expect(b.eligibleEmail).toBe(1);          // only the consenting, unsuppressed one
+        expect(b.eligiblePush).toBe(1);           // only the one with a live token
+        expect(b.eligibleSms).toBe(0);            // nobody consented to SMS
+        expect(b.suppressed).toBe(1);
+        expect(b.noConsent).toBe(1);
+        expect(b.noReachableChannel).toBe(2);
+    });
+
+    it('an empty audience does not error', async () => {
+        const { AudienceService } = require('../../src/services/audience_service');
+        await expect(AudienceService.channelBreakdown([])).resolves.toMatchObject({ total: 0 });
     });
 
     // ══ 13–25. Campaigns ════════════════════════════════════════════════

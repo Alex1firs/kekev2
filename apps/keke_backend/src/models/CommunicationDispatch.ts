@@ -5,6 +5,14 @@ import {
 export enum DispatchStatus {
     /** Accepted and awaiting the provider. */
     QUEUED = "queued",
+    /**
+     * Claimed by a worker and in flight.
+     *
+     * Without this state two workers both select the same QUEUED row and both
+     * deliver it — the unique index prevents a duplicate CLAIM, but says
+     * nothing about delivering one claim twice.
+     */
+    SENDING = "sending",
     SENT = "sent",
     FAILED = "failed",
     /** Deliberately not sent — no consent, suppressed, no destination. */

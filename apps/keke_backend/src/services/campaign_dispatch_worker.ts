@@ -124,7 +124,7 @@ export class CampaignDispatchWorker {
      * arithmetic.
      */
     private static async promoteDue(): Promise<number> {
-        const rows: CommunicationCampaign[] = await this.campaigns.query(
+        const promoted = await this.campaigns.query(
             `UPDATE communication_campaign
                 SET status = $1,
                     "sendStartedAt" = COALESCE("sendStartedAt", now()),
@@ -138,6 +138,8 @@ export class CampaignDispatchWorker {
               RETURNING *`,
             [CampaignStatus.SENDING, String(LEASE_MS), this.owner, CampaignStatus.SCHEDULED],
         );
+        // node-postgres returns [rows, affectedCount] for UPDATE ... RETURNING.
+        const rows: CommunicationCampaign[] = Array.isArray(promoted?.[0]) ? promoted[0] : promoted;
 
         for (const c of rows) {
             console.log(JSON.stringify({
@@ -152,7 +154,7 @@ export class CampaignDispatchWorker {
 
     private static async progressSending(): Promise<number> {
         // Take the lease on one sending campaign. Expired leases are reclaimable.
-        const claimed: CommunicationCampaign[] = await this.campaigns.query(
+        const leased = await this.campaigns.query(
             `UPDATE communication_campaign
                 SET "dispatchLeaseUntil" = now() + ($1 || ' milliseconds')::interval,
                     "dispatchLeaseOwner" = $2
@@ -169,6 +171,7 @@ export class CampaignDispatchWorker {
               RETURNING *`,
             [String(LEASE_MS), this.owner, CampaignStatus.SENDING],
         );
+        const claimed: CommunicationCampaign[] = Array.isArray(leased?.[0]) ? leased[0] : leased;
         if (claimed.length === 0) return 0;
 
         const campaign = claimed[0];

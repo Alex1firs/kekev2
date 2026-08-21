@@ -284,14 +284,33 @@ export class LifecycleAutomationService {
     static async sendDue(limit = 50): Promise<{ attempted: number; sent: number; failed: number }> {
         const out = { attempted: 0, sent: 0, failed: 0 };
 
-        const due = await this.dispatches
-            .createQueryBuilder('d')
-            .where('d.status = :s', { s: DispatchStatus.QUEUED })
-            .andWhere('d."sendAfter" IS NOT NULL AND d."sendAfter" <= now()')
-            .andWhere('d.attempts < 3')
-            .orderBy('d."sendAfter"', 'ASC')
-            .limit(limit)
-            .getMany();
+        /*
+         * Claim before delivering.
+         *
+         * Selecting QUEUED rows and then sending them lets two workers pick the
+         * same row and deliver it twice — the unique index guarantees one CLAIM
+         * per ride per channel, which is a different thing from one DELIVERY
+         * per claim. The conditional UPDATE is the arbiter: whoever commits
+         * first moves the row out of `queued`, and SKIP LOCKED means the other
+         * worker takes different rows rather than blocking on these.
+         */
+        const claimed = await AppDataSource.query(
+            `UPDATE communication_dispatch
+                SET status = $1, attempts = attempts + 1
+              WHERE id IN (
+                    SELECT id FROM communication_dispatch
+                     WHERE status = $2
+                       AND "sendAfter" IS NOT NULL AND "sendAfter" <= now()
+                       AND attempts < 3
+                     ORDER BY "sendAfter" ASC
+                     LIMIT $3
+                     FOR UPDATE SKIP LOCKED
+              )
+              RETURNING *`,
+            [DispatchStatus.SENDING, DispatchStatus.QUEUED, limit],
+        );
+        // node-postgres returns [rows, affectedCount] for UPDATE ... RETURNING.
+        const due: CommunicationDispatch[] = Array.isArray(claimed?.[0]) ? claimed[0] : claimed;
 
         for (const row of due) {
             out.attempted += 1;
@@ -300,10 +319,11 @@ export class LifecycleAutomationService {
                 if (ok) out.sent += 1; else out.failed += 1;
             } catch (err: any) {
                 out.failed += 1;
+                // `attempts` was incremented when the row was claimed, so it is
+                // already correct here; only the outcome needs writing.
                 await this.dispatches.update(row.id, {
-                    attempts: row.attempts + 1,
                     reason: String(err?.message ?? err).slice(0, 200),
-                    status: row.attempts + 1 >= 3 ? DispatchStatus.FAILED : DispatchStatus.QUEUED,
+                    status: row.attempts >= 3 ? DispatchStatus.FAILED : DispatchStatus.QUEUED,
                 });
             }
         }
@@ -408,8 +428,7 @@ export class LifecycleAutomationService {
         if (result.ok) {
             await this.dispatches.update(row.id, {
                 status: DispatchStatus.SENT, sentAt: new Date(),
-                providerMessageId: result.messageId ?? null,
-                attempts: row.attempts + 1, reason: null,
+                providerMessageId: result.messageId ?? null, reason: null,
             });
             await this.triggers.increment({ id: trigger.id }, 'sentCount', 1);
             return true;
@@ -417,11 +436,10 @@ export class LifecycleAutomationService {
 
         const permanent = result.retryable === false;
         await this.dispatches.update(row.id, {
-            attempts: row.attempts + 1,
             reason: (result.error ?? 'send failed').slice(0, 200),
-            status: permanent || row.attempts + 1 >= 3 ? DispatchStatus.FAILED : DispatchStatus.QUEUED,
+            status: permanent || row.attempts >= 3 ? DispatchStatus.FAILED : DispatchStatus.QUEUED,
         });
-        if (permanent || row.attempts + 1 >= 3) {
+        if (permanent || row.attempts >= 3) {
             await this.triggers.increment({ id: trigger.id }, 'failedCount', 1);
         }
         return false;
@@ -461,26 +479,23 @@ export class LifecycleAutomationService {
             await this.dispatches.update(row.id, {
                 status: DispatchStatus.SKIPPED,
                 reason: result.reason ?? 'no_destination',
-                attempts: row.attempts + 1,
             });
             return false;
         }
 
         if (result.successCount > 0) {
             await this.dispatches.update(row.id, {
-                status: DispatchStatus.SENT, sentAt: new Date(),
-                attempts: row.attempts + 1, reason: null,
+                status: DispatchStatus.SENT, sentAt: new Date(), reason: null,
             });
             await this.triggers.increment({ id: trigger.id }, 'sentCount', 1);
             return true;
         }
 
         await this.dispatches.update(row.id, {
-            attempts: row.attempts + 1,
             reason: 'all tokens failed',
-            status: row.attempts + 1 >= 3 ? DispatchStatus.FAILED : DispatchStatus.QUEUED,
+            status: row.attempts >= 3 ? DispatchStatus.FAILED : DispatchStatus.QUEUED,
         });
-        if (row.attempts + 1 >= 3) await this.triggers.increment({ id: trigger.id }, 'failedCount', 1);
+        if (row.attempts >= 3) await this.triggers.increment({ id: trigger.id }, 'failedCount', 1);
         return false;
     }
 

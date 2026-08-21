@@ -120,6 +120,13 @@ function button(label: string, url: string): string {
     </table>`;
 }
 
+function signoff(): string {
+    return `<p style="margin:24px 0 0;font-size:15px;line-height:1.6;color:${BRAND.body};">
+        <strong>Your Ride. Your Way.</strong><br />
+        <span style="color:${BRAND.muted};">KekeRide.ng</span>
+      </p>`;
+}
+
 /** Where the trip went, phrased only when we actually know. */
 function journeyLine(ctx: ServiceContext): string | null {
     const from = (ctx.pickupArea ?? '').trim();
@@ -133,35 +140,43 @@ function journeyLine(ctx: ServiceContext): string | null {
 
 export function renderRideCompleted(ctx: ServiceContext): RenderedServiceEmail {
     const name = firstNameOf(ctx);
-    const journey = journeyLine(ctx)!;
 
+    /*
+     * Copy is fixed by product, not assembled from ride data.
+     *
+     * An earlier draft named the pickup and destination. That reads well when
+     * the localities are good and badly when they are not — and historically
+     * they are plus codes and placeholders as often as place names. Naming the
+     * wrong junction in a thank-you is worse than naming none, so the message
+     * says nothing it cannot be sure of.
+     */
     const inner = [
         heading('Thank you for riding with KekeRide today 💛'),
         para(`Hello ${name},`),
         para('Thank you for choosing KekeRide for your trip today.'),
-        para(journey),
-        para('Your support is helping us build a better way to move around Onitsha.'),
-        para('Whenever you’re heading out again, simply open KekeRide and request your ride.'),
-        button('Book another ride', ctx.appUrl),
+        para('We hope your ride was smooth and convenient.'),
+        para('Whenever you need to move around Onitsha, KekeRide is ready to help connect you with a nearby driver.'),
+        button('Book Another Ride', ctx.appUrl),
+        signoff(),
     ].join('\n');
 
     const text = [
         `Hello ${name},`, '',
         'Thank you for choosing KekeRide for your trip today.', '',
-        journey, '',
-        'Your support is helping us build a better way to move around Onitsha.', '',
-        'Whenever you’re heading out again, simply open KekeRide and request your ride.', '',
-        `Book another ride: ${ctx.appUrl}`, '',
-        'Your Ride. Your Way.', 'KekeRide.ng', '',
+        'We hope your ride was smooth and convenient.', '',
+        'Whenever you need to move around Onitsha, KekeRide is ready to help connect you with a nearby driver.', '',
+        `Book Another Ride: ${ctx.appUrl}`, '',
+        'Your Ride. Your Way.', '',
+        'KekeRide.ng', '',
         'You received this because you completed a ride with KekeRide.',
     ].join('\n');
 
     return {
         subject: 'Thank you for riding with KekeRide today 💛',
-        previewText: 'We hope your trip was smooth.',
+        previewText: 'We hope your ride was smooth and convenient.',
         html: serviceShell(inner, ctx,
             'You received this because you completed a ride with KekeRide.',
-            'We hope your trip was smooth.'),
+            'We hope your ride was smooth and convenient.'),
         text,
     };
 }
@@ -214,7 +229,7 @@ export function pushForTrigger(key: string, ctx: ServiceContext): { title: strin
         case 'ride_completed':
             return {
                 title: 'Thanks for riding with KekeRide 💛',
-                body: `Thanks for riding with KekeRide today, ${name}. We hope you had a smooth trip.`,
+                body: `Thanks for riding with KekeRide today, ${name} 💛 We hope you had a smooth trip.`,
             };
         case 'ride_not_fulfilled':
             return {

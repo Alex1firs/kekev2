@@ -21,7 +21,7 @@
  * a first name and a promo code and nothing that would matter if it leaked.
  */
 
-const BRAND = {
+export const BRAND = {
     ink: '#1a1a2e',
     amber: '#f5c518',
     paper: '#ffffff',
@@ -64,7 +64,7 @@ export interface RenderContext {
 }
 
 /** HTML-escape. Campaign copy is written by staff, not trusted blindly. */
-function esc(value: unknown): string {
+export function esc(value: unknown): string {
     return String(value ?? '')
         .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;').replace(/'/g, '&#39;');

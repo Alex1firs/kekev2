@@ -32,6 +32,7 @@ import {
     CancelActorRole,
     outcomeFromDispatchCode,
 } from '../services/ride_outcome';
+import { publishCommunicationEvent } from '../services/communication_events';
 import { User, UserRole } from '../models/User';
 import { AppDataSource } from '../config/data_source';
 import { Ride } from '../models/Ride';
@@ -2691,10 +2692,24 @@ export class SocketHandler {
         // telemetry kill switch: a `failed` row with no reason is exactly the
         // defect this work exists to remove, and it must not be able to come
         // back because someone silenced the event trail.
+        const failureOutcome = outcomeFromDispatchCode(outcome.code) ?? RideOutcomeCode.TECHNICAL_FAILURE;
         await rideRepo.update(rideId, {
             status: 'failed' as any,
-            outcomeReason: outcomeFromDispatchCode(outcome.code) ?? RideOutcomeCode.TECHNICAL_FAILURE,
+            outcomeReason: failureOutcome,
             outcomeDetail: outcome.dispatchResult ?? null,
+        });
+
+        // Only the codes an automation actually claims will match; a
+        // TECHNICAL_FAILURE published here reaches no trigger, so a fault on
+        // our side never produces an apology blaming driver supply.
+        publishCommunicationEvent({
+            type: 'ride.not_fulfilled',
+            rideId,
+            passengerId: ride.passengerId,
+            outcomeReason: failureOutcome,
+            pickupArea: (ride as any).pickupSubLocality ?? (ride as any).pickupLocality ?? null,
+            destinationArea: (ride as any).destinationSubLocality ?? (ride as any).destinationLocality ?? null,
+            occurredAt: new Date().toISOString(),
         });
 
         rlog('dispatch_outcome', {
@@ -2805,6 +2820,19 @@ export class SocketHandler {
             status: 'completed' as any,
             completedAt: new Date(),
             outcomeReason: RideOutcomeCode.COMPLETED,
+        });
+
+        // Announce it for communications. Synchronous, returns void, and every
+        // handler is isolated behind its own catch — a Resend outage cannot
+        // reach this line, let alone fail the ride that just completed.
+        publishCommunicationEvent({
+            type: 'ride.completed',
+            rideId,
+            passengerId: ride.passengerId,
+            outcomeReason: RideOutcomeCode.COMPLETED,
+            pickupArea: (ride as any).pickupSubLocality ?? (ride as any).pickupLocality ?? null,
+            destinationArea: (ride as any).destinationSubLocality ?? (ride as any).destinationLocality ?? null,
+            occurredAt: new Date().toISOString(),
         });
 
         const adminStatus = held ? 'completed_held_for_review' : (paymentSucceeded ? 'completed' : 'completed_payment_failed');

@@ -97,6 +97,24 @@ export class CommunicationCampaign {
     @Column({ type: "varchar", length: 500, nullable: true })
     stopReason!: string | null;
 
+    /**
+     * Held by whichever dispatch worker is currently sending this campaign.
+     *
+     * A lease with an expiry rather than a boolean lock: a worker that is
+     * killed mid-batch would never clear a boolean, and the campaign would be
+     * stranded forever. The lease simply lapses and another worker picks it up,
+     * which is safe because sending is idempotent per recipient.
+     */
+    @Column({ type: "timestamp", nullable: true })
+    dispatchLeaseUntil!: Date | null;
+
+    @Column({ type: "varchar", length: 80, nullable: true })
+    dispatchLeaseOwner!: string | null;
+
+    /** Which cohort the campaign was released to. */
+    @Column({ type: "varchar", length: 20, default: 'TEST' })
+    mode!: string;
+
     @CreateDateColumn()
     createdAt!: Date;
 

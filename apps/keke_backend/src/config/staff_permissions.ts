@@ -103,6 +103,14 @@ export const StaffPermission = {
     COMMUNICATIONS_VIEW_REPORTS: 'communications:view_reports',
     COMMUNICATIONS_MANAGE_TEMPLATES: 'communications:manage_templates',
     COMMUNICATIONS_MANAGE_PREFERENCES: 'communications:manage_preferences',
+    /**
+     * Enable, disable or re-scope a lifecycle automation.
+     *
+     * Separate from drafting a campaign because an automation is a standing
+     * instruction: switching one on affects every passenger who triggers it
+     * from that moment, with nobody reviewing each send.
+     */
+    COMMUNICATIONS_MANAGE_AUTOMATIONS: 'communications:manage_automations',
 
     // ── Finance ─────────────────────────────────────────────────────────
     WALLET_READ: 'wallet:read',
@@ -178,6 +186,7 @@ export const LEGACY_FORBIDDEN_PERMISSIONS: ReadonlySet<string> = new Set<string>
     StaffPermission.COMMUNICATIONS_VIEW_REPORTS,
     StaffPermission.COMMUNICATIONS_MANAGE_TEMPLATES,
     StaffPermission.COMMUNICATIONS_MANAGE_PREFERENCES,
+    StaffPermission.COMMUNICATIONS_MANAGE_AUTOMATIONS,
     // staff administration — a shared key must never mint or elevate a human
     StaffPermission.STAFF_CREATE,
     StaffPermission.STAFF_UPDATE,
@@ -287,6 +296,7 @@ const ROLE_MATRIX: Record<StaffRole, StaffPermissionType[]> = {
         StaffPermission.COMMUNICATIONS_VIEW,
         StaffPermission.COMMUNICATIONS_CREATE,
         StaffPermission.COMMUNICATIONS_SCHEDULE,
+        StaffPermission.COMMUNICATIONS_MANAGE_AUTOMATIONS,
         StaffPermission.COMMUNICATIONS_VIEW_REPORTS,
         StaffPermission.COMMUNICATIONS_MANAGE_TEMPLATES,
         StaffPermission.COMMUNICATIONS_MANAGE_PREFERENCES,

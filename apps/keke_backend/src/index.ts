@@ -25,6 +25,9 @@ import { NotificationService } from './services/notification_service';
 import { StaleRideSweeper } from './services/stale_ride_sweeper';
 import { OperationsControlSweeper } from './services/operations_control_sweeper';
 import { FinancialRecoveryWorker } from './services/financial_recovery_worker';
+import { CampaignDispatchWorker } from './services/campaign_dispatch_worker';
+import { LifecycleAutomationService } from './services/lifecycle_automation_service';
+import { onCommunicationEvent } from './services/communication_events';
 import { ParkJobSweeper } from './services/park_job_sweeper';
 import { redis } from './config/redis';
 import publicCommsRoutes from "./routes/public_comms_routes";
@@ -389,6 +392,20 @@ AppDataSource.initialize()
     // Expires park dispatch jobs whose claim or assignment window elapsed. A
     // no-op unless PARK_DISPATCH_ENABLED is true, and guarded by its own
     // advisory lock so several instances can run it safely.
+    // Communications: the single dispatch path. Releases scheduled campaigns,
+    // progresses sending ones, delivers due lifecycle messages and drains the
+    // marketing push queue — all of which previously had no runner at all.
+    //
+    // Every automation ships disabled and every marketing channel switch ships
+    // false, so starting this changes nothing about what production sends until
+    // somebody turns something on.
+    try {
+      onCommunicationEvent((event) => LifecycleAutomationService.handleRideEvent(event).then(() => undefined));
+      CampaignDispatchWorker.start();
+    } catch (e: any) {
+      console.error(JSON.stringify({ level: 'error', message: 'Failed to start communications worker', error: e.message }));
+    }
+
     try {
       ParkJobSweeper.start();
     } catch (e: any) {
@@ -436,6 +453,7 @@ AppDataSource.initialize()
           StaleRideSweeper.stop();
           OperationsControlSweeper.stop();
           FinancialRecoveryWorker.stop();
+          CampaignDispatchWorker.stop();
           await AppDataSource.destroy();
           redis.disconnect();
         } catch (e) {}

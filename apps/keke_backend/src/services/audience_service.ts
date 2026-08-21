@@ -280,4 +280,77 @@ export class AudienceService {
     static async preview(definition: AudienceDefinition): Promise<AudiencePreview> {
         return (await this.resolve(definition)).preview;
     }
+
+    /**
+     * How many of a matched audience are actually reachable, per channel.
+     *
+     * ── Why this is not one number ──────────────────────────────────────
+     * "130 passengers" is true and useless: it is the size of the audience,
+     * not the number of people who may lawfully and technically be sent a
+     * promotion. Showing it alone invites an operator to believe a campaign
+     * will reach 130 people when it will reach one. Every line below is a
+     * different reason the gap exists, and each needs a different fix — a
+     * suppressed address is a deliverability problem, missing consent is a
+     * product problem, and no device token is an install problem.
+     */
+    static async channelBreakdown(userIds: string[]): Promise<{
+        total: number;
+        eligibleEmail: number;
+        eligiblePush: number;
+        eligibleSms: number;
+        suppressed: number;
+        noConsent: number;
+        noReachableChannel: number;
+    }> {
+        const total = userIds.length;
+        const empty = {
+            total, eligibleEmail: 0, eligiblePush: 0, eligibleSms: 0,
+            suppressed: 0, noConsent: 0, noReachableChannel: total,
+        };
+        if (total === 0) return { ...empty, noReachableChannel: 0 };
+
+        const [row] = await AppDataSource.query(
+            `WITH aud AS (SELECT unnest($1::text[]) AS id),
+                  j AS (
+                    SELECT a.id,
+                           u.email,
+                           p."marketing"      AS master,
+                           p."marketingEmail" AS m_email,
+                           p."marketingPush"  AS m_push,
+                           p."marketingSms"   AS m_sms,
+                           (s.email IS NOT NULL) AS suppressed,
+                           EXISTS (SELECT 1 FROM device_token d
+                                    WHERE d."userId" = a.id
+                                      AND COALESCE(d."isActive", true)) AS has_token
+                      FROM aud a
+                      JOIN "user" u ON u.id = a.id
+                      LEFT JOIN passenger_communication_preference p ON p."userId" = a.id
+                      LEFT JOIN email_suppression s ON lower(s.email) = lower(u.email)
+                  )
+             SELECT
+               COUNT(*) FILTER (
+                 WHERE master AND m_email AND NOT suppressed
+                   AND email IS NOT NULL AND email <> '')::int          AS "eligibleEmail",
+               COUNT(*) FILTER (WHERE master AND m_push AND has_token)::int AS "eligiblePush",
+               COUNT(*) FILTER (WHERE master AND m_sms)::int                AS "eligibleSms",
+               COUNT(*) FILTER (WHERE suppressed)::int                      AS "suppressed",
+               COUNT(*) FILTER (WHERE master IS NOT TRUE)::int              AS "noConsent",
+               COUNT(*) FILTER (
+                 WHERE NOT (master AND m_email AND NOT suppressed AND email IS NOT NULL AND email <> '')
+                   AND NOT (master AND m_push AND has_token)
+                   AND NOT (master AND m_sms))::int                         AS "noReachableChannel"
+               FROM j`,
+            [userIds],
+        );
+
+        return {
+            total,
+            eligibleEmail: Number(row?.eligibleEmail ?? 0),
+            eligiblePush: Number(row?.eligiblePush ?? 0),
+            eligibleSms: Number(row?.eligibleSms ?? 0),
+            suppressed: Number(row?.suppressed ?? 0),
+            noConsent: Number(row?.noConsent ?? 0),
+            noReachableChannel: Number(row?.noReachableChannel ?? 0),
+        };
+    }
 }

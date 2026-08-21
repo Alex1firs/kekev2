@@ -3678,16 +3678,31 @@ async function ccPreviewAudience(key) {
     try {
         const r = await adminFetch('/communications/audience/preview', 'POST', preset.definition);
         if (el) el.textContent = `${r.eligible} eligible of ${r.matched}`;
+        const c = r.channels || {};
+        /*
+         * The audience size and the number of people who can actually be sent
+         * to are different numbers, and the gap is the interesting part.
+         * Showing "130 passengers" alone invites somebody to believe a campaign
+         * reaches 130 when it reaches one — each line below is a different
+         * reason for the shortfall and needs a different fix.
+         */
         document.getElementById('cc-aud-result').innerHTML = `
-            <div class="cc-alert cc-alert-info">
-                <i class="fas fa-users"></i>
-                <div>
-                    <strong>${escapeHtml(preset.label)}</strong>
-                    — ${r.matched} matched, <b>${r.eligible} eligible</b>, ${r.excluded} excluded.
-                    ${Object.keys(r.exclusions).length ? `
-                        <ul>${Object.entries(r.exclusions).map(([k, v]) =>
-                            `<li>${escapeHtml(k.replace(/_/g, ' '))}: ${v}</li>`).join('')}</ul>` : ''}
-                </div>
+            <div class="aud-breakdown">
+              <div class="aud-title">${escapeHtml(preset.label)}</div>
+              <div class="aud-rows">
+                <div class="aud-row aud-total"><span>Total audience</span><b>${c.total ?? r.matched}</b></div>
+                <div class="aud-row aud-good"><span>Eligible for email</span><b>${c.eligibleEmail ?? 0}</b></div>
+                <div class="aud-row aud-good"><span>Eligible for push</span><b>${c.eligiblePush ?? 0}</b></div>
+                <div class="aud-row aud-good"><span>Eligible for SMS</span><b>${c.eligibleSms ?? 0}</b></div>
+                <div class="aud-row aud-bad"><span>Suppressed</span><b>${c.suppressed ?? 0}</b></div>
+                <div class="aud-row aud-bad"><span>No consent</span><b>${c.noConsent ?? 0}</b></div>
+                <div class="aud-row aud-bad"><span>No reachable channel</span><b>${c.noReachableChannel ?? 0}</b></div>
+              </div>
+              ${Object.keys(r.exclusions || {}).length ? `
+                <div class="aud-note">Excluded: ${Object.entries(r.exclusions)
+                    .map(([k, v]) => `${escapeHtml(k.replace(/_/g, ' '))} (${v})`).join(' · ')}</div>` : ''}
+              ${(c.eligibleSms ?? 0) > 0 ? `
+                <div class="aud-note">SMS has no provider configured — those passengers cannot be reached on that channel yet.</div>` : ''}
             </div>`;
     } catch {
         if (el) el.textContent = 'Could not count';
@@ -3793,21 +3808,136 @@ async function ccRenderHealth(body) {
         </div>`;
 }
 
-function ccRenderAutomations(body) {
+/**
+ * Lifecycle automations.
+ *
+ * The consent class is rendered as a read-only fact rather than a control: a
+ * service message and a marketing message are different things, and an operator
+ * must not be able to move a template across that line from a dropdown. The API
+ * refuses it too — this only avoids offering a door that is locked.
+ */
+async function ccRenderAutomations(body) {
     ccSendingBanner(false);
-    // Honest about not existing, rather than a mocked-up screen that implies
-    // something is running.
+    body.innerHTML = `<div class="cc-empty"><h3>Loading automations…</h3></div>`;
+
+    let items = [];
+    try {
+        items = (await adminFetch('/communications/automations')).items || [];
+    } catch (e) {
+        body.innerHTML = `<div class="cc-empty">
+            <h3>Could not load automations</h3>
+            <p>${escapeHtml(e?.message || 'Unknown error')}</p></div>`;
+        return;
+    }
+
+    const modeChip = (mode) => {
+        const cls = mode === 'PRODUCTION' ? 'auto-mode-prod'
+                  : mode === 'PILOT' ? 'auto-mode-pilot' : 'auto-mode-test';
+        return `<span class="auto-chip ${cls}">${escapeHtml(mode)}</span>`;
+    };
+    const stateChip = (a) => a.enabled
+        ? `<span class="auto-chip auto-on">ACTIVE</span>`
+        : `<span class="auto-chip auto-off">DISABLED</span>`;
+
+    const mins = (m) => {
+        if (!m) return 'none';
+        if (m % 1440 === 0) return `${m / 1440} day${m / 1440 === 1 ? '' : 's'}`;
+        if (m % 60 === 0) return `${m / 60} hour${m / 60 === 1 ? '' : 's'}`;
+        return `${m} min`;
+    };
+
+    const canManage = can('communications:manage_automations');
+
     body.innerHTML = `
-        <div class="cc-empty">
-            <i class="fas fa-robot"></i>
-            <h3>Automations are not built yet</h3>
-            <p>
-                This is where recurring campaigns would live — a welcome message
-                on a passenger's first ride, a reactivation after thirty quiet
-                days. Nothing is scheduled and nothing runs.
-            </p>
-        </div>`;
+      <div class="cc-head">
+        <h3>Automations</h3>
+        <p class="section-note">
+          Lifecycle messages sent automatically. Every one ships disabled and in
+          TEST mode, where only passengers on the test list can be reached.
+        </p>
+      </div>
+      <div class="auto-grid">
+        ${items.map(a => `
+          <div class="auto-card ${a.enabled ? 'is-on' : ''}">
+            <div class="auto-top">
+              <div>
+                <div class="auto-name">${escapeHtml(a.name)}</div>
+                <div class="auto-desc">${escapeHtml(a.description || '')}</div>
+              </div>
+              <div class="auto-chips">${stateChip(a)} ${modeChip(a.mode)}</div>
+            </div>
+
+            <div class="auto-meta">
+              <div><span class="auto-k">Class</span>
+                <span class="auto-v auto-class-${escapeHtml(a.consentClass)}">
+                  ${a.consentClass === 'service' ? 'Service — no consent needed' : 'Marketing — consent required'}
+                </span></div>
+              <div><span class="auto-k">Channels</span>
+                <span class="auto-v">${(a.channels || []).map(c => escapeHtml(c)).join(' + ') || '—'}</span></div>
+              <div><span class="auto-k">Trigger</span>
+                <span class="auto-v auto-mono">${(a.triggerCodes || []).map(escapeHtml).join(', ') || 'time-based'}</span></div>
+              <div><span class="auto-k">Template</span>
+                <span class="auto-v auto-mono">${escapeHtml(a.templateKey)}</span></div>
+              <div><span class="auto-k">Delay</span><span class="auto-v">${mins(a.delayMinutes)}</span></div>
+              <div><span class="auto-k">Cooldown</span><span class="auto-v">${mins(a.cooldownMinutes)}</span></div>
+              <div><span class="auto-k">Cap</span>
+                <span class="auto-v">${a.frequencyCap ? `${a.frequencyCap} per ${a.frequencyWindowDays} days` : 'none'}</span></div>
+              <div><span class="auto-k">Last triggered</span>
+                <span class="auto-v">${a.lastTriggeredAt ? escapeHtml(new Date(a.lastTriggeredAt).toLocaleString()) : 'never'}</span></div>
+            </div>
+
+            <div class="auto-stats">
+              <div><b>${a.triggered24h}</b><span>triggered 24h</span></div>
+              <div><b>${a.sent24h}</b><span>delivered 24h</span></div>
+              <div><b>${a.pending}</b><span>pending</span></div>
+              <div><b>${a.failed24h}</b><span>failed 24h</span></div>
+              <div><b>${a.skipped24h}</b><span>skipped 24h</span></div>
+              <div><b>${a.deliveryRate == null ? '—' : a.deliveryRate + '%'}</b><span>delivery rate</span></div>
+            </div>
+
+            ${canManage ? `
+            <div class="auto-actions">
+              <button class="ro-btn" onclick="ccToggleAutomation('${escapeHtml(a.key)}', ${!a.enabled}, this)">
+                ${a.enabled ? 'Disable' : 'Enable'}
+              </button>
+              <select class="auto-select" onchange="ccSetAutomationMode('${escapeHtml(a.key)}', this.value, this)">
+                ${['TEST','PILOT','PRODUCTION'].map(m =>
+                    `<option value="${m}" ${a.mode === m ? 'selected' : ''}>${m}</option>`).join('')}
+              </select>
+            </div>` : `<p class="section-note">You do not have permission to change automations.</p>`}
+          </div>`).join('')}
+      </div>`;
 }
+
+window.ccToggleAutomation = async function (key, enabled, btn) {
+    if (btn) { btn.disabled = true; btn.textContent = '…'; }
+    try {
+        await adminFetch('/communications/automations/' + encodeURIComponent(key), 'PATCH', { enabled });
+        showToast(enabled ? 'Automation enabled.' : 'Automation disabled.', 'success');
+    } catch (e) {
+        showToast(e?.message || 'Could not update.', 'error');
+    }
+    ccRenderAutomations(document.getElementById('cc-body'));
+};
+
+window.ccSetAutomationMode = async function (key, mode, el) {
+    // PRODUCTION is the moment an automation stops being a rehearsal, so it
+    // gets a confirmation as well as a stricter permission on the server.
+    if (mode === 'PRODUCTION' && !confirm(
+        'Move this automation to PRODUCTION?\n\n'
+        + 'It will reach every eligible passenger, not just the test list.')) {
+        ccRenderAutomations(document.getElementById('cc-body'));
+        return;
+    }
+    if (el) el.disabled = true;
+    try {
+        await adminFetch('/communications/automations/' + encodeURIComponent(key), 'PATCH', { mode });
+        showToast(`Automation is now in ${mode} mode.`, 'success');
+    } catch (e) {
+        showToast(e?.message || 'Could not update.', 'error');
+    }
+    ccRenderAutomations(document.getElementById('cc-body'));
+};
 
 document.getElementById('cc-nav')?.addEventListener('click', (e) => {
     const btn = e.target.closest('.cc-tab');

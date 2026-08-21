@@ -235,6 +235,65 @@ td {
     margin-top: 24px;
 }
 
+/* ── Audience eligibility breakdown ────────────────────────────────────── */
+.aud-breakdown { background: var(--card-bg); border: 1px solid var(--border-color);
+                 border-radius: 14px; padding: 20px 22px; margin-top: 18px; max-width: 520px; }
+.aud-title     { font-size: 15px; font-weight: 700; margin-bottom: 14px; }
+.aud-rows      { display: flex; flex-direction: column; }
+.aud-row       { display: flex; justify-content: space-between; align-items: baseline; gap: 16px;
+                 padding: 8px 0; border-bottom: 1px solid var(--border-color); font-size: 13.5px; }
+.aud-row:last-child { border-bottom: none; }
+.aud-row b     { font-variant-numeric: tabular-nums; font-size: 15px; }
+.aud-total     { font-weight: 600; }
+.aud-total b   { font-size: 18px; }
+.aud-good b    { color: #22c55e; }
+.aud-bad  b    { color: var(--text-secondary); }
+.aud-note      { margin-top: 12px; font-size: 12px; color: var(--text-secondary); line-height: 1.55; }
+
+/* ── Lifecycle automations ─────────────────────────────────────────────── */
+.auto-grid   { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); }
+.auto-card   { background: var(--card-bg); border: 1px solid var(--border-color);
+               border-left: 3px solid var(--border-color); border-radius: 14px; padding: 20px 22px; }
+.auto-card.is-on { border-left-color: #22c55e; }
+.auto-top    { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 16px; }
+.auto-name   { font-size: 16px; font-weight: 700; }
+.auto-desc   { font-size: 13px; color: var(--text-secondary); margin-top: 3px; line-height: 1.5; }
+.auto-chips  { display: flex; gap: 6px; flex: none; flex-wrap: wrap; justify-content: flex-end; }
+.auto-chip   { font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+               padding: 3px 8px; border-radius: 4px; border: 1px solid currentColor; white-space: nowrap; }
+.auto-on     { color: #22c55e; }
+.auto-off    { color: var(--text-secondary); }
+.auto-mode-test  { color: #38bdf8; }
+.auto-mode-pilot { color: #f59e0b; }
+.auto-mode-prod  { color: #ef4444; }
+
+.auto-meta   { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 18px; margin-bottom: 16px; }
+.auto-meta > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.auto-k      { font-size: 10px; letter-spacing: .09em; text-transform: uppercase; color: var(--text-secondary); }
+.auto-v      { font-size: 13px; }
+.auto-mono   { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px;
+               word-break: break-word; }
+/* The consent class is a fact about the template, shown as such — never a control. */
+.auto-class-service   { color: #38bdf8; }
+.auto-class-marketing { color: #f59e0b; }
+
+.auto-stats  { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
+               padding: 14px 0; border-top: 1px solid var(--border-color); }
+.auto-stats > div { display: flex; flex-direction: column; gap: 2px; }
+.auto-stats b     { font-size: 17px; font-variant-numeric: tabular-nums; }
+.auto-stats span  { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--text-secondary); }
+
+.auto-actions { display: flex; gap: 10px; align-items: center; padding-top: 14px;
+                border-top: 1px solid var(--border-color); }
+.auto-select  { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border-color);
+                background: var(--card-bg); color: var(--text-primary); font-size: 12.5px; font-family: inherit; }
+
+@media (max-width: 620px) {
+  .auto-grid  { grid-template-columns: 1fr; }
+  .auto-meta  { grid-template-columns: 1fr; }
+  .auto-stats { grid-template-columns: repeat(2, 1fr); }
+}
+
 /* Void dialog: reuses .modal / .modal-content; only the fields are new. */
 .void-note   { color: var(--text-secondary); font-size: 14px; line-height: 1.5; margin: 8px 0 20px; }
 .void-field  { display: block; margin-bottom: 16px; }

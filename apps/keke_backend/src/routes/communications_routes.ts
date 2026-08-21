@@ -11,7 +11,11 @@
  */
 
 import { Router, Response } from 'express';
-import { CampaignService } from '../services/campaign_service';
+import { TEMPLATES } from '../services/email_templates';
+import { LifecycleAutomationService } from '../services/lifecycle_automation_service';
+import { CommunicationTrigger, AutomationMode } from '../models/CommunicationTrigger';
+import { CommunicationTestSubject } from '../models/CommunicationTestSubject';
+import { User } from '../models/User';
 import { MultiChannelCampaignService } from '../services/multichannel_campaign_service';
 import { CampaignSimulator } from '../services/campaign_simulator';
 import { CampaignTestSend } from '../services/campaign_test_send';
@@ -50,19 +54,24 @@ function fail(res: Response, err: any, fallback: string) {
 
 // ── Overview ────────────────────────────────────────────────────────────
 
-router.get('/communications/overview',
-    requireStaffPermission(StaffPermission.COMMUNICATIONS_VIEW),
-    async (_req: StaffRequest, res: Response) => {
-        try {
-            return res.json(await CampaignService.overview());
-        } catch (err: any) {
-            return fail(res, err, "We couldn't load the communications overview.");
-        }
-    });
+// The legacy '/communications/overview' was removed with the entity behind it.
+// '/communications/mc/overview' is the live one.
 
+/**
+ * The template library.
+ *
+ * Marketing templates only. Service templates (ride-completed, ride-not-
+ * fulfilled) are deliberately absent: they are not campaign material, they
+ * carry no offer, and an operator must not be able to point a campaign at one.
+ */
 router.get('/communications/templates',
     requireStaffPermission(StaffPermission.COMMUNICATIONS_VIEW),
-    (_req: StaffRequest, res: Response) => res.json({ templates: CampaignService.templates() }));
+    (_req: StaffRequest, res: Response) => res.json({
+        templates: TEMPLATES.map((t) => ({
+            key: t.key, name: t.name, description: t.description,
+            category: t.category, defaults: t.defaults,
+        })),
+    }));
 
 // ── Audience ────────────────────────────────────────────────────────────
 
@@ -77,8 +86,13 @@ router.post('/communications/audience/preview',
     requireStaffPermission(StaffPermission.COMMUNICATIONS_VIEW),
     async (req: StaffRequest, res: Response) => {
         try {
-            const preview = await AudienceService.preview((req.body ?? {}) as AudienceDefinition);
-            return res.json(preview);
+            const resolved = await AudienceService.resolve((req.body ?? {}) as AudienceDefinition);
+            // The eligibility breakdown is computed over everyone the FILTERS
+            // matched, not over those already found eligible — the point is to
+            // show the gap between "who this campaign is for" and "who can
+            // actually receive it", and per channel, because they differ.
+            const channels = await AudienceService.channelBreakdown(resolved.matchedIds);
+            return res.json({ ...resolved.preview, channels });
         } catch (err: any) {
             return fail(res, err, "We couldn't resolve that audience.");
         }
@@ -122,168 +136,14 @@ router.post('/communications/segments',
         }
     });
 
-// ── Campaigns ───────────────────────────────────────────────────────────
-
-router.get('/communications/campaigns',
-    requireStaffPermission(StaffPermission.COMMUNICATIONS_VIEW),
-    async (req: StaffRequest, res: Response) => {
-        try {
-            const status = req.query.status as CampaignStatus | undefined;
-            return res.json({ items: await CampaignService.list({ status }) });
-        } catch (err: any) {
-            return fail(res, err, "We couldn't load campaigns.");
-        }
-    });
-
-router.get('/communications/campaigns/:id',
-    requireStaffPermission(StaffPermission.COMMUNICATIONS_VIEW),
-    async (req: StaffRequest, res: Response) => {
-        try {
-            const campaign = await CampaignService.get(String(req.params.id));
-            const rendered = await CampaignService.renderFor(campaign);
-            return res.json({ campaign, preview: { html: rendered.html, text: rendered.text } });
-        } catch (err: any) {
-            return fail(res, err, "We couldn't load this campaign.");
-        }
-    });
-
-router.post('/communications/campaigns',
-    requireRealStaff, requireStaffPermission(StaffPermission.COMMUNICATIONS_CREATE),
-    async (req: StaffRequest, res: Response) => {
-        try {
-            const campaign = await CampaignService.create(auditActorOf(req.actor), req.body ?? {}, ctxOf(req));
-            return res.status(201).json({ campaign });
-        } catch (err: any) {
-            return fail(res, err, "We couldn't create this campaign.");
-        }
-    });
-
-router.patch('/communications/campaigns/:id',
-    requireRealStaff, requireStaffPermission(StaffPermission.COMMUNICATIONS_CREATE),
-    async (req: StaffRequest, res: Response) => {
-        try {
-            const campaign = await CampaignService.update(
-                auditActorOf(req.actor), String(req.params.id), req.body ?? {}, ctxOf(req));
-            return res.json({ campaign });
-        } catch (err: any) {
-            return fail(res, err, "We couldn't update this campaign.");
-        }
-    });
-
-/** Duplicate, always as a fresh draft — never inheriting an approval. */
-router.post('/communications/campaigns/:id/duplicate',
-    requireRealStaff, requireStaffPermission(StaffPermission.COMMUNICATIONS_CREATE),
-    async (req: StaffRequest, res: Response) => {
-        try {
-            const source = await CampaignService.get(String(req.params.id));
-            const copy = await CampaignService.create(auditActorOf(req.actor), {
-                name: `${source.name} (copy)`,
-                subject: source.subject,
-                previewText: source.previewText,
-                replyTo: source.replyTo,
-                templateKey: source.templateKey,
-                content: source.content as any,
-                segmentId: source.segmentId,
-                audienceDefinition: source.audienceDefinition as any,
-            }, ctxOf(req));
-            return res.status(201).json({ campaign: copy });
-        } catch (err: any) {
-            return fail(res, err, "We couldn't duplicate this campaign.");
-        }
-    });
-
-router.post('/communications/campaigns/:id/test',
-    requireRealStaff, requireStaffPermission(StaffPermission.COMMUNICATIONS_CREATE),
-    async (req: StaffRequest, res: Response) => {
-        try {
-            const result = await CampaignService.sendTest(
-                auditActorOf(req.actor), String(req.params.id),
-                String(req.body?.to ?? ''), ctxOf(req));
-            return res.json(result);
-        } catch (err: any) {
-            return fail(res, err, "We couldn't send the test email.");
-        }
-    });
-
-router.post('/communications/campaigns/:id/request-approval',
-    requireRealStaff, requireStaffPermission(StaffPermission.COMMUNICATIONS_CREATE),
-    async (req: StaffRequest, res: Response) => {
-        try {
-            return res.json({
-                campaign: await CampaignService.requestApproval(
-                    auditActorOf(req.actor), String(req.params.id), ctxOf(req)),
-            });
-        } catch (err: any) {
-            return fail(res, err, "We couldn't request approval.");
-        }
-    });
-
-router.post('/communications/campaigns/:id/approve',
-    requireRealStaff, requireStaffPermission(StaffPermission.COMMUNICATIONS_APPROVE),
-    async (req: StaffRequest, res: Response) => {
-        try {
-            return res.json({
-                campaign: await CampaignService.approve(
-                    auditActorOf(req.actor), String(req.params.id), ctxOf(req)),
-            });
-        } catch (err: any) {
-            return fail(res, err, "We couldn't approve this campaign.");
-        }
-    });
-
-router.post('/communications/campaigns/:id/schedule',
-    requireRealStaff, requireStaffPermission(StaffPermission.COMMUNICATIONS_SCHEDULE),
-    async (req: StaffRequest, res: Response) => {
-        try {
-            return res.json({
-                campaign: await CampaignService.schedule(
-                    auditActorOf(req.actor), String(req.params.id),
-                    String(req.body?.scheduledAt ?? ''),
-                    String(req.body?.timezone ?? 'Africa/Lagos'), ctxOf(req)),
-            });
-        } catch (err: any) {
-            return fail(res, err, "We couldn't schedule this campaign.");
-        }
-    });
-
-router.post('/communications/campaigns/:id/cancel-schedule',
-    requireRealStaff, requireStaffPermission(StaffPermission.COMMUNICATIONS_SCHEDULE),
-    async (req: StaffRequest, res: Response) => {
-        try {
-            return res.json({
-                campaign: await CampaignService.cancelSchedule(
-                    auditActorOf(req.actor), String(req.params.id),
-                    String(req.body?.reason ?? ''), ctxOf(req)),
-            });
-        } catch (err: any) {
-            return fail(res, err, "We couldn't cancel the schedule.");
-        }
-    });
-
-router.post('/communications/campaigns/:id/cancel',
-    requireRealStaff, requireStaffPermission(StaffPermission.COMMUNICATIONS_CREATE),
-    async (req: StaffRequest, res: Response) => {
-        try {
-            return res.json({
-                campaign: await CampaignService.cancel(
-                    auditActorOf(req.actor), String(req.params.id),
-                    String(req.body?.reason ?? ''), ctxOf(req)),
-            });
-        } catch (err: any) {
-            return fail(res, err, "We couldn't cancel this campaign.");
-        }
-    });
-
-/** Everything that must be true before this campaign may be released. */
-router.get('/communications/campaigns/:id/readiness',
-    requireStaffPermission(StaffPermission.COMMUNICATIONS_VIEW),
-    async (req: StaffRequest, res: Response) => {
-        try {
-            return res.json(await CampaignService.readiness(String(req.params.id)));
-        } catch (err: any) {
-            return fail(res, err, "We couldn't check this campaign.");
-        }
-    });
+/*
+ * The legacy single-channel campaign endpoints used to live here.
+ *
+ * They were backed by an entity whose table no longer exists, so every one of
+ * them answered HTTP 500 in production. The dashboard had already moved to the
+ * multi-channel API below, which is now the only campaign surface — one
+ * campaign engine, one send path. See services/campaign_dispatch_worker.ts.
+ */
 
 // ── Suppression and preferences ─────────────────────────────────────────
 
@@ -734,6 +594,168 @@ router.get('/communications/audiences',
     requireStaffPermission(StaffPermission.COMMUNICATIONS_VIEW),
     async (_req: StaffRequest, res: Response) => {
         return res.json({ audiences: audienceOptions() });
+    });
+
+// ── Lifecycle automations ───────────────────────────────────────────────
+//
+// An automation is a standing instruction, so changing one is a different
+// power from drafting a campaign and has its own permission. The consent class
+// is deliberately NOT editable through this API: it is what stops a discount
+// being sent under service consent, and an operator must not be able to move
+// a template across that line.
+
+router.get('/communications/automations',
+    requireStaffPermission(StaffPermission.COMMUNICATIONS_VIEW),
+    async (_req: StaffRequest, res: Response) => {
+        try {
+            return res.json({ items: await LifecycleAutomationService.summary() });
+        } catch (err: any) {
+            return fail(res, err, "We couldn't load the automations.");
+        }
+    });
+
+router.patch('/communications/automations/:key',
+    requireStaffPermission(StaffPermission.COMMUNICATIONS_MANAGE_AUTOMATIONS),
+    async (req: StaffRequest, res: Response) => {
+        try {
+            const key = String(req.params.key);
+            const repo = AppDataSource.getRepository(CommunicationTrigger);
+            const trigger = await repo.findOne({ where: { key } });
+            if (!trigger) return res.status(404).json({ error: 'No such automation.' });
+
+            const body = (req.body ?? {}) as Record<string, unknown>;
+
+            if ('consentClass' in body && body.consentClass !== trigger.consentClass) {
+                return res.status(400).json({
+                    error: 'The consent class of an automation cannot be changed. '
+                         + 'A service message and a marketing message are different things.',
+                });
+            }
+
+            const patch: Record<string, unknown> = {};
+            if (typeof body.enabled === 'boolean') patch.enabled = body.enabled;
+            if (typeof body.delayMinutes === 'number') patch.delayMinutes = Math.max(0, body.delayMinutes | 0);
+            if (typeof body.cooldownMinutes === 'number') patch.cooldownMinutes = Math.max(0, body.cooldownMinutes | 0);
+            if (typeof body.frequencyCap === 'number') patch.frequencyCap = Math.max(0, body.frequencyCap | 0);
+            if (typeof body.frequencyWindowDays === 'number') patch.frequencyWindowDays = Math.max(1, body.frequencyWindowDays | 0);
+
+            if (typeof body.mode === 'string') {
+                const mode = body.mode.toUpperCase();
+                if (!Object.values(AutomationMode).includes(mode as AutomationMode)) {
+                    return res.status(400).json({ error: 'Mode must be TEST, PILOT or PRODUCTION.' });
+                }
+                /*
+                 * Going to PRODUCTION is the moment an automation stops being a
+                 * rehearsal, so it needs the stronger right — the same one that
+                 * releases a campaign — rather than the one that edits a cooldown.
+                 */
+                if (mode === AutomationMode.PRODUCTION
+                    && !req.actor?.permissions?.has(StaffPermission.COMMUNICATIONS_SEND)) {
+                    return res.status(403).json({
+                        error: 'Moving an automation to PRODUCTION requires the communications send permission.',
+                    });
+                }
+                patch.mode = mode;
+            }
+
+            await repo.update(trigger.id, patch as any);
+
+            await AuditService.recordCritical({
+                actor: auditActorOf(req.actor),
+                action: 'AUTOMATION_UPDATED',
+                resourceType: 'COMMUNICATION_TRIGGER',
+                resourceId: key,
+                metadata: { before: {
+                    enabled: trigger.enabled, mode: trigger.mode,
+                    cooldownMinutes: trigger.cooldownMinutes,
+                }, after: patch },
+            });
+
+            const [updated] = (await LifecycleAutomationService.summary()).filter((a: any) => a.key === key);
+            return res.json({ automation: updated });
+        } catch (err: any) {
+            return fail(res, err, "We couldn't update that automation.");
+        }
+    });
+
+// ── Test / pilot cohort ─────────────────────────────────────────────────
+
+router.get('/communications/test-cohort',
+    requireStaffPermission(StaffPermission.COMMUNICATIONS_VIEW),
+    async (_req: StaffRequest, res: Response) => {
+        try {
+            const rows = await AppDataSource.query(
+                `SELECT t.id, t."userId", t.scope, t.note, t."createdAt",
+                        u."firstName", u.email
+                   FROM communication_test_subject t
+                   LEFT JOIN "user" u ON u.id = t."userId"
+                  ORDER BY t."createdAt" DESC`);
+            return res.json({ items: rows });
+        } catch (err: any) {
+            return fail(res, err, "We couldn't load the test cohort.");
+        }
+    });
+
+router.post('/communications/test-cohort',
+    requireStaffPermission(StaffPermission.COMMUNICATIONS_MANAGE_AUTOMATIONS),
+    async (req: StaffRequest, res: Response) => {
+        try {
+            const userId = String((req.body ?? {}).userId ?? '').trim();
+            const scope = String((req.body ?? {}).scope ?? 'TEST').toUpperCase();
+            const note = String((req.body ?? {}).note ?? '').trim() || null;
+            if (!userId) return res.status(400).json({ error: 'A passenger id is required.' });
+            if (scope !== 'TEST' && scope !== 'PILOT') {
+                return res.status(400).json({ error: 'Scope must be TEST or PILOT.' });
+            }
+
+            const user = await AppDataSource.getRepository(User).findOne({ where: { id: userId } });
+            if (!user) return res.status(404).json({ error: 'No such passenger.' });
+
+            const repo = AppDataSource.getRepository(CommunicationTestSubject);
+            try {
+                await repo.insert(repo.create({
+                    userId, scope, note, addedByStaffId: req.actor?.staffUserId ?? null,
+                }));
+            } catch (err: any) {
+                if (String(err?.code) !== '23505') throw err;
+            }
+
+            await AuditService.recordCritical({
+                actor: auditActorOf(req.actor),
+                action: 'COMMS_TEST_SUBJECT_ADDED',
+                resourceType: 'USER', resourceId: userId,
+                passengerId: userId, metadata: { scope, note },
+            });
+            return res.status(201).json({ ok: true });
+        } catch (err: any) {
+            return fail(res, err, "We couldn't add that passenger.");
+        }
+    });
+
+router.delete('/communications/test-cohort/:id',
+    requireStaffPermission(StaffPermission.COMMUNICATIONS_MANAGE_AUTOMATIONS),
+    async (req: StaffRequest, res: Response) => {
+        try {
+            await AppDataSource.getRepository(CommunicationTestSubject)
+                .delete({ id: String(req.params.id) });
+            return res.json({ ok: true });
+        } catch (err: any) {
+            return fail(res, err, "We couldn't remove that passenger.");
+        }
+    });
+
+// ── Per-passenger communication history ─────────────────────────────────
+
+/** What we sent this passenger, and what we deliberately did not send, and why. */
+router.get('/communications/history/:userId',
+    requireStaffPermission(StaffPermission.COMMUNICATIONS_VIEW),
+    async (req: StaffRequest, res: Response) => {
+        try {
+            const items = await LifecycleAutomationService.historyFor(String(req.params.userId));
+            return res.json({ items });
+        } catch (err: any) {
+            return fail(res, err, "We couldn't load that passenger's history.");
+        }
     });
 
 export default router;

@@ -8,6 +8,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:geolocator/geolocator.dart';
 import '../services/reliability_log.dart';
+import '../services/ride_notification_service.dart';
 import '../services/location_foreground_task.dart'
     show kHbUrlKey, kHbTokenKey, startLocationHeartbeatService;
 
@@ -117,6 +118,33 @@ Future<void> answerPresenceWake({String? rideId}) async {
     );
 
     ReliabilityLog.log(RelEvent.wakeAnswered, {'rideId': rideId});
+
+    /*
+     * ── Post the alert ourselves, now that we are running ───────────────
+     *
+     * Reaching this line means Android let our process start, which is the
+     * hard part on an aggressive OEM. Use it: a full-screen-intent
+     * notification wakes the screen and rings over the lock screen, and it
+     * is the ONE presentation MIUI honours without the driver having enabled
+     * "Floating notifications" and lock-screen visibility per channel — both
+     * of which ship OFF on Redmi and were OFF on the field-test handset.
+     *
+     * The alert the server sent alongside this wake sits quietly in the tray
+     * on such a phone. This is what actually gets the driver's attention.
+     */
+    if (rideId != null && rideId.isNotEmpty) {
+      try {
+        await RideNotificationService.instance.showRideRequest(
+          rideId: rideId,
+          title: 'Ride request nearby',
+          body: 'A passenger near you needs a Keke. Tap to take the trip.',
+        );
+      } catch (e) {
+        // An alert we could not draw must never lose us the heartbeat above.
+        ReliabilityLog.log(RelEvent.wakeFailed,
+            {'reason': 'alert_failed', 'detail': e.runtimeType.toString()});
+      }
+    }
 
     // ── Stay awake, rather than needing a knock per ride ────────────────
     //

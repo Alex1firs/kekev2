@@ -12,6 +12,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import '../../../core/services/location_foreground_task.dart';
 import '../../../core/services/battery_optimization_service.dart';
 import '../../../core/services/reliability_log.dart';
+import '../../../core/services/driver_readiness_service.dart';
 import '../../../core/storage/secure_storage.dart';
 import '../domain/chat_message.dart';
 import '../domain/driver_profile.dart';
@@ -2169,6 +2170,15 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
     super.dispose();
   }
 }
+
+/// Whether this handset can actually be reached with work.
+///
+/// Kept beside the driver controller because going online is what triggers
+/// the check, and because the service caches the server's verdict between
+/// checks so a recheck does not always need a round trip.
+final driverReadinessProvider = Provider<DriverReadinessService>((ref) {
+  return DriverReadinessService(ref.watch(apiClientProvider).dio);
+});
 
 final driverControllerProvider = StateNotifierProvider<DriverController, DriverState>((ref) {
   final apiClient = ref.watch(apiClientProvider);

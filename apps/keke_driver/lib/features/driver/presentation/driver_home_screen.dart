@@ -2,6 +2,9 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+
+import '../../../core/services/driver_readiness_service.dart';
+import 'widgets/readiness_setup_sheet.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
@@ -241,7 +244,39 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
     }
 
     ref.read(driverControllerProvider.notifier).toggleOnline();
-    if (Platform.isAndroid) _checkBatteryOptimization();
+    if (Platform.isAndroid) _runReadinessCheck();
+  }
+
+  /// After going online, verify this handset can actually be reached.
+  ///
+  /// ── Why after, and not instead of, going online ─────────────────────
+  /// The driver's decision to work is theirs and is honoured immediately —
+  /// ONLINE intent is durable and nothing here changes it. What this adds is
+  /// honesty: on an OEM that will quietly stop delivering trips, saying
+  /// "You're online" and nothing else is a lie the driver only discovers
+  /// after an empty afternoon.
+  ///
+  /// Replaces the old battery-only prompt, which checked the one restriction
+  /// Android exposes and missed the ones that actually cost trips.
+  Future<void> _runReadinessCheck() async {
+    try {
+      final readiness = ref.read(driverReadinessProvider);
+      await readiness.refreshServerView();
+      final issues = await readiness.check();
+      if (issues.isEmpty || !mounted) return;
+
+      await ReadinessSetupSheet.show(
+        context,
+        issues: issues,
+        provenUnreachable: readiness.provenUnreachable,
+        onRecheck: () async {
+          await readiness.refreshServerView();
+          return readiness.check();
+        },
+      );
+    } catch (_) {
+      // Setup guidance failing must never interfere with being online.
+    }
   }
 
   Future<void> _checkBatteryOptimization() async {

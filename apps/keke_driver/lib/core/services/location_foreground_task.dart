@@ -155,3 +155,24 @@ void initForegroundTask() {
     ),
   );
 }
+
+/// Start the heartbeat foreground service.
+///
+/// Shared so the UI isolate (driver goes online) and the FCM background
+/// isolate (answering a PRESENCE_WAKE after the service was killed) start it
+/// the same way. Two copies of this config would drift, and the one in the
+/// background isolate would drift silently.
+///
+/// Calls `initForegroundTask()` first: the background isolate is a fresh Dart
+/// VM that has never run main(), so the notification channel it needs has not
+/// been configured there.
+Future<void> startLocationHeartbeatService() async {
+  initForegroundTask();
+  if (await FlutterForegroundTask.isRunningService) return;
+  await FlutterForegroundTask.startService(
+    serviceId: 1001,
+    notificationTitle: 'KekeRide is online',
+    notificationText: 'Sharing location for ride requests.',
+    callback: locationTaskCallback,
+  );
+}

@@ -362,7 +362,10 @@
                             <input type="text" id="live-search" placeholder="Search name / phone / email…" oninput="renderLiveRiders()">
                             <select id="live-filter" onchange="renderLiveRiders()">
                                 <option value="all">All statuses</option>
-                                <option value="online">Actively Online</option>
+                                <option value="intent_online">Working (said ONLINE)</option>
+                                <option value="online">Reachable right now</option>
+                                <option value="intent_stale">Working · phone quiet</option>
+                                <option value="unreachable">Working · unreachable</option>
                                 <option value="on_trip">On Trip</option>
                                 <option value="available">Available</option>
                                 <option value="recently">Recently Seen</option>

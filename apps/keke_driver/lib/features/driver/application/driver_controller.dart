@@ -1341,12 +1341,9 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
         await FlutterForegroundTask.restartService();
         ReliabilityLog.log(RelEvent.fgsRestarted, {'reason': 'go_online'});
       } else {
-        await FlutterForegroundTask.startService(
-          serviceId: 1001,
-          notificationTitle: 'KekeRide is online',
-          notificationText: 'Sharing location for ride requests.',
-          callback: locationTaskCallback,
-        );
+        // Shared with the wake path, so the service the background isolate
+        // restarts is configured identically to the one the toggle starts.
+        await startLocationHeartbeatService();
         ReliabilityLog.log(RelEvent.fgsStarted, {'starter': 'go_online'});
       }
     } catch (e) {

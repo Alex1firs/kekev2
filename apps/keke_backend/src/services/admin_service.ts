@@ -8,6 +8,7 @@ import { PayoutRecord, PayoutStatus } from "../models/PayoutRecord";
 import { AuditLog } from "../models/AuditLog";
 import { User, UserRole } from "../models/User";
 import { DeviceToken } from "../models/DeviceToken";
+import { DriverPresenceIntent } from "../models/DriverPresenceIntent";
 import { NotificationService } from "./notification_service";
 import { redis } from "../config/redis";
 import { DispatchService } from "./dispatch_service";
@@ -289,7 +290,22 @@ export class AdminService {
         const ttls = pipeRes.slice(0, ids.length).map(r => Number(r?.[1] ?? -2));
         const geos = pipeRes.slice(ids.length).map(r => r?.[1]);
 
-        const counts = { total: profiles.length, activelyOnline: 0, onTrip: 0, recentlySeen: 0, stale: 0, offline: 0, missingToken: 0 };
+        const counts: Record<string, number> = {
+            total: profiles.length, activelyOnline: 0, onTrip: 0, recentlySeen: 0,
+            stale: 0, offline: 0, missingToken: 0,
+            // Intent-based tallies — the ones that answer "how many drivers
+            // believe they are working right now", which the heartbeat-derived
+            // numbers above cannot.
+            intentOnline: 0, intentStale: 0, intentUnreachable: 0,
+        };
+
+        // Everyone's declared intent, fetched once and read beside the
+        // heartbeat facts rather than instead of them.
+        const intentRows = profiles.length
+            ? await AppDataSource.getRepository(DriverPresenceIntent)
+                .find({ where: profiles.map((p) => ({ driverId: p.userId })) })
+            : [];
+        const intentMap = new Map(intentRows.map((r) => [r.driverId, r]));
 
         const drivers = profiles.map((p, i) => {
             const u = userMap.get(p.userId);
@@ -315,6 +331,24 @@ export class AdminService {
 
             const ride = rideMap.get(p.userId);
             const isActivelyOnline = fresh;
+
+            /*
+             * ── Intent, and why it outranks the heartbeat below ─────────
+             * Everything after this point derives from heartbeat freshness,
+             * which is a fact about a DEVICE. A driver whose phone went quiet
+             * used to be rendered "Offline" here — the same screen Operations
+             * uses to judge supply — even though they had never stopped
+             * working. `presenceIntent` is what they actually said, and
+             * `presenceReachability` is why we can or cannot reach them.
+             */
+            const intentRow = intentMap.get(p.userId);
+            const presenceIntent = intentRow?.state ?? 'OFFLINE';
+            let presenceReachability: string;
+            if (presenceIntent !== 'ONLINE') presenceReachability = 'OFFLINE';
+            else if (fresh) presenceReachability = 'FRESH';
+            else if ((tokenMap.get(p.userId) || []).some((t) => t.isActive)
+                     && (intentRow?.failedWakeCount ?? 0) < 3) presenceReachability = 'STALE';
+            else presenceReachability = 'UNREACHABLE';
 
             let liveStatus: string;
             let reasonOffline: string | null = null;
@@ -351,6 +385,11 @@ export class AdminService {
             else if (liveStatus === "STALE_HEARTBEAT") counts.stale++;
             else counts.offline++;
             if (fcmTokenStatus === "missing") counts.missingToken++;
+            if (presenceIntent === 'ONLINE') {
+                counts.intentOnline = (counts.intentOnline ?? 0) + 1;
+                if (presenceReachability === 'STALE') counts.intentStale = (counts.intentStale ?? 0) + 1;
+                if (presenceReachability === 'UNREACHABLE') counts.intentUnreachable = (counts.intentUnreachable ?? 0) + 1;
+            }
 
             const name = `${p.firstName ?? ""} ${p.lastName ?? ""}`.trim()
                 || (u ? `${u.firstName ?? ""} ${u.lastName ?? ""}`.trim() : "")
@@ -365,6 +404,14 @@ export class AdminService {
                 status: p.status,
                 isApproved: p.status === DriverStatus.APPROVED,
                 liveStatus,
+                // What the driver said, and whether their phone is answering.
+                // Read these in preference to liveStatus: a STALE driver is
+                // still working, and showing them as offline is what hid this
+                // whole class of failure.
+                presenceIntent,
+                presenceReachability,
+                presenceSince: intentRow?.since ? new Date(intentRow.since).toISOString() : null,
+                failedWakeCount: intentRow?.failedWakeCount ?? 0,
                 isActivelyOnline,
                 isHeartbeatFresh: fresh,
                 lastHeartbeatAt,

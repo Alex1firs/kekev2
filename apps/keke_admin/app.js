@@ -1010,6 +1010,9 @@ async function fetchLiveRiders() {
 function liveRiderMatches(r, f) {
     switch (f) {
         case 'online':        return r.isActivelyOnline;
+        case 'intent_online': return r.presenceIntent === 'ONLINE';
+        case 'intent_stale':  return r.presenceIntent === 'ONLINE' && r.presenceReachability === 'STALE';
+        case 'unreachable':   return r.presenceIntent === 'ONLINE' && r.presenceReachability === 'UNREACHABLE';
         case 'on_trip':       return r.liveStatus === 'ON_TRIP';
         case 'available':     return r.rideState === 'available';
         case 'recently':      return r.liveStatus === 'RECENTLY_SEEN';
@@ -1030,10 +1033,11 @@ function renderLiveRiders() {
     const c = liveRidersData.counts || {};
     const stats = document.getElementById('live-stats');
     if (stats) stats.innerHTML = `
-        <span class="chip chip-online">${c.activelyOnline || 0} Actively Online</span>
+        <span class="chip chip-intent">${c.intentOnline || 0} Working (intent)</span>
+        <span class="chip chip-online">${c.activelyOnline || 0} Reachable now</span>
         <span class="chip chip-trip">${c.onTrip || 0} On Trip</span>
-        <span class="chip chip-recent">${c.recentlySeen || 0} Recently Seen</span>
-        <span class="chip chip-stale">${c.stale || 0} Stale</span>
+        <span class="chip chip-stale">${c.intentStale || 0} Working · phone quiet</span>
+        <span class="chip chip-warn">${c.intentUnreachable || 0} Working · unreachable</span>
         <span class="chip chip-offline">${c.offline || 0} Offline</span>
         <span class="chip chip-warn">${c.missingToken || 0} No Push Token</span>`;
 
@@ -1042,10 +1046,23 @@ function renderLiveRiders() {
         (!q || (r.name || '').toLowerCase().includes(q) || (r.phone || '').toLowerCase().includes(q) || (r.email || '').toLowerCase().includes(q))
     );
 
+    /*
+     * Grouped by INTENT first, reachability second.
+     *
+     * These groups used to be derived from heartbeat freshness alone, so a
+     * driver sitting in their keke waiting for work appeared under "Offline"
+     * the moment their phone stopped beating — the same screen Operations uses
+     * to judge supply. A driver only appears under Offline now if they said so.
+     */
     const groups = [
-        { title: 'Actively Online Riders',        test: r => r.isActivelyOnline },
-        { title: 'Recently Seen / Stale Riders',  test: r => r.liveStatus === 'RECENTLY_SEEN' || r.liveStatus === 'STALE_HEARTBEAT' },
-        { title: 'Offline Approved Riders',       test: r => r.liveStatus === 'OFFLINE' || r.liveStatus === 'NEVER_SEEN' },
+        { title: 'Working · reachable now',
+          test: r => r.presenceIntent === 'ONLINE' && r.presenceReachability === 'FRESH' },
+        { title: 'Working · phone quiet (will be woken when needed)',
+          test: r => r.presenceIntent === 'ONLINE' && r.presenceReachability === 'STALE' },
+        { title: 'Working · UNREACHABLE (needs attention)',
+          test: r => r.presenceIntent === 'ONLINE' && r.presenceReachability === 'UNREACHABLE' },
+        { title: 'Offline — the driver said so',
+          test: r => r.presenceIntent !== 'ONLINE' },
     ];
 
     const container = document.getElementById('live-groups');

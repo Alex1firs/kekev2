@@ -2440,3 +2440,6 @@ body.authenticated .admin-container { display: flex; }
 .dw-amount { font-variant-numeric: tabular-nums; font-weight: 700; }
 .dw-pos { color: var(--accent-emerald); }
 .dw-neg { color: var(--accent-rose); }
+
+/* Driver presence: what the driver SAID, distinct from what their phone is doing. */
+.chip-intent { background: rgba(56,189,248,.15); color: #38bdf8; border: 1px solid #38bdf8; }

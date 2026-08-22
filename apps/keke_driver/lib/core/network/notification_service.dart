@@ -7,7 +7,8 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:geolocator/geolocator.dart';
 import '../services/reliability_log.dart';
-import '../services/location_foreground_task.dart' show kHbUrlKey, kHbTokenKey;
+import '../services/location_foreground_task.dart'
+    show kHbUrlKey, kHbTokenKey, startLocationHeartbeatService;
 
 /// Background message handler.
 ///
@@ -100,6 +101,31 @@ Future<void> answerPresenceWake({String? rideId}) async {
     );
 
     ReliabilityLog.log(RelEvent.wakeAnswered, {'rideId': rideId});
+
+    // ── Stay awake, rather than needing a knock per ride ────────────────
+    //
+    // Answering once proves the phone is alive but does nothing to keep it
+    // that way: if an OEM battery manager killed the foreground service, the
+    // driver goes stale again within the minute and every subsequent offer
+    // pays the wake round-trip. Restarting the service here is what turns one
+    // wake into a working shift.
+    //
+    // Android only, and best-effort. A high-priority FCM message grants a
+    // short window in which a background app may start a foreground service;
+    // outside that window Android 12+ refuses, which is a refusal to log
+    // rather than an error to surface. iOS has no equivalent and does not
+    // need one — it answers each wake individually.
+    if (Platform.isAndroid) {
+      try {
+        if (!await FlutterForegroundTask.isRunningService) {
+          await startLocationHeartbeatService();
+          ReliabilityLog.log(RelEvent.fgsStarted, {'starter': 'wake'});
+        }
+      } catch (e) {
+        ReliabilityLog.log(RelEvent.wakeFailed,
+            {'reason': 'fgs_restart_denied', 'detail': e.runtimeType.toString()});
+      }
+    }
   } catch (e) {
     // Never rethrow from a background isolate: an unhandled error here is a
     // crash the driver would see as the app dying in their pocket.

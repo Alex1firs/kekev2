@@ -33,6 +33,9 @@ import {
     outcomeFromDispatchCode,
 } from '../services/ride_outcome';
 import { publishCommunicationEvent } from '../services/communication_events';
+import { DriverCandidateService } from '../services/driver_candidate_service';
+import { DriverIntentService } from '../services/driver_intent_service';
+import { IntentActor } from '../models/DriverPresenceIntent';
 import { User, UserRole } from '../models/User';
 import { AppDataSource } from '../config/data_source';
 import { Ride } from '../models/Ride';
@@ -577,6 +580,9 @@ export class SocketHandler {
                 }
 
                 await DispatchService.updateDriverLocation(data.driverId, data.lat, data.lng);
+                // Same as the HTTP path: the beat declares intent and proves
+                // the device answered. Never lets ONLINE lapse on its own.
+                await DriverIntentService.recordHeartbeat(data.driverId);
 
                 /*
                  * Park presence, from the position the phone just reported.
@@ -620,7 +626,11 @@ export class SocketHandler {
             socket.on('driver:offline', async (raw) => {
                 const data = validate(Schemas.driverOffline, raw, socket);
                 if (!data) return;
-                await DispatchService.removeDriverAvailability(data.driverId);
+                // A deliberate toggle is one of the few things allowed to end
+                // ONLINE. removeDriverAvailability happens inside setOffline.
+                await DriverIntentService.setOffline(
+                    data.driverId, IntentActor.DRIVER, null, 'driver toggled offline',
+                );
                 log.info(`Driver ${data.driverId} went offline`);
             });
 
@@ -1922,8 +1932,24 @@ export class SocketHandler {
         const isCash = payload.isCash === true;
 
         return {
-            findNearby: (lat, lng, radiusKm, limit) =>
-                DispatchService.findNearbyDriversWithDistance(lat, lng, radiusKm, limit),
+            /*
+             * Fresh drivers first, exactly as before. Only if that cannot fill
+             * the round do we knock on the phones of drivers who are ONLINE but
+             * quiet — and they join only on a fix taken after they answered.
+             */
+            findNearby: async (lat, lng, radiusKm, limit) => {
+                const { candidates, wakes } = await DriverCandidateService.findFor(
+                    lat, lng, radiusKm, limit, { wantWakes: true, rideId },
+                );
+                if (wakes.length > 0) {
+                    rlog('presence_wake', {
+                        rideId,
+                        woken: wakes.length,
+                        answered: wakes.filter((w) => w.answered).length,
+                    });
+                }
+                return candidates.map(({ driverId, distanceKm }) => ({ driverId, distanceKm }));
+            },
 
             isDriverAvailable: (driverId) => DispatchService.isDriverAvailable(driverId),
 

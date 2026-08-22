@@ -13,6 +13,7 @@ import { EmailAudienceSegment } from "../models/EmailAudienceSegment";
 import { CommunicationCampaign, CommunicationCampaignChannel } from "../models/CommunicationCampaign";
 import { MarketingPushJob } from "../models/MarketingPushJob";
 import { CommunicationTrigger } from "../models/CommunicationTrigger";
+import { DriverPresenceIntent } from "../models/DriverPresenceIntent";
 import { CommunicationDispatch } from "../models/CommunicationDispatch";
 import { CommunicationTestSubject } from "../models/CommunicationTestSubject";
 
@@ -35,6 +36,7 @@ export const AppDataSource = new DataSource({
     MarketingPushJob, EmailWebhookEvent,
     CommunicationCampaignEvent, InAppMessageDelivery,
     CommunicationTrigger, CommunicationDispatch, CommunicationTestSubject,
+    DriverPresenceIntent,
 ],
 
     migrations: ["dist/migrations/*.js"],

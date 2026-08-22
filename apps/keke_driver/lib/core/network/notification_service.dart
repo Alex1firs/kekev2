@@ -4,7 +4,10 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'package:geolocator/geolocator.dart';
 import '../services/reliability_log.dart';
+import '../services/location_foreground_task.dart' show kHbUrlKey, kHbTokenKey;
 
 /// Background message handler.
 ///
@@ -18,12 +21,90 @@ import '../services/reliability_log.dart';
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp();
+  final type = message.data['type'];
   ReliabilityLog.log(RelEvent.fcmReceived, {
     'state': 'background',
-    'type': message.data['type'],
+    'type': type,
     'rideId': message.data['rideId'],
     'hasNotification': message.notification != null,
   });
+
+  // A PRESENCE_WAKE is the server saying "we cannot see your phone and a
+  // passenger needs you". It is data-only and invisible on purpose: the
+  // driver should never see it, they should just start getting offers again.
+  if (type == 'PRESENCE_WAKE') {
+    await answerPresenceWake(rideId: message.data['rideId']?.toString());
+  }
+}
+
+/// Answer a wake-up push: take a fresh fix and post it as a heartbeat.
+///
+/// ── Why this is enough ──────────────────────────────────────────────────
+/// The driver's ONLINE intent already lives on the server and never lapsed.
+/// The only thing missing was a current position, so that is the only thing
+/// this has to supply. One successful beat puts the driver back in the normal
+/// dispatch pool, and the ride offer follows moments later on the same
+/// connection — with no toggle, no tap and no app reopen.
+///
+/// Runs in the FCM background isolate, which has no Riverpod and no auth
+/// state, so the credentials come from the same cross-isolate store the
+/// Android foreground service already populates.
+@pragma('vm:entry-point')
+Future<void> answerPresenceWake({String? rideId}) async {
+  ReliabilityLog.log(RelEvent.wakeReceived, {'rideId': rideId});
+  try {
+    final url = await FlutterForegroundTask.getData<String>(key: kHbUrlKey);
+    final token = await FlutterForegroundTask.getData<String>(key: kHbTokenKey);
+    if (url == null || token == null || url.isEmpty || token.isEmpty) {
+      // No stored credentials means the driver is not signed in on this
+      // device. Nothing to answer with, and nothing is wrong.
+      ReliabilityLog.log(RelEvent.wakeFailed, {'reason': 'no_context'});
+      return;
+    }
+
+    // A last-known fix is accepted first so a woken phone answers in about a
+    // second rather than waiting on a cold GPS lock, which on a keke under a
+    // roof can take 30s or never. Accuracy is refined by the beats that follow.
+    Position? pos;
+    try {
+      pos = await Geolocator.getLastKnownPosition();
+    } catch (_) {/* fall through to a live fix */}
+
+    final fresh = pos == null ||
+        DateTime.now().difference(pos.timestamp).inMinutes >= 2;
+    if (fresh) {
+      try {
+        pos = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.medium,
+          timeLimit: const Duration(seconds: 8),
+        );
+      } catch (_) {
+        // Keep whatever last-known fix we had; a slightly old position that
+        // reaches the server beats no answer at all.
+      }
+    }
+
+    if (pos == null) {
+      ReliabilityLog.log(RelEvent.wakeFailed, {'reason': 'no_location'});
+      return;
+    }
+
+    final dio = Dio(BaseOptions(
+      connectTimeout: const Duration(seconds: 8),
+      receiveTimeout: const Duration(seconds: 8),
+    ));
+    await dio.post(
+      '\$url/drivers/heartbeat',
+      data: {'lat': pos.latitude, 'lng': pos.longitude},
+      options: Options(headers: {'Authorization': 'Bearer \$token'}),
+    );
+
+    ReliabilityLog.log(RelEvent.wakeAnswered, {'rideId': rideId});
+  } catch (e) {
+    // Never rethrow from a background isolate: an unhandled error here is a
+    // crash the driver would see as the app dying in their pocket.
+    ReliabilityLog.log(RelEvent.wakeFailed, {'reason': e.runtimeType.toString()});
+  }
 }
 
 class NotificationService {
@@ -79,6 +160,12 @@ class NotificationService {
           'type': message.data['type'],
           'rideId': message.data['rideId'],
         });
+        // A wake can arrive while the app is alive — the server cannot know
+        // what state the phone is in. Answering is cheap, and it re-freshes
+        // the availability key even if the heartbeat timer has been throttled.
+        if (message.data['type'] == 'PRESENCE_WAKE') {
+          unawaited(answerPresenceWake(rideId: message.data['rideId']?.toString()));
+        }
       });
       FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
         print('[PUSH] Notification tapped (from background): ${message.data}');

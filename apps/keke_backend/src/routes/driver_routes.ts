@@ -12,6 +12,8 @@ import path from "path";
 import fs from "fs";
 import sharp from "sharp";
 import { DispatchService } from "../services/dispatch_service";
+import { DriverIntentService } from '../services/driver_intent_service';
+import { IntentActor } from '../models/DriverPresenceIntent';
 import { NearbyKekeFeedService } from "../services/nearby_keke_feed_service";
 import { SmileIdService } from "../services/smile_id_service";
 
@@ -261,6 +263,63 @@ router.post("/verify-nin", authMiddleware, async (req: AuthRequest, res: Respons
 });
 
 /**
+ * POST /api/v1/drivers/presence
+ *
+ * The driver declaring whether they are working. This is the authoritative
+ * statement of intent, and the only thing besides an admin or a logout that
+ * may end an ONLINE state.
+ *
+ * Additive: the shipped APK does not call this and does not need to — a
+ * heartbeat already carries the same declaration (see
+ * DriverIntentService.recordHeartbeat). A newer client calls this so that
+ * going online is explicit rather than inferred, and so that going offline is
+ * recorded even if the socket is down.
+ */
+router.post("/presence", authMiddleware, async (req: AuthRequest, res: Response) => {
+    try {
+        const userId = req.user!.userId;
+        const raw = String((req.body ?? {}).state ?? '').trim().toUpperCase();
+        if (raw !== 'ONLINE' && raw !== 'OFFLINE') {
+            return res.status(400).json(errBody(ErrorCode.VALIDATION_ERROR, "state must be ONLINE or OFFLINE."));
+        }
+        const reason = String((req.body ?? {}).reason ?? '').trim() || null;
+
+        if (raw === 'ONLINE') {
+            const profile = await AppDataSource.getRepository(DriverProfile).findOneBy({ userId });
+            if (!profile || profile.status !== DriverStatus.APPROVED) {
+                return res.status(403).json(errBody(ErrorCode.FORBIDDEN, "Driver is not approved to be online."));
+            }
+            await DriverIntentService.setOnline(userId, IntentActor.DRIVER, null, reason);
+        } else {
+            // A deliberate sign-out is recorded as such, so the audit trail can
+            // tell "logged out" apart from "toggled off".
+            const actor = reason === 'logout' ? IntentActor.LOGOUT : IntentActor.DRIVER;
+            await DriverIntentService.setOffline(userId, actor, null, reason);
+        }
+
+        return res.json({ presence: await DriverIntentService.healthOf(userId) });
+    } catch (err: any) {
+        console.error('[DRIVER] presence error:', err?.message);
+        return res.status(500).json(errBody(ErrorCode.INTERNAL_ERROR, "Could not update presence."));
+    }
+});
+
+/**
+ * GET /api/v1/drivers/presence
+ *
+ * What the platform believes about this driver, so the app can tell them the
+ * truth: ONLINE and reachable, ONLINE but we cannot see your phone, or offline.
+ * Today a driver has no way to know they have stopped receiving offers.
+ */
+router.get("/presence", authMiddleware, async (req: AuthRequest, res: Response) => {
+    try {
+        return res.json({ presence: await DriverIntentService.healthOf(req.user!.userId) });
+    } catch (err: any) {
+        return res.status(500).json(errBody(ErrorCode.INTERNAL_ERROR, "Could not read presence."));
+    }
+});
+
+/**
  * POST /api/v1/drivers/heartbeat
  * HTTP fallback for the driver availability heartbeat. The Android foreground
  * service posts here every ~12s from its own isolate so the driver stays in the
@@ -288,6 +347,9 @@ router.post("/heartbeat", authMiddleware, async (req: AuthRequest, res: Response
         }
 
         await DispatchService.updateDriverLocation(userId, latN, lngN);
+        // The beat is both a declaration ("I am working") and proof the device
+        // answered. Recording it is what makes ONLINE survive the 45s window.
+        await DriverIntentService.recordHeartbeat(userId);
         if (process.env.HEARTBEAT_DEBUG_LOG === 'true') {
             console.log(`[HB] ${new Date().toISOString()} driver=${userId} lat=${latN} lng=${lngN}`);
         }

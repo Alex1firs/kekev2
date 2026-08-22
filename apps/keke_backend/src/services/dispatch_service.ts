@@ -288,6 +288,18 @@ export class DispatchService {
    * exposed for reuse/testing. An offline or stale-heartbeat driver returns false
    * even if their app still shows "online".
    */
+  /**
+   * Forget that a driver was deliberately offline.
+   *
+   * Called when intent flips back to ONLINE, so admin tooling stops showing a
+   * driver as Offline the instant they say they are working — rather than
+   * waiting for their first heartbeat, which on a stale device may be a
+   * wake-push away.
+   */
+  static async clearOfflineTombstone(driverId: string): Promise<void> {
+    await redis.del(`${this.DRIVER_OFFLINE_PREFIX}${driverId}`);
+  }
+
   static async isDriverAvailable(driverId: string): Promise<boolean> {
     return (await redis.get(`${this.DRIVER_AVAILABILITY_PREFIX}${driverId}`)) === 'true';
   }

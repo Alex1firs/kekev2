@@ -927,6 +927,9 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
       if (_socketService != null) {
         _socketService!.emit('driver:offline', {'driverId': _userId});
       }
+      // Declare it over HTTP as well. The socket may be down at exactly the
+      // moment a driver stops work, and going offline must not depend on it.
+      _declarePresence(false, reason: 'driver toggled offline');
       return;
     }
 
@@ -977,7 +980,28 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
     );
     _startHeartbeat();
     _startLocationForegroundService(); // async fire-and-forget
+    _declarePresence(true, reason: 'driver toggled online');
     _refreshBatteryWarning();
+  }
+
+  /// Tell the server whether this driver is working.
+  ///
+  /// Fire-and-forget: the heartbeat carries the same declaration, so a failed
+  /// call here costs nothing and must never block or fail the toggle the
+  /// driver just made. Going online has to feel instant even on a bad
+  /// connection.
+  void _declarePresence(bool online, {String? reason}) {
+    unawaited(() async {
+      try {
+        await _apiClient.dio.post('/drivers/presence', data: {
+          'state': online ? 'ONLINE' : 'OFFLINE',
+          if (reason != null) 'reason': reason,
+        });
+      } catch (_) {
+        // Silent by design. The next heartbeat re-asserts ONLINE, and an
+        // OFFLINE that failed to post is re-sent when the app next starts.
+      }
+    }());
   }
 
   /// Restores Online after an app restart / process kill if the driver had
@@ -1270,24 +1294,33 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
     } catch (_) {}
   }
 
-  Future<void> _startLocationForegroundService() async {
-    if (!Platform.isAndroid) return;
-    // Hand the heartbeat context to the service isolate BEFORE it starts so its
-    // onStart/onRepeatEvent can post the HTTP heartbeat with a valid token.
+  /// Publish the heartbeat credentials to the cross-isolate store.
+  ///
+  /// BOTH platforms, deliberately. On Android the foreground-service isolate
+  /// reads them; on iOS the FCM background isolate does, when it answers a
+  /// PRESENCE_WAKE. This used to live inside the Android-only branch below,
+  /// which is why an iOS device woken by the server had no credentials to
+  /// answer with and stayed silently unreachable.
+  Future<void> _publishHeartbeatContext() async {
     final token = _authToken;
-    if (token != null) {
+    if (token == null) return;
+    try {
+      await FlutterForegroundTask.saveData(key: kHbUrlKey, value: EnvConfig.current.apiBaseUrl);
+      await FlutterForegroundTask.saveData(key: kHbTokenKey, value: token);
+      await FlutterForegroundTask.saveData(key: kHbUserKey, value: _userId);
       try {
-        await FlutterForegroundTask.saveData(key: kHbUrlKey, value: EnvConfig.current.apiBaseUrl);
-        await FlutterForegroundTask.saveData(key: kHbTokenKey, value: token);
-        await FlutterForegroundTask.saveData(key: kHbUserKey, value: _userId);
-        // App version for the richer heartbeat payload (best-effort).
-        try {
-          final info = await PackageInfo.fromPlatform();
-          await FlutterForegroundTask.saveData(
-              key: kHbAppVersionKey, value: '${info.version}+${info.buildNumber}');
-        } catch (_) {}
+        final info = await PackageInfo.fromPlatform();
+        await FlutterForegroundTask.saveData(
+            key: kHbAppVersionKey, value: '${info.version}+${info.buildNumber}');
       } catch (_) {}
-    }
+    } catch (_) {}
+  }
+
+  Future<void> _startLocationForegroundService() async {
+    // Credentials first, on every platform — the wake path needs them even
+    // where there is no foreground service to start.
+    await _publishHeartbeatContext();
+    if (!Platform.isAndroid) return;
     // Ensure background location ("Allow all the time") so the service isolate
     // can fetch a fix while the app is backgrounded/locked. Best-effort — the
     // service still works whileInUse when the FGS is running, but 'always' is

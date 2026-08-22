@@ -120,6 +120,8 @@ export class NotificationService {
         // passenger pushes (keke_ride_updates). Anything else falls back to each
         // app's default_notification_channel_id.
         let androidChannelId: string | undefined;
+        // A ride offer is the one message whose timeliness is the product.
+        const isRideOffer = type === 'NEW_REQUEST';
         if (type === 'NEW_REQUEST') androidChannelId = 'keke_ride_requests';
         else if (type === 'RIDE_ASSIGNED' || type === 'RIDE_ARRIVED') androidChannelId = 'keke_ride_updates';
 
@@ -135,6 +137,10 @@ export class NotificationService {
             },
             android: {
                 priority: 'high',
+                // A ride offer is worthless once the search has moved on, and a
+                // stale one arriving later is worse than none. Everything else
+                // keeps FCM's default lifetime.
+                ...(isRideOffer ? { ttl: 60_000 } : {}),
                 notification: {
                     sound: sound.replace('.wav', ''), // Android <8 uses this; 8+ takes the sound from the channel
                     // Route ride alerts to each app's high-importance channel so
@@ -144,10 +150,29 @@ export class NotificationService {
                 }
             },
             apns: {
+                /*
+                 * ── Why these headers matter ────────────────────────────
+                 * Without an explicit apns-priority and push-type, APNs is
+                 * free to delay or coalesce a message to a backgrounded app —
+                 * which is exactly when a driver needs the offer most. iOS had
+                 * neither, so background delivery was never dependable.
+                 *
+                 * `contentAvailable` additionally wakes the app so its Dart
+                 * background handler runs and can refresh presence, rather
+                 * than the alert merely sitting in the tray until tapped.
+                 */
+                headers: {
+                    'apns-priority': '10',            // deliver immediately
+                    'apns-push-type': 'alert',
+                    ...(isRideOffer
+                        ? { 'apns-expiration': String(Math.floor(Date.now() / 1000) + 60) }
+                        : {}),
+                },
                 payload: {
                     aps: {
                         sound: sound,
                         badge: 1,
+                        ...(isRideOffer ? { contentAvailable: true, interruptionLevel: 'time-sensitive' } : {}),
                     },
                 },
             },

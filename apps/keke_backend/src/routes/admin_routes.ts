@@ -22,6 +22,8 @@ import { SosAlert, SosAlertStatus } from "../models/SosAlert";
 import { Ride } from "../models/Ride";
 import { User } from "../models/User";
 import { WalletService } from "../services/wallet_service";
+import { DriverIntentService } from '../services/driver_intent_service';
+import { IntentActor } from '../models/DriverPresenceIntent';
 import { upload } from "../middleware/upload_middleware";
 import path from "path";
 import fs from "fs";
@@ -1096,6 +1098,81 @@ router.post(
         res.status(500).json({ error: err.message });
     }
 });
+
+/**
+ * GET /admin/driver-presence
+ *
+ * Work intent and device health, side by side.
+ *
+ * The column that matters is `reachability`. A driver who is ONLINE but
+ * UNREACHABLE used to be invisible — they simply vanished from dispatch and
+ * nobody, including the driver, knew. Now it is a state Operations can see and
+ * act on, without the platform ever having overwritten what the driver said.
+ */
+router.get("/driver-presence",
+    requireStaffPermission(StaffPermission.MONITOR_READ),
+    async (req: Request, res: Response) => {
+        try {
+            const summary = await DriverIntentService.fleetSummary();
+            const onlineIds = await DriverIntentService.onlineDriverIds();
+            const health = await DriverIntentService.healthOfMany(onlineIds);
+
+            const profiles = onlineIds.length
+                ? await AppDataSource.getRepository(DriverProfile)
+                    .find({ where: onlineIds.map((userId) => ({ userId })) })
+                : [];
+            const nameOf = new Map(profiles.map((p) => [p.userId, `${p.firstName ?? ''} ${p.lastName ?? ''}`.trim()]));
+
+            const rows = onlineIds.map((id) => {
+                const h = health.get(id)!;
+                return {
+                    driverId: id,
+                    name: nameOf.get(id) || 'Unknown',
+                    intent: h.intent,
+                    reachability: h.reachability,
+                    heartbeatAgeSeconds: h.heartbeatAgeSeconds,
+                    locationAgeSeconds: h.locationAgeSeconds,
+                    hasPushToken: h.hasPushToken,
+                    failedWakeCount: h.failedWakeCount,
+                };
+            }).sort((a, b) => {
+                // Problems first — that is what this screen is for.
+                const rank: Record<string, number> = { UNREACHABLE: 0, STALE: 1, FRESH: 2, OFFLINE: 3 };
+                return (rank[a.reachability] ?? 9) - (rank[b.reachability] ?? 9);
+            });
+
+            return res.json({ summary, drivers: rows });
+        } catch (err: any) {
+            return res.status(500).json({ error: err.message });
+        }
+    });
+
+/**
+ * POST /admin/drivers/:driverId/presence
+ * An authorised staff member ending (or restoring) a driver's ONLINE state.
+ */
+router.post("/drivers/:driverId/presence",
+    requireRealStaff,
+    requireStaffPermission(StaffPermission.RIDE_INTERVENE),
+    async (req: Request, res: Response) => {
+        try {
+            const driverId = String(req.params.driverId);
+            const state = String((req.body ?? {}).state ?? '').toUpperCase();
+            const reason = String((req.body ?? {}).reason ?? '').trim() || null;
+            if (state !== 'ONLINE' && state !== 'OFFLINE') {
+                return res.status(400).json({ error: 'state must be ONLINE or OFFLINE.' });
+            }
+            const actor = legacyAuditActor(req as AdminRequest);
+            if (state === 'ONLINE') {
+                await DriverIntentService.setOnline(driverId, IntentActor.ADMIN, actor, reason);
+            } else {
+                await DriverIntentService.setOffline(driverId, IntentActor.ADMIN, actor, reason);
+            }
+            return res.json({ presence: await DriverIntentService.healthOf(driverId) });
+        } catch (err: any) {
+            return res.status(500).json({ error: err.message });
+        }
+    });
 
 // Staff management, the audit log and the new contact-reveal endpoints.
 //

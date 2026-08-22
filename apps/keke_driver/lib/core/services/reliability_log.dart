@@ -59,6 +59,10 @@ class RelEvent {
   static const locationObtained = 'location_obtained';
   static const locationFailed = 'location_failed';
   static const fcmReceived = 'fcm_received';
+  // Presence wake: the server knocked on a quiet device, and what came of it.
+  static const wakeReceived = 'wake_received';
+  static const wakeAnswered = 'wake_answered';
+  static const wakeFailed = 'wake_failed';
   static const rideNotificationShown = 'ride_notification_shown';
   static const rideNotificationDuplicateSuppressed = 'ride_notification_dupe_suppressed';
   static const batteryRestrictionDetected = 'battery_restriction_detected';

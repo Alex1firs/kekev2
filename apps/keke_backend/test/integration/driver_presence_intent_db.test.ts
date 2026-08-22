@@ -388,6 +388,101 @@ describeDb('driver presence — intent vs device health (database)', () => {
         expect(msg.apns.headers['apns-push-type']).toBe('background');
     });
 
+    // ══ Path A: the ring must not depend on our process starting ════════
+
+    it('an audible wake carries a notification block on the ride-request channel', async () => {
+        const d = await driver();
+        await Intent.setOnline(d);
+
+        const admin = require('firebase-admin');
+        const sendSpy = jest.fn().mockResolvedValue({ successCount: 1, failureCount: 0, responses: [{ success: true }] });
+        jest.spyOn(admin, 'messaging').mockReturnValue({ sendEachForMulticast: sendSpy } as any);
+
+        await Wake.wake(d, { rideId: 'R-AUDIBLE', audible: true });
+
+        const msg = sendSpy.mock.calls[0][0];
+        /*
+         * This block is what Google Play Services renders on the device
+         * WITHOUT starting our app. A Redmi with MIUI Autostart off — the
+         * default for a sideloaded APK — will never run our background
+         * isolate, so a data-only wake is silent there no matter how correct
+         * the Dart is. The ring has to live here.
+         */
+        expect(msg.notification).toBeDefined();
+        expect(msg.notification.title).toBe('Ride request nearby');
+        expect(msg.android.notification.channelId).toBe('keke_ride_requests');
+        expect(msg.android.notification.sound).toBe('keke_ring');
+        expect(msg.android.priority).toBe('high');
+        // Path B rides along on the same message.
+        expect(msg.data.type).toBe('PRESENCE_WAKE');
+    });
+
+    it('the audible wake does not claim a ride has been assigned', async () => {
+        const d = await driver();
+        await Intent.setOnline(d);
+        const admin = require('firebase-admin');
+        const sendSpy = jest.fn().mockResolvedValue({ successCount: 1, failureCount: 0, responses: [{ success: true }] });
+        jest.spyOn(admin, 'messaging').mockReturnValue({ sendEachForMulticast: sendSpy } as any);
+
+        await Wake.wake(d, { rideId: 'R1', audible: true });
+        const text = `${sendSpy.mock.calls[0][0].notification.title} ${sendSpy.mock.calls[0][0].notification.body}`.toLowerCase();
+
+        // No ride is assigned at this point and the driver must not be told
+        // one is — they would act on it and find nothing.
+        expect(text).not.toContain('assigned');
+        expect(text).not.toContain('you have a ride');
+        expect(text).toContain('nearby');
+    });
+
+    it('a silent wake carries no notification block at all', async () => {
+        const d = await driver();
+        await Intent.setOnline(d);
+        const admin = require('firebase-admin');
+        const sendSpy = jest.fn().mockResolvedValue({ successCount: 1, failureCount: 0, responses: [{ success: true }] });
+        jest.spyOn(admin, 'messaging').mockReturnValue({ sendEachForMulticast: sendSpy } as any);
+
+        await Wake.wake(d, { rideId: 'R1', audible: false });
+
+        expect(sendSpy.mock.calls[0][0].notification).toBeUndefined();
+        expect(sendSpy.mock.calls[0][0].android.notification).toBeUndefined();
+    });
+
+    it('a driver is rung at most once for the same ride', async () => {
+        const d = await driver();
+        await Intent.setOnline(d);
+        const admin = require('firebase-admin');
+        const sendSpy = jest.fn().mockResolvedValue({ successCount: 1, failureCount: 0, responses: [{ success: true }] });
+        jest.spyOn(admin, 'messaging').mockReturnValue({ sendEachForMulticast: sendSpy } as any);
+
+        await Wake.wake(d, { rideId: 'R-SAME', audible: true });
+        await redis.del(`driver:wake:${d}`);          // clear only the send cooldown
+        await Wake.wake(d, { rideId: 'R-SAME', audible: true });
+
+        // Dispatch re-queries every round; a driver rung four times for one
+        // passenger learns to ignore the sound.
+        expect(sendSpy).toHaveBeenCalledTimes(2);
+        expect(sendSpy.mock.calls[0][0].notification).toBeDefined();
+        expect(sendSpy.mock.calls[1][0].notification).toBeUndefined();
+    });
+
+    it('only the nearest few are rung; the rest are woken silently', async () => {
+        const ids: string[] = [];
+        for (let i = 0; i < 5; i++) {
+            const d = await driver();
+            await Intent.setOnline(d);
+            ids.push(d);
+        }
+        const admin = require('firebase-admin');
+        const sendSpy = jest.fn().mockResolvedValue({ successCount: 1, failureCount: 0, responses: [{ success: true }] });
+        jest.spyOn(admin, 'messaging').mockReturnValue({ sendEachForMulticast: sendSpy } as any);
+
+        await Wake.wakeMany(ids, { rideId: 'R-MANY', audibleLimit: 3 });
+
+        const audibleCount = sendSpy.mock.calls.filter((c: any[]) => c[0].notification).length;
+        expect(sendSpy).toHaveBeenCalledTimes(5);
+        expect(audibleCount).toBe(3);
+    });
+
     // ══ Fleet reporting ═════════════════════════════════════════════════
 
     it('reports ONLINE-but-unreachable as its own state instead of hiding it', async () => {

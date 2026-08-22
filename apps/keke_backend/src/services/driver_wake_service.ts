@@ -50,7 +50,10 @@ export class DriverWakeService {
      * Nothing else counts, because nothing else proves the device is really
      * there and really knows where it is.
      */
-    static async wake(driverId: string, context: { rideId?: string } = {}): Promise<WakeResult> {
+    static async wake(
+        driverId: string,
+        context: { rideId?: string; audible?: boolean } = {},
+    ): Promise<WakeResult> {
         const cooldownKey = `driver:wake:${driverId}`;
         // NX + PX: the first caller in the window wins and the rest see the key
         // already set. Atomic, so ten simultaneous ride requests produce one wake.
@@ -63,6 +66,21 @@ export class DriverWakeService {
                 driverId, attempted: false, answered: already !== null,
                 freshPosition: already, reason: 'wake_already_in_flight',
             };
+        }
+
+        /*
+         * Ring at most once per driver per ride.
+         *
+         * Dispatch runs several rounds over ~47s and re-queries each time. The
+         * silent recovery half may retry freely; an audible alert may not —
+         * a driver rung four times for one passenger learns to ignore it,
+         * which costs us the next one too.
+         */
+        let audible = context.audible === true;
+        if (audible && context.rideId) {
+            const ringKey = `driver:wakering:${driverId}:${context.rideId}`;
+            const firstRing = await redis.set(ringKey, '1', 'EX', 600, 'NX');
+            if (firstRing !== 'OK') audible = false;
         }
 
         const tokens = await AppDataSource.getRepository(DeviceToken).find({
@@ -96,8 +114,36 @@ export class DriverWakeService {
             const fcm = await admin.messaging().sendEachForMulticast({
                 tokens: tokens.map((t) => t.token),
                 /*
-                 * No `notification` block. This message must be invisible to
-                 * the driver and must run their app's background handler.
+                 * ── PATH A: the audible half ────────────────────────────
+                 *
+                 * A `notification` block is rendered by Google Play Services
+                 * itself, on the device, WITHOUT starting our process. A
+                 * data-only message cannot do that: Android must launch the
+                 * app to run the handler, and MIUI's Autostart restriction —
+                 * off by default for a sideloaded APK — forbids exactly that.
+                 *
+                 * A Redmi in the field proved it. FCM accepted a data-only
+                 * wake against a live token and the phone stayed silent,
+                 * because our process was never permitted to start. The ring
+                 * must therefore not depend on Dart running at all.
+                 *
+                 * The wording is careful: no ride has been assigned, and
+                 * saying otherwise would be a lie the driver acts on. It
+                 * invites them back to the app, where normal eligibility and
+                 * a fresh fix decide whether they actually get the trip.
+                 */
+                ...(audible ? {
+                    notification: {
+                        title: 'Ride request nearby',
+                        body: 'A passenger near you needs a Keke. Open KekeRide to take the trip.',
+                    },
+                } : {}),
+                /*
+                 * ── PATH B: the silent half ─────────────────────────────
+                 * Carried on the same message. Where the OS allows our
+                 * background isolate to run, this drives presence recovery —
+                 * fresh fix, heartbeat, foreground service — with no action
+                 * from the driver. Where it does not, Path A has already rung.
                  */
                 data: {
                     type: 'PRESENCE_WAKE',
@@ -108,22 +154,41 @@ export class DriverWakeService {
                     priority: 'high',
                     // Bypasses Doze's deferral for data messages.
                     ttl: 30_000,
+                    ...(audible ? {
+                        notification: {
+                            // The channel already exists on every driver
+                            // handset, created natively by MainActivity with
+                            // IMPORTANCE_HIGH and the keke_ring sound. Play
+                            // Services honours it without our process.
+                            channelId: 'keke_ride_requests',
+                            sound: 'keke_ring',
+                        },
+                    } : {}),
                 },
                 apns: {
-                    headers: {
-                        // 5 = background push, the only priority Apple permits
-                        // for a content-available message, and the header that
-                        // makes iOS run the app rather than queue it.
-                        'apns-priority': '5',
-                        'apns-push-type': 'background',
-                        'apns-expiration': String(Math.floor(Date.now() / 1000) + 30),
-                    },
+                    headers: audible
+                        // An alert iOS will surface itself, for the same reason
+                        // as Android: the ring must not depend on our code.
+                        ? {
+                            'apns-priority': '10',
+                            'apns-push-type': 'alert',
+                            'apns-expiration': String(Math.floor(Date.now() / 1000) + 60),
+                        }
+                        : {
+                            // 5 is the only priority Apple permits for a
+                            // content-available message, and the header that
+                            // makes iOS run the app rather than queue it.
+                            'apns-priority': '5',
+                            'apns-push-type': 'background',
+                            'apns-expiration': String(Math.floor(Date.now() / 1000) + 30),
+                        },
                     payload: {
                         aps: {
                             // Wakes a suspended iOS app for background execution.
                             // Without this the message is simply not delivered
                             // to a backgrounded app at all.
                             contentAvailable: true,
+                            ...(audible ? { sound: 'keke_ring.wav', interruptionLevel: 'time-sensitive' } : {}),
                         },
                     },
                 },
@@ -180,6 +245,8 @@ export class DriverWakeService {
             // message and the handset answering are different facts.
             fcmAccepted: accepted, fcmRejected: rejected.length ? rejected : undefined,
             waitedMs: WAKE_ANSWER_TIMEOUT_MS,
+            // Whether this knock could ring without our process starting.
+            audible,
         }));
 
         return {
@@ -190,11 +257,21 @@ export class DriverWakeService {
     }
 
     /** Wake several drivers at once and return only those that answered. */
+    /**
+     * Wake several drivers.
+     *
+     * `audibleLimit` bounds how many of them are rung out loud. The silent
+     * recovery half goes to everyone — it costs the driver nothing — but an
+     * audible alert is an interruption, so only the nearest few get one. The
+     * list arrives nearest-first.
+     */
     static async wakeMany(
         driverIds: string[],
-        context: { rideId?: string } = {},
+        context: { rideId?: string; audibleLimit?: number } = {},
     ): Promise<WakeResult[]> {
-        return Promise.all(driverIds.map((id) => this.wake(id, context)));
+        const limit = context.audibleLimit ?? driverIds.length;
+        return Promise.all(driverIds.map((id, i) =>
+            this.wake(id, { rideId: context.rideId, audible: i < limit })));
     }
 
     /**

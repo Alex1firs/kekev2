@@ -41,6 +41,15 @@ export interface CandidateOutcome {
 /** Wake at most this many phones for one dispatch round. */
 const MAX_WAKES_PER_ROUND = Number(process.env.DISPATCH_MAX_WAKES || 6);
 
+/**
+ * How many stale drivers are rung OUT LOUD for one ride.
+ *
+ * Deliberately smaller than MAX_WAKES_PER_ROUND: a silent data wake costs the
+ * driver nothing, but an audible alert is an interruption, and ringing six
+ * phones for one passenger trains drivers to ignore the sound.
+ */
+const AUDIBLE_WAKE_LIMIT = Number(process.env.DISPATCH_AUDIBLE_WAKES || 3);
+
 /** Radius multiplier when deciding who is worth waking on a stale position. */
 const STALE_RADIUS_FACTOR = 1.5;
 
@@ -80,8 +89,15 @@ export class DriverCandidateService {
             freshFound: candidates.length, needed: limit,
         }));
 
+        /*
+         * Everyone gets the silent recovery attempt; the nearest few also get
+         * an audible alert that rings without our process needing to start.
+         * `toWake` is already sorted nearest-first on last-known position —
+         * which decides only who is worth ringing, never who gets the ride.
+         */
         const results = await DriverWakeService.wakeMany(
-            toWake.map((s) => s.driverId), { rideId: opts.rideId },
+            toWake.map((s) => s.driverId),
+            { rideId: opts.rideId, audibleLimit: AUDIBLE_WAKE_LIMIT },
         );
 
         // Re-run the live geo query. A phone that answered has just written a

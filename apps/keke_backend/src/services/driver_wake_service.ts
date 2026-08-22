@@ -90,8 +90,10 @@ export class DriverWakeService {
             };
         }
 
+        let accepted = 0;
+        let rejected: string[] = [];
         try {
-            await admin.messaging().sendEachForMulticast({
+            const fcm = await admin.messaging().sendEachForMulticast({
                 tokens: tokens.map((t) => t.token),
                 /*
                  * No `notification` block. This message must be invisible to
@@ -126,11 +128,45 @@ export class DriverWakeService {
                     },
                 },
             });
+            /*
+             * Inspect what FCM actually said, rather than assuming a resolved
+             * promise means delivered.
+             *
+             * The first field test could not distinguish "FCM rejected the
+             * token" from "the phone ignored us" — both looked like
+             * answered:false — and diagnosing it needed a manual probe. A
+             * rejected token is also the one failure we can repair: retire it
+             * so the driver's live tokens stay honest.
+             */
+            accepted = fcm.successCount;
+            fcm.responses.forEach((r, i) => {
+                if (r.success) return;
+                const code = (r.error as any)?.code ?? 'unknown';
+                rejected.push(code);
+                if (code === 'messaging/registration-token-not-registered'
+                    || code === 'messaging/invalid-registration-token') {
+                    void AppDataSource.getRepository(DeviceToken)
+                        .update({ token: tokens[i].token }, { isActive: false })
+                        .catch(() => undefined);
+                }
+            });
         } catch (err: any) {
             await DriverIntentService.recordWakeAttempt(driverId, false);
             return {
                 driverId, attempted: true, answered: false, freshPosition: null,
                 reason: `wake_send_failed:${err?.message ?? 'unknown'}`,
+            };
+        }
+
+        if (accepted === 0) {
+            await DriverIntentService.recordWakeAttempt(driverId, false);
+            console.log(JSON.stringify({
+                level: 'warn', scope: 'presence', event: 'wake_rejected',
+                driverId, tokens: tokens.length, rejected,
+            }));
+            return {
+                driverId, attempted: true, answered: false, freshPosition: null,
+                reason: `fcm_rejected_all:${rejected.join(',')}`,
             };
         }
 
@@ -140,12 +176,16 @@ export class DriverWakeService {
         console.log(JSON.stringify({
             level: 'info', scope: 'presence', event: 'wake',
             driverId, answered: fresh !== null, rideId: context.rideId ?? null,
+            // Delivery is now separable from response: FCM accepting the
+            // message and the handset answering are different facts.
+            fcmAccepted: accepted, fcmRejected: rejected.length ? rejected : undefined,
+            waitedMs: WAKE_ANSWER_TIMEOUT_MS,
         }));
 
         return {
             driverId, attempted: true, answered: fresh !== null,
             freshPosition: fresh,
-            reason: fresh ? undefined : 'no_answer',
+            reason: fresh ? undefined : `no_answer_within_${WAKE_ANSWER_TIMEOUT_MS}ms`,
         };
     }
 

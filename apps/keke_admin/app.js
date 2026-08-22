@@ -980,12 +980,32 @@ function toggleLiveAutoRefresh() {
     if (box && box.checked) liveRefreshTimer = setInterval(() => fetchLiveRiders().catch(() => {}), 6000);
 }
 
-function liveStatusMeta(s) {
+/**
+ * The STATUS badge.
+ *
+ * Reads presenceIntent FIRST and heartbeat freshness second. It used to read
+ * `liveStatus` alone, which is derived purely from the heartbeat — so a driver
+ * sitting in their keke waiting for work was labelled "Offline" the moment
+ * their phone went quiet, in the same row that the group heading correctly
+ * called "Working · phone quiet". The word Offline is now reserved for a
+ * driver who actually chose it.
+ */
+function liveStatusMeta(s, r) {
+    if (r && r.presenceIntent === 'ONLINE') {
+        if (r.currentRideId) return { label: 'On Trip', cls: 'ls-ontrip' };
+        switch (r.presenceReachability) {
+            case 'FRESH':       return { label: 'Working · Online',            cls: 'ls-online' };
+            case 'STALE':       return { label: 'Working · Phone quiet',       cls: 'ls-stale' };
+            case 'UNREACHABLE': return { label: 'Online · Unreachable',        cls: 'ls-recent' };
+            default:            return { label: 'Working',                     cls: 'ls-online' };
+        }
+    }
     switch (s) {
         case 'ACTIVELY_ONLINE': return { label: 'Actively Online', cls: 'ls-online' };
         case 'ON_TRIP':         return { label: 'On Trip',         cls: 'ls-ontrip' };
-        case 'RECENTLY_SEEN':   return { label: 'Recently Seen',   cls: 'ls-recent' };
-        case 'STALE_HEARTBEAT': return { label: 'Stale Heartbeat', cls: 'ls-stale' };
+        // Reached only when intent is OFFLINE, i.e. the driver said so.
+        case 'RECENTLY_SEEN':   return { label: 'Offline',         cls: 'ls-offline' };
+        case 'STALE_HEARTBEAT': return { label: 'Offline',         cls: 'ls-offline' };
         case 'OFFLINE':         return { label: 'Offline',         cls: 'ls-offline' };
         default:                return { label: 'Never Online',    cls: 'ls-offline' };
     }
@@ -1085,7 +1105,7 @@ function renderLiveRiders() {
 }
 
 function renderLiveRiderRow(r) {
-    const m = liveStatusMeta(r.liveStatus);
+    const m = liveStatusMeta(r.liveStatus, r);
     const hasCoords = r.latitude != null && r.longitude != null;
     const coords = hasCoords ? `${r.latitude.toFixed(5)}, ${r.longitude.toFixed(5)}` : '—';
     const addrCell = hasCoords ? `<div class="addr muted" data-lat="${r.latitude}" data-lng="${r.longitude}">resolving…</div>` : '';
@@ -1094,9 +1114,14 @@ function renderLiveRiderRow(r) {
     const push = r.fcmTokenStatus === 'active'
         ? '<span class="badge badge-ok">Active</span>'
         : '<span class="badge badge-warn">Missing</span>';
+    // RIDE means "what ride are they on", not "are they online". The old
+    // fallback printed the rideState string — which is literally 'offline'
+    // for an idle driver — and read as a second, contradicting status.
     const ride = r.currentRideId
         ? `${escapeHtml(String(r.currentRideStatus || ''))}<br><small class="muted">${escapeHtml(r.currentRideId)}</small>`
-        : escapeHtml(r.rideState || 'offline');
+        : (r.presenceIntent === 'ONLINE'
+            ? '<span class="muted">No ride — available</span>'
+            : '<span class="muted">—</span>');
     const platform = r.platform && r.platform !== 'unknown' ? escapeHtml(r.platform) : 'unknown';
     return `<tr>
         <td><strong>${escapeHtml(r.name)}</strong><br><small class="muted">${platform}</small></td>

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' show DartPluginRegistrant;
 import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart' show visibleForTesting;
@@ -21,6 +22,21 @@ import '../services/location_foreground_task.dart'
 /// are still processed here when the app is backgrounded or terminated.
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  /*
+   * ── Register platform plugins in THIS isolate, first ─────────────────
+   *
+   * FCM runs this in a brand-new Dart isolate that has never executed
+   * main(), so the plugin registry is empty. firebase_core registers
+   * itself, which is why Firebase.initializeApp() below works — but every
+   * OTHER plugin throws MissingPluginException on first use.
+   *
+   * That is exactly how the first field test failed: FCM accepted the wake
+   * and delivered it, this handler ran, and then FlutterForegroundTask
+   * .getData() and Geolocator both threw. The catch swallowed it into a
+   * wake_failed nobody could see from the server, so the driver looked like
+   * a phone that had simply ignored the push.
+   */
+  DartPluginRegistrant.ensureInitialized();
   await Firebase.initializeApp();
   final type = message.data['type'];
   ReliabilityLog.log(RelEvent.fcmReceived, {

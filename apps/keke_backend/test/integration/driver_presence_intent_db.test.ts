@@ -483,6 +483,61 @@ describeDb('driver presence — intent vs device health (database)', () => {
         expect(audibleCount).toBe(3);
     });
 
+    it('an UNREACHABLE driver is still woken — it must not be a one-way door', async () => {
+        const d = await driver();
+        await Intent.setOnline(d);
+        await beat(d, 6.14, 6.79);
+        await goQuiet(d);
+        // Three unanswered wakes: the driver is now UNREACHABLE.
+        for (let i = 0; i < 3; i++) await Intent.recordWakeAttempt(d, false);
+        expect((await Intent.healthOf(d)).reachability).toBe('UNREACHABLE');
+
+        const wakeSpy = jest.spyOn(Wake, 'wakeMany').mockResolvedValue([]);
+        await Candidates.findFor(6.14, 6.79, 5, 5, { wantWakes: true, rideId: 'R-UNREACH' });
+
+        /*
+         * Excluding them stranded exactly the drivers Path A exists for: an
+         * unanswered wake usually means the background isolate cannot start on
+         * that handset, and only the audible notification gets through. If they
+         * were skipped, the sole route back would be a heartbeat — which needs
+         * the app running, which is the thing that was failing.
+         */
+        expect(wakeSpy).toHaveBeenCalled();
+        expect(wakeSpy.mock.calls[0][0]).toContain(d);
+        expect(await Intent.isOnline(d)).toBe(true);
+    });
+
+    it('an unreachable driver with no push token is not woken — there is nowhere to knock', async () => {
+        const d = await driver({ withToken: false });
+        await Intent.setOnline(d);
+        await beat(d, 6.14, 6.79);
+        await goQuiet(d);
+
+        const wakeSpy = jest.spyOn(Wake, 'wakeMany').mockResolvedValue([]);
+        await Candidates.findFor(6.14, 6.79, 5, 5, { wantWakes: true });
+
+        expect(wakeSpy).not.toHaveBeenCalled();
+    });
+
+    it('STALE drivers are ranked ahead of UNREACHABLE ones for the audible slots', async () => {
+        const stale = await driver();
+        const unreachable = await driver();
+        for (const d of [stale, unreachable]) {
+            await Intent.setOnline(d);
+            await beat(d, 6.14, 6.79);
+            await goQuiet(d);
+        }
+        // Make one unreachable, and put it CLOSER so only ranking can reorder.
+        for (let i = 0; i < 3; i++) await Intent.recordWakeAttempt(unreachable, false);
+        await beat(unreachable, 6.1401, 6.7901); await goQuiet(unreachable);
+
+        const wakeSpy = jest.spyOn(Wake, 'wakeMany').mockResolvedValue([]);
+        await Candidates.findFor(6.14, 6.79, 5, 5, { wantWakes: true });
+
+        const order = wakeSpy.mock.calls[0][0];
+        expect(order.indexOf(stale)).toBeLessThan(order.indexOf(unreachable));
+    });
+
     // ══ Fleet reporting ═════════════════════════════════════════════════
 
     it('reports ONLINE-but-unreachable as its own state instead of hiding it', async () => {

@@ -138,27 +138,50 @@ export class DriverCandidateService {
         lat: number,
         lng: number,
         radiusKm: number,
-    ): Promise<Array<{ driverId: string; staleDistanceKm: number | null }>> {
+    ): Promise<Array<{ driverId: string; staleDistanceKm: number | null; rank: number }>> {
         const onlineIds = await DriverIntentService.onlineDriverIds();
         if (onlineIds.length === 0) return [];
 
         const health = await DriverIntentService.healthOfMany(onlineIds);
-        const out: Array<{ driverId: string; staleDistanceKm: number | null }> = [];
+        const out: Array<{ driverId: string; staleDistanceKm: number | null; rank: number }> = [];
 
         for (const id of onlineIds) {
             const h = health.get(id);
             if (!h) continue;
-            // FRESH drivers came through tier 1. UNREACHABLE ones have no token
-            // or have ignored several wakes — still ONLINE, still shown as such,
-            // but not worth delaying a passenger for.
-            if (h.reachability !== 'STALE') continue;
+            // FRESH drivers came through tier 1.
+            if (h.reachability === 'FRESH' || h.reachability === 'OFFLINE') continue;
+            /*
+             * UNREACHABLE drivers are included, provided we have somewhere to
+             * knock.
+             *
+             * Excluding them made UNREACHABLE a one-way door: three unanswered
+             * wakes and a driver was never rung again, so the only way back was
+             * a heartbeat — which needs the app running, which is the very
+             * thing that was failing. A driver could sit ONLINE and unreachable
+             * for a whole shift with the platform declining to try.
+             *
+             * They are also precisely who Path A exists for. An unanswered wake
+             * usually means our background isolate cannot start on that
+             * handset, and the audible notification is the one thing that does
+             * not need it.
+             */
+            if (!h.hasPushToken) continue;
             if (!h.lastKnownPosition) continue;
 
             const d = haversineKm(lat, lng, h.lastKnownPosition.lat, h.lastKnownPosition.lng);
-            if (d <= radiusKm) out.push({ driverId: id, staleDistanceKm: d });
+            if (d <= radiusKm) {
+                out.push({
+                    driverId: id,
+                    staleDistanceKm: d,
+                    // STALE first: a phone that has been answering recently is
+                    // the better bet, so it gets the nearer audible slots.
+                    rank: h.reachability === 'STALE' ? 0 : 1,
+                });
+            }
         }
 
-        out.sort((a, b) => (a.staleDistanceKm ?? 1e9) - (b.staleDistanceKm ?? 1e9));
+        out.sort((a, b) => (a.rank - b.rank)
+            || ((a.staleDistanceKm ?? 1e9) - (b.staleDistanceKm ?? 1e9)));
         return out;
     }
 }

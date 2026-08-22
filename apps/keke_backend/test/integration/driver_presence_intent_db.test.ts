@@ -410,7 +410,10 @@ describeDb('driver presence — intent vs device health (database)', () => {
          */
         expect(msg.notification).toBeDefined();
         expect(msg.notification.title).toBe('Ride request nearby');
-        expect(msg.android.notification.channelId).toBe('keke_ride_requests');
+        // Deliberately NO channelId: the handset resolves its own default
+        // channel, so an old APK (v1) and a current one (v2) each ring on the
+        // channel they actually created. Naming one would silence the other.
+        expect(msg.android.notification.channelId).toBeUndefined();
         expect(msg.android.notification.sound).toBe('keke_ring');
         expect(msg.android.priority).toBe('high');
         // Path B rides along on the same message.

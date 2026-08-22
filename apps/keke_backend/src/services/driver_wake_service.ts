@@ -156,11 +156,22 @@ export class DriverWakeService {
                     ttl: 30_000,
                     ...(audible ? {
                         notification: {
-                            // The channel already exists on every driver
-                            // handset, created natively by MainActivity with
-                            // IMPORTANCE_HIGH and the keke_ring sound. Play
-                            // Services honours it without our process.
-                            channelId: 'keke_ride_requests',
+                            /*
+                             * No channelId, deliberately — the same reason as
+                             * the ride offer in NotificationService.
+                             *
+                             * A Redmi displayed this notification but played no
+                             * sound: on Android 8+ the CHANNEL owns the sound,
+                             * and that handset's `keke_ride_requests` had been
+                             * created with default settings before the app ever
+                             * ran. Channel properties are immutable after
+                             * creation, so no payload can override them.
+                             *
+                             * Omitting the id lets Play Services use whichever
+                             * default channel that install actually created —
+                             * v2 with keke_ring on a current build, the old one
+                             * on a build that has not been updated.
+                             */
                             sound: 'keke_ring',
                         },
                     } : {}),

@@ -18,7 +18,7 @@ class RideNotificationService {
   RideNotificationService._();
   static final RideNotificationService instance = RideNotificationService._();
 
-  static const String channelId = 'keke_ride_requests';
+  static const String channelId = 'keke_ride_requests_v2';
   static const String channelName = 'Ride Requests';
   static const int _rideNotificationId = 7001;
 
@@ -38,10 +38,21 @@ class RideNotificationService {
       if (Platform.isAndroid) {
         final android = _plugin.resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin>();
-        // High-importance channel with the custom ring sound. If a channel with
-        // this id already exists with different settings, delete + recreate so
-        // the loud sound/heads-up is guaranteed.
-        await android?.deleteNotificationChannel(channelId);
+        /*
+         * Create, but never delete-and-recreate.
+         *
+         * The old code deleted the channel first, believing that would reset
+         * its sound. It does the opposite: Android REMEMBERS deleted channels,
+         * and recreating one with the same id restores the settings it had
+         * before — including a user's or an OEM's silencing. That is part of
+         * why a Redmi displayed ride requests silently and no code change to
+         * the old id could fix it.
+         *
+         * The id is versioned instead (see MainActivity), so this creation is
+         * the first this handset has ever seen and its properties are ours.
+         * MainActivity has usually created it already; this call is then a
+         * harmless no-op that also covers a cold Dart-only start.
+         */
         await android?.createNotificationChannel(const AndroidNotificationChannel(
           channelId,
           channelName,

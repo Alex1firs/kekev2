@@ -122,8 +122,24 @@ export class NotificationService {
         let androidChannelId: string | undefined;
         // A ride offer is the one message whose timeliness is the product.
         const isRideOffer = type === 'NEW_REQUEST';
-        if (type === 'NEW_REQUEST') androidChannelId = 'keke_ride_requests';
-        else if (type === 'RIDE_ASSIGNED' || type === 'RIDE_ARRIVED') androidChannelId = 'keke_ride_updates';
+        /*
+         * ── Why the DRIVER offer names no channel ───────────────────────
+         * The driver channel id is versioned on the handset
+         * (keke_ride_requests_v2), because the original could be created with
+         * DEFAULT importance and DEFAULT sound by Play Services before the app
+         * ever ran — permanently silent, and unfixable by code once created.
+         *
+         * Naming a channel here would force a choice that is wrong for half
+         * the fleet: an old APK has only v1, a new one only v2, and a message
+         * naming a channel the handset does not have is not shown at all.
+         * Omitting it makes Play Services fall back to that install's own
+         * `default_notification_channel_id`, so each app version rings on the
+         * channel it actually created. No app-version tracking required, and
+         * nothing breaks for a driver who has not updated.
+         *
+         * Passenger channels are unaffected and still named explicitly.
+         */
+        if (type === 'RIDE_ASSIGNED' || type === 'RIDE_ARRIVED') androidChannelId = 'keke_ride_updates';
 
         const message: admin.messaging.MulticastMessage = {
             tokens: tokens,

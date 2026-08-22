@@ -25,6 +25,7 @@ import { AppDataSource } from '../config/data_source';
 import { DeviceToken } from '../models/DeviceToken';
 import { UserRole } from '../models/User';
 import { DriverIntentService } from './driver_intent_service';
+import { NotificationService } from './notification_service';
 import { redis } from '../config/redis';
 
 /** How long we wait for a woken phone to post a fresh heartbeat. */
@@ -70,6 +71,23 @@ export class DriverWakeService {
         if (tokens.length === 0) {
             await DriverIntentService.recordWakeAttempt(driverId, false);
             return { driverId, attempted: false, answered: false, freshPosition: null, reason: 'no_push_token' };
+        }
+
+        /*
+         * Make sure Firebase is initialised before touching messaging().
+         *
+         * NotificationService lazily initialises on its first send, and every
+         * other push path goes through it. A wake does not, so on a freshly
+         * booted process whose first outbound push happens to be a wake,
+         * admin.messaging() would throw "default Firebase app does not exist"
+         * and the driver would silently never be knocked on.
+         */
+        if (!NotificationService.isReady()) {
+            await DriverIntentService.recordWakeAttempt(driverId, false);
+            return {
+                driverId, attempted: false, answered: false, freshPosition: null,
+                reason: 'push_not_configured',
+            };
         }
 
         try {

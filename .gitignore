@@ -36,3 +36,6 @@ GoogleService-Info.plist
 
 # Field-test APKs. Built artifacts, not source.
 /build_output/
+
+# Redis snapshot, written if a redis-server is ever started from a package dir.
+dump.rdb

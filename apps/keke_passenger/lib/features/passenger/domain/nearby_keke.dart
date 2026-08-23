@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
@@ -125,6 +126,69 @@ class NearbyKekeFeed {
     return eligibleCount == 1
         ? '1 Keke nearby'
         : '$eligibleCount Kekes nearby';
+  }
+
+  /// Straight-line metres to the closest live marker, or null when a number
+  /// would be misleading.
+  ///
+  /// ── Why this returns null so readily ────────────────────────────────
+  /// Marker positions are deliberately fuzzed by [approximateRadiusMeters]
+  /// for driver privacy. Below roughly that distance the "nearest" figure is
+  /// reporting the fuzz, not the driver, and a passenger watching it jump
+  /// between 80 m and 400 m learns not to believe anything on the screen.
+  ///
+  /// This is also deliberately a DISTANCE and never a time. We have no road
+  /// network and no traffic data here, so any minutes figure would be a
+  /// straight line divided by a guess — which in Onitsha, with its one-way
+  /// streets and market congestion, is fiction. Distance is what the data
+  /// honestly supports.
+  int? nearestMetersFrom(LatLng pickup, {DateTime? now}) {
+    final at = now ?? DateTime.now();
+    final live = kekes.where((k) => !k.isExpiredAt(at));
+    if (live.isEmpty) return null;
+
+    double? best;
+    for (final k in live) {
+      final d = _haversineMeters(
+        pickup.latitude, pickup.longitude, k.position.latitude, k.position.longitude);
+      if (best == null || d < best) best = d;
+    }
+    if (best == null) return null;
+
+    // Inside the fuzz radius the figure is noise. Say nothing rather than
+    // something precise-sounding and wrong.
+    final floor = approximateRadiusMeters > 0 ? approximateRadiusMeters.toDouble() : 150.0;
+    if (best < floor) return null;
+
+    return best.round();
+  }
+
+  /// "Nearest Keke about 600 m away", or null when no honest figure exists.
+  ///
+  /// Rounded coarsely on purpose — the underlying position is approximate, so
+  /// "about 600 m" is truthful where "612 m" would imply precision we lack.
+  String? nearestLabelFrom(LatLng pickup, {DateTime? now}) {
+    final m = nearestMetersFrom(pickup, now: now);
+    if (m == null) return null;
+    if (m < 1000) {
+      final rounded = ((m / 100).round() * 100).clamp(100, 900);
+      return 'Nearest Keke about $rounded m away';
+    }
+    final km = (m / 1000).toStringAsFixed(m < 10000 ? 1 : 0);
+    return 'Nearest Keke about $km km away';
+  }
+
+  static double _haversineMeters(
+      double lat1, double lng1, double lat2, double lng2) {
+    const r = 6371000.0;
+    final dLat = (lat2 - lat1) * math.pi / 180;
+    final dLng = (lng2 - lng1) * math.pi / 180;
+    final a = math.sin(dLat / 2) * math.sin(dLat / 2) +
+        math.cos(lat1 * math.pi / 180) *
+            math.cos(lat2 * math.pi / 180) *
+            math.sin(dLng / 2) *
+            math.sin(dLng / 2);
+    return 2 * r * math.asin(math.sqrt(a));
   }
 
   static NearbyKekeFeed fromJson(Map<String, dynamic> json, {required DateTime now}) {

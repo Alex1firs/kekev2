@@ -244,10 +244,22 @@ class SearchingCopy {
 
   /// [round] is 1-based. Anything >= 2 gets the second-round copy.
   ///
+  /// [offerSent] means a driver has actually been asked and is deciding. It
+  /// outranks the round, because "still searching" is untrue once somebody is
+  /// looking at the trip — and it must never be shown on the strength of a
+  /// candidate merely being discovered, only on the server's `ride:offer_sent`.
+  ///
   /// No city or area name appears here on purpose: the passenger's city is not
   /// reliably known at request time (it was previously hardcoded to "Awka"),
   /// and naming the wrong city destroys trust in the whole search.
-  factory SearchingCopy.of(int round) {
+  factory SearchingCopy.of(int round, {bool offerSent = false}) {
+    if (offerSent) {
+      return const SearchingCopy(
+        primary: 'Driver found — waiting for driver to confirm',
+        supporting: 'A nearby Keke driver has your request. '
+            'If they can\'t take it, we\'ll keep looking.',
+      );
+    }
     if (round >= 2) {
       return const SearchingCopy(
         primary: 'Still searching nearby…',

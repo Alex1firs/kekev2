@@ -96,6 +96,25 @@ const lat = () => z.number().min(LAT_MIN).max(LAT_MAX);
 const lng = () => z.number().min(LNG_MIN).max(LNG_MAX);
 const id  = () => z.string().min(1).max(128);
 
+/**
+ * Why a passenger cancelled, as a closed set.
+ *
+ * Machine-readable on purpose: these are stored in `Ride.cancellationReason`
+ * and read back by Ride Operations to answer "why are passengers cancelling",
+ * which free text cannot support. The passenger app shows human labels and
+ * sends the code.
+ */
+export const PASSENGER_CANCEL_REASONS = [
+    'driver_taking_too_long',
+    'driver_too_far',
+    'cannot_reach_driver',
+    'driver_asked_to_cancel',
+    'plans_changed',
+    'wrong_pickup_or_destination',
+    'booked_by_mistake',
+    'other',
+] as const;
+
 const Schemas = {
     join: z.object({
         userId: id(),
@@ -146,7 +165,16 @@ const Schemas = {
         senderRole: z.enum(['passenger', 'driver']),
         message:    z.string().min(1).max(500),
     }),
-    rideCancel:       z.object({ rideId: id(), passengerId: id() }),
+    /*
+     * `reason` is optional so an older passenger build keeps working exactly
+     * as before. It is an enum rather than free text because Ride Operations
+     * needs to COUNT cancellation causes, and prose cannot be aggregated.
+     */
+    rideCancel:       z.object({
+        rideId: id(),
+        passengerId: id(),
+        reason: z.enum(PASSENGER_CANCEL_REASONS).optional(),
+    }),
     rideAccept:       z.object({ rideId: id(), driverId: id() }),
     rideDriverAction: z.object({ rideId: id(), driverId: id() }),
     rideComplete:     z.object({
@@ -816,7 +844,10 @@ export class SocketHandler {
                     await rideRepo.update(data.rideId, {
                         status: 'canceled' as any,
                         completedAt: new Date(),
-                        cancellationReason: 'passenger_cancelled',
+                        // The specific code when the app sent one; the old
+                        // generic value when it did not, so history stays
+                        // readable across app versions.
+                        cancellationReason: data.reason ?? 'passenger_cancelled',
                         outcomeReason: RideOutcomeCode.PASSENGER_CANCELLED,
                         cancelledByRole: CancelActorRole.PASSENGER,
                     } as any);

@@ -177,12 +177,31 @@ class BookingController extends StateNotifier<BookingState> {
           state = state.copyWith(step: BookingStep.searching);
           _startWatchdog();
           break;
+        case 'ride:offer_sent':
+          /*
+           * A driver has actually been offered this ride and is deciding.
+           *
+           * Only the copy changes — no timer, no watchdog, no lifecycle move.
+           * The passenger is still waiting and can still cancel, and the
+           * driver may yet decline, in which case the next dispatch round
+           * puts us back to `searching` through the handler below.
+           */
+          if (state.step == BookingStep.searching) {
+            state = state.copyWith(step: BookingStep.offerSent);
+          }
+          break;
+
         case 'ride:dispatch_round':
           // The server started another automatic dispatch round on the SAME ride.
           // Nothing is re-sent from here — this only advances the copy the
           // passenger is reading, and re-arms the watchdog for the new round.
           final round = (data['dispatchRound'] as num?)?.toInt();
           if (round == null || round <= state.searchRound) break;
+          // A fresh round means the previous offer was not taken. Stop saying
+          // "driver found" — it is no longer true.
+          if (state.step == BookingStep.offerSent) {
+            state = state.copyWith(step: BookingStep.searching);
+          }
           print('[PASSENGER_SYNC] Dispatch round $round started for ${state.rideId}');
           state = state.copyWith(
             step: BookingStep.searching,
@@ -2261,7 +2280,17 @@ class BookingController extends StateNotifier<BookingState> {
     state = state.copyWith(clearPendingReview: true);
   }
 
-  void cancelBooking() {
+  /// Cancel the current booking.
+  ///
+  /// [reasonCode] is one of the server's PASSENGER_CANCEL_REASONS and is
+  /// stored on the ride so Operations can count why passengers cancel.
+  /// Optional so nothing else that calls this has to change; the server keeps
+  /// its old generic value when none is sent.
+  ///
+  /// This performs the cancellation immediately — the confirmation flow lives
+  /// in the UI, and by the time we get here the passenger has chosen a reason
+  /// and confirmed a destructive action.
+  void cancelBooking({String? reasonCode}) {
     // Trip already in progress — cancellation not allowed
     if (state.step == BookingStep.started) return;
     if (_socketService != null && state.rideId != null) {
@@ -2271,6 +2300,7 @@ class BookingController extends StateNotifier<BookingState> {
       _socketService!.emit('ride:cancel', {
         'rideId': state.rideId,
         'passengerId': passengerId,
+        if (reasonCode != null) 'reason': reasonCode,
       });
 
       // Fallback: if the server never echoes ride:cancelled (socket blip), reset anyway.

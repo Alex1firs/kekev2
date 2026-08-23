@@ -13,6 +13,19 @@ enum BookingStep {
   selectingDestinationOnMap, // Manual map selection for destination
   previewEstimate,      // Both locked, showing polyline and fare
   searching,            // Backend is looking for driver
+  /*
+   * A driver has actually been offered this ride and is deciding.
+   *
+   * Distinct from `searching` because the honest copy differs: "finding a
+   * Keke" is false once one has been asked, and "driver found" is false
+   * before that. Driven by the server's `ride:offer_sent`, which fires only
+   * when an offer really reached a handset — never on a candidate merely
+   * being discovered.
+   *
+   * Not terminal and not a promise: the driver may decline, and dispatch
+   * falls back to `searching` for the next round.
+   */
+  offerSent,
   confirmed,            // Driver accepted
   arrived,              // Driver arrived at pickup
   started,              // Trip has started

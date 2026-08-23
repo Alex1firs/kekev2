@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 import '../../../../core/theme/app_theme.dart';
 import '../../domain/booking_notice.dart';
@@ -23,6 +24,16 @@ class SearchingPanel extends StatelessWidget {
   /// Nearby availability, so the reassurance does not depend on seeing the map.
   final NearbyKekeFeed nearbyKekes;
 
+  /// A driver has been offered this ride and is deciding.
+  ///
+  /// Driven by the server's `ride:offer_sent`. Never inferred from a candidate
+  /// being discovered — "driver found" before anyone has been asked is the one
+  /// lie this screen must not tell.
+  final bool offerSent;
+
+  /// Pickup point, used only to describe how far the nearest Keke is.
+  final LatLng? pickup;
+
   final VoidCallback onCancel;
 
   const SearchingPanel({
@@ -32,11 +43,13 @@ class SearchingPanel extends StatelessWidget {
     this.transientMessage,
     this.notice,
     this.nearbyKekes = NearbyKekeFeed.empty,
+    this.offerSent = false,
+    this.pickup,
   });
 
   @override
   Widget build(BuildContext context) {
-    final copy = SearchingCopy.of(searchRound);
+    final copy = SearchingCopy.of(searchRound, offerSent: offerSent);
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -82,7 +95,11 @@ class SearchingPanel extends StatelessWidget {
         // availability information as text, announced on change. A passenger
         // using a screen reader, or one who simply cannot see the map behind the
         // sheet, gets the identical signal.
-        _NearbyAvailability(feed: nearbyKekes),
+        _NearbyAvailability(
+          feed: nearbyKekes,
+          nearestLabel:
+              pickup == null ? null : nearbyKekes.nearestLabelFrom(pickup!),
+        ),
 
         const SizedBox(height: 20),
 
@@ -115,7 +132,11 @@ class SearchingPanel extends StatelessWidget {
 /// has been contacted about this ride.
 class _NearbyAvailability extends StatelessWidget {
   final NearbyKekeFeed feed;
-  const _NearbyAvailability({required this.feed});
+
+  /// Present only when we can honestly say how far the nearest Keke is.
+  final String? nearestLabel;
+
+  const _NearbyAvailability({required this.feed, this.nearestLabel});
 
   @override
   Widget build(BuildContext context) {
@@ -146,7 +167,10 @@ class _NearbyAvailability extends StatelessWidget {
             const SizedBox(width: 7),
             Flexible(
               child: Text(
-                feed.shortLabel,
+                // The distance when we have an honest one, otherwise the
+                // count, otherwise "checking". Never all three at once —
+                // this line is glanced at, not read.
+                nearestLabel ?? feed.shortLabel,
                 textAlign: TextAlign.center,
                 style: AppTextStyles.caption(
                   color: hasSupply ? AppColors.darkGray : AppColors.midGray,

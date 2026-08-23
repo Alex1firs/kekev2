@@ -492,6 +492,23 @@ export class DispatchOrchestrator {
           socketDelivered: delivery.socketDelivered,
           pushSuccessCount: delivery.pushSuccessCount,
         });
+
+        /*
+         * Tell the PASSENGER that a specific driver is now deciding.
+         *
+         * Additive and best-effort: dispatch already recorded this as
+         * evidence, and this only mirrors it to the rider so the app can stop
+         * saying "finding a Keke" when one has actually been asked. Carries no
+         * driver identity — the passenger has no business knowing who is
+         * considering the trip, and may never learn who declined.
+         *
+         * An older passenger build simply ignores the event.
+         */
+        this.ports.emitToRide(rideId, 'ride:offer_sent', {
+          rideId,
+          round,
+          at: new Date(this.ports.now()).toISOString(),
+        });
       } else {
         evidence.deliveryFailed(driverId, delivery.reason ?? 'no_transport_available');
         this.ports.log('offer_delivery_failed', {

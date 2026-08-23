@@ -25,7 +25,8 @@ class HomeMapScreen extends ConsumerStatefulWidget {
   ConsumerState<HomeMapScreen> createState() => _HomeMapScreenState();
 }
 
-class _HomeMapScreenState extends ConsumerState<HomeMapScreen> {
+class _HomeMapScreenState extends ConsumerState<HomeMapScreen>
+    with SingleTickerProviderStateMixin {
   GoogleMapController? _mapController;
   BitmapDescriptor? _kekeMarkerIcon;
   BitmapDescriptor? _driverMarkerIcon;
@@ -39,9 +40,36 @@ class _HomeMapScreenState extends ConsumerState<HomeMapScreen> {
   /// nothing ticks while the marker set is stable.
   late final NearbyKekeLayer _nearbyLayer;
 
+  /// Drives the searching ring. Repeats only while a search is on screen —
+  /// see [_syncPulse] — so an idle map costs nothing.
+  late final AnimationController _pulse = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 2200),
+  );
+
+  void _syncPulse(BookingState state) {
+    final searching = state.step == BookingStep.searching ||
+        state.step == BookingStep.offerSent;
+    /*
+     * Stopped the moment the search ends. A repeating controller left running
+     * behind an active ride would redraw the map every frame for the whole
+     * trip — on the phones our passengers actually use, that is battery and
+     * heat for an animation nobody can see.
+     */
+    if (searching && !_pulse.isAnimating) {
+      _pulse.repeat();
+    } else if (!searching && _pulse.isAnimating) {
+      _pulse.stop();
+      _pulse.value = 0;
+    }
+  }
+
   @override
   void initState() {
     super.initState();
+    // Repaint the circles as the ring grows. Circles are cheap; this does not
+    // touch markers, polylines or camera state, so map gestures are unaffected.
+    _pulse.addListener(() { if (mounted) setState(() {}); });
     _nearbyLayer = NearbyKekeLayer()..addListener(_onNearbyLayerTick);
     _loadKekeMarkers();
 
@@ -75,6 +103,7 @@ class _HomeMapScreenState extends ConsumerState<HomeMapScreen> {
 
   @override
   void dispose() {
+    _pulse.dispose();
     _animTimer?.cancel();
     _nearbyLayer.removeListener(_onNearbyLayerTick);
     _nearbyLayer.dispose();
@@ -223,6 +252,7 @@ class _HomeMapScreenState extends ConsumerState<HomeMapScreen> {
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(bookingControllerProvider);
+    _syncPulse(state);
 
     ref.listen(bookingControllerProvider.select((s) => s.step), (previous, next) {
       if (next == BookingStep.completed) {
@@ -350,6 +380,7 @@ class _HomeMapScreenState extends ConsumerState<HomeMapScreen> {
                   ref.read(bookingControllerProvider.notifier).onCameraIdle(),
               markers: _buildMarkers(state),
               polylines: _buildPolylines(state),
+              circles: _buildSearchCircles(state),
             ),
 
           // ── Quick-action menu (top-right)
@@ -498,6 +529,50 @@ class _HomeMapScreenState extends ConsumerState<HomeMapScreen> {
     }
 
     return markers;
+  }
+
+  /// The expanding ring around the pickup while dispatch is searching.
+  ///
+  /// ── Why it is driven by real data ───────────────────────────────────
+  /// The radius comes from `searchRadiusKm` — the tier dispatch is genuinely
+  /// working right now — so the ring grows when the search actually widens.
+  /// A decorative animation that expanded on a timer would be telling the
+  /// passenger a story about progress that nothing behind it supports.
+  ///
+  /// When the server has not told us a radius we draw nothing rather than
+  /// invent one.
+  Set<Circle> _buildSearchCircles(BookingState state) {
+    final searching = state.step == BookingStep.searching ||
+        state.step == BookingStep.offerSent;
+    final pickup = state.pickupLocation;
+    final radiusKm = state.nearbyKekes.searchRadiusKm;
+    if (!searching || pickup == null || radiusKm == null || radiusKm <= 0) {
+      return const {};
+    }
+
+    // Two rings: the steady one shows the true radius, the pulsing one reads
+    // as activity. The pulse never exceeds the real radius, so nothing on
+    // screen overstates how far we are looking.
+    final metres = radiusKm * 1000;
+    final t = _pulse.value;
+    return {
+      Circle(
+        circleId: const CircleId('search_radius'),
+        center: pickup,
+        radius: metres,
+        strokeWidth: 1,
+        strokeColor: AppColors.primary.withValues(alpha: 0.35),
+        fillColor: AppColors.primary.withValues(alpha: 0.05),
+      ),
+      Circle(
+        circleId: const CircleId('search_pulse'),
+        center: pickup,
+        radius: metres * (0.25 + 0.75 * t),
+        strokeWidth: 2,
+        strokeColor: AppColors.primary.withValues(alpha: 0.45 * (1 - t)),
+        fillColor: AppColors.primary.withValues(alpha: 0.10 * (1 - t)),
+      ),
+    };
   }
 
   Set<Polyline> _buildPolylines(BookingState state) {

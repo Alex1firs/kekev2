@@ -114,6 +114,13 @@ class RideStatusNotification {
           title: 'Finding you a Keke',
           body: to == null ? 'Looking for a driver nearby.' : 'Looking for a driver to $to.',
         );
+      case BookingStep.offerSent:
+        // A driver is deciding. Deliberately not "your driver" — nobody has
+        // accepted, and they may still decline.
+        return (
+          title: 'Driver found',
+          body: 'Waiting for the driver to confirm your trip.',
+        );
       case BookingStep.confirmed:
         return (
           title: '$who is on the way',

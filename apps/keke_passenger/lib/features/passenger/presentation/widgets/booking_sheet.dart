@@ -13,6 +13,7 @@ import '../wallet_screen.dart';
 import 'booking_notice_card.dart';
 import 'coordination_card.dart';
 import '../../domain/ride_coordination.dart';
+import 'cancel_reason_sheet.dart';
 import 'searching_panel.dart';
 import 'ride_chat_panel.dart';
 import 'ride_receipt_sheet.dart';
@@ -159,6 +160,9 @@ class BookingSheet extends ConsumerWidget {
       case BookingStep.previewEstimate:
         return _buildFarePanel(context, ref, state);
       case BookingStep.searching:
+      // Same panel, different copy: a driver is deciding, but the passenger
+      // is still waiting and can still cancel.
+      case BookingStep.offerSent:
         return _buildSearchingPanel(context, ref, state);
       case BookingStep.confirmed:
       case BookingStep.arrived:
@@ -763,9 +767,23 @@ class BookingSheet extends ConsumerWidget {
       transientMessage: state.errorMessage,
       notice: state.notice,
       nearbyKekes: state.nearbyKekes,
-      onCancel: () =>
-          ref.read(bookingControllerProvider.notifier).cancelBooking(),
+      offerSent: state.step == BookingStep.offerSent,
+      pickup: state.pickupLocation,
+      onCancel: () => _confirmCancel(context, ref),
     );
+  }
+
+  /// First tap opens the reason sheet. Nothing is cancelled until the
+  /// passenger picks a reason AND confirms the destructive action.
+  ///
+  /// "Keep my ride" returns null and this does nothing at all — no request, no
+  /// state change. That is the whole point: Cancel used to fire on one tap,
+  /// under a thumb, on the screen a passenger stares at while waiting.
+  static Future<void> _confirmCancel(BuildContext context, WidgetRef ref) async {
+    final reasonCode = await CancelReasonSheet.show(context);
+    if (reasonCode == null) return;
+    ref.read(bookingControllerProvider.notifier)
+        .cancelBooking(reasonCode: reasonCode);
   }
 
   // ── Active ride ────────────────────────────────────────────────────────
@@ -869,8 +887,7 @@ class BookingSheet extends ConsumerWidget {
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(14)),
             ),
-            onPressed: () =>
-                ref.read(bookingControllerProvider.notifier).cancelBooking(),
+            onPressed: () => _confirmCancel(context, ref),
             child: const Text('Cancel Trip'),
           ),
         ],

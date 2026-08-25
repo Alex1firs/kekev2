@@ -39,3 +39,6 @@ GoogleService-Info.plist
 
 # Redis snapshot, written if a redis-server is ever started from a package dir.
 dump.rdb
+
+# Play/App Store bundles — distributed, not versioned.
+build_output/

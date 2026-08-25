@@ -23,6 +23,9 @@ import { Ride } from "../models/Ride";
 import { User } from "../models/User";
 import { WalletService } from "../services/wallet_service";
 import { DriverIntentService } from '../services/driver_intent_service';
+import { AppReleaseService, AppPlatform } from '../services/app_release_service';
+import { NotificationService } from '../services/notification_service';
+import { UserRole } from '../models/User';
 import { IntentActor } from '../models/DriverPresenceIntent';
 import { upload } from "../middleware/upload_middleware";
 import path from "path";
@@ -1169,6 +1172,126 @@ router.post("/drivers/:driverId/presence",
                 await DriverIntentService.setOffline(driverId, IntentActor.ADMIN, actor, reason);
             }
             return res.json({ presence: await DriverIntentService.healthOf(driverId) });
+        } catch (err: any) {
+            return res.status(500).json({ error: err.message });
+        }
+    });
+
+// ── Driver app release policy ───────────────────────────────────────────
+
+router.get("/app-release/:platform",
+    requireStaffPermission(StaffPermission.MONITOR_READ),
+    async (req: Request, res: Response) => {
+        try {
+            const platform: AppPlatform =
+                String(req.params.platform).toLowerCase() === 'ios' ? 'ios' : 'android';
+            return res.json({ policy: await AppReleaseService.get(platform) });
+        } catch (err: any) {
+            return res.status(500).json({ error: err.message });
+        }
+    });
+
+/**
+ * Change what drivers are told about updates.
+ *
+ * Raising `minimumSupportedBuild` above 0 takes every older build off the road
+ * until those drivers reach Play, so it needs the stronger right and it is
+ * audited. The service additionally refuses a minimum above `latestBuild`.
+ */
+router.put("/app-release/:platform",
+    requireRealStaff,
+    requireStaffPermission(StaffPermission.ADMIN_WRITE),
+    async (req: Request, res: Response) => {
+        try {
+            const platform: AppPlatform =
+                String(req.params.platform).toLowerCase() === 'ios' ? 'ios' : 'android';
+            const before = await AppReleaseService.get(platform);
+            const policy = await AppReleaseService.set(platform, req.body ?? {});
+
+            await AppDataSource.getRepository(AuditLog).save(
+                AppDataSource.getRepository(AuditLog).create({
+                    adminId: legacyAuditActor(req as AdminRequest),
+                    action: "DRIVER_RELEASE_POLICY_UPDATED",
+                    entityType: "APP_RELEASE", entityId: platform,
+                    details: { before, after: policy },
+                }));
+            return res.json({ policy });
+        } catch (err: any) {
+            return res.status(400).json({ error: err.message });
+        }
+    });
+
+/**
+ * Tell drivers on an old build that an update is waiting.
+ *
+ * ── Why this exists ─────────────────────────────────────────────────────
+ * The version-check UI ships IN the new build, so the drivers who most need
+ * to update are running an app that cannot tell them. Push is the only
+ * channel that reaches them, and it is a plain notification so it renders
+ * without their app running.
+ *
+ * Defaults to a DRY RUN. Nothing is sent unless `confirm: true` is passed, so
+ * the recipient count can be read before anybody's phone rings.
+ */
+router.post("/app-release/:platform/notify-outdated",
+    requireRealStaff,
+    requireStaffPermission(StaffPermission.ADMIN_WRITE),
+    async (req: Request, res: Response) => {
+        try {
+            const platform = String(req.params.platform).toLowerCase() === 'ios' ? 'ios' : 'android';
+            const body = (req.body ?? {}) as Record<string, unknown>;
+            const confirm = body.confirm === true;
+            const onlyDriverIds = Array.isArray(body.driverIds)
+                ? (body.driverIds as string[]).filter((d) => typeof d === 'string')
+                : null;
+
+            // Every approved driver with a live token on this platform. We
+            // cannot read an installed build from here, so "outdated" means
+            // "has not yet reported the current build" — the notice is
+            // harmless to somebody already updated.
+            const rows = await AppDataSource.query(
+                `SELECT DISTINCT dp."userId"
+                   FROM driver_profile dp
+                   JOIN device_token t ON t."userId" = dp."userId"
+                  WHERE dp.status = 'approved'
+                    AND t.role = 'driver'
+                    AND COALESCE(t."isActive", true) = true
+                    AND lower(t.platform) = $1`, [platform]);
+            let recipients: string[] = rows.map((r: any) => r.userId);
+            if (onlyDriverIds) recipients = recipients.filter((id) => onlyDriverIds.includes(id));
+
+            if (!confirm) {
+                return res.json({
+                    dryRun: true,
+                    platform,
+                    recipientCount: recipients.length,
+                    sample: recipients.slice(0, 5).map((id) => id.slice(0, 8) + '…'),
+                    note: 'Nothing was sent. Pass confirm:true to send.',
+                });
+            }
+
+            const message = String(body.message ?? '').trim()
+                || 'KekeRide Driver has an important reliability update. '
+                 + 'Please update your app from Google Play.';
+
+            let sent = 0;
+            for (const driverId of recipients) {
+                const r = await NotificationService.sendToUser(
+                    driverId, UserRole.DRIVER, 'Update KekeRide Driver', message,
+                    { type: 'APP_UPDATE_NOTICE', platform },
+                );
+                if (r.successCount > 0) sent += 1;
+            }
+
+            await AppDataSource.getRepository(AuditLog).save(
+                AppDataSource.getRepository(AuditLog).create({
+                    adminId: legacyAuditActor(req as AdminRequest),
+                    action: "DRIVER_UPDATE_NOTICE_SENT",
+                    entityType: "APP_RELEASE", entityId: platform,
+                    details: { recipientCount: recipients.length, sent, targeted: !!onlyDriverIds },
+                }));
+
+            return res.json({ dryRun: false, platform, recipientCount: recipients.length, sent });
         } catch (err: any) {
             return res.status(500).json({ error: err.message });
         }

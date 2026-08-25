@@ -4,7 +4,9 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 
 import '../../../core/services/driver_readiness_service.dart';
+import '../../../core/services/app_update_service.dart';
 import 'widgets/readiness_setup_sheet.dart';
+import 'widgets/update_prompt.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
@@ -30,7 +32,8 @@ class DriverHomeScreen extends ConsumerStatefulWidget {
   ConsumerState<DriverHomeScreen> createState() => _DriverHomeScreenState();
 }
 
-class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
+class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen>
+    with WidgetsBindingObserver {
   GoogleMapController? _mapController;
   BitmapDescriptor? _kekeMarkerIcon;
 
@@ -38,6 +41,26 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
   void initState() {
     super.initState();
     _loadKekeMarker();
+    // After the first frame: the driver sees their screen, then the prompt.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _checkForUpdate();
+    });
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState lifecycleState) {
+    // On resume, not on every rebuild. The service's own six-hour interval
+    // stops this becoming a request each time the driver switches apps.
+    if (lifecycleState == AppLifecycleState.resumed && mounted) {
+      _checkForUpdate();
+    }
   }
 
   Future<void> _loadKekeMarker() async {
@@ -258,6 +281,32 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
   ///
   /// Replaces the old battery-only prompt, which checked the one restriction
   /// Android exposes and missed the ones that actually cost trips.
+  /// Ask the server whether this build is current.
+  ///
+  /// Runs after the first frame and on resume. The service rate-limits itself
+  /// to once every six hours and remembers a dismissal for the session, so a
+  /// driver switching apps at a junction is not prompted repeatedly.
+  ///
+  /// Every failure path inside returns "no update", so bad signal can never
+  /// put a dialog between a driver and their work.
+  Future<void> _checkForUpdate() async {
+    try {
+      final svc = ref.read(appUpdateServiceProvider);
+      final status = await svc.check();
+      if (!status.updateAvailable && !status.updateRequired) return;
+      if (!mounted) return;
+
+      await UpdatePrompt.show(
+        context,
+        status: status,
+        onUpdate: () => svc.openStore(status.storeUrl),
+        onLater: svc.markDismissed,
+      );
+    } catch (_) {
+      // Never let the update prompt break the home screen.
+    }
+  }
+
   Future<void> _runReadinessCheck() async {
     try {
       final readiness = ref.read(driverReadinessProvider);

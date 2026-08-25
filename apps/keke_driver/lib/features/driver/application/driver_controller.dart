@@ -13,6 +13,8 @@ import '../../../core/services/location_foreground_task.dart';
 import '../../../core/services/battery_optimization_service.dart';
 import '../../../core/services/reliability_log.dart';
 import '../../../core/services/driver_readiness_service.dart';
+import '../../../core/services/ios_presence_service.dart';
+import '../../../core/services/app_update_service.dart';
 import '../../../core/storage/secure_storage.dart';
 import '../domain/chat_message.dart';
 import '../domain/driver_profile.dart';
@@ -348,6 +350,26 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
     _heartbeatTimer?.cancel();
     _sendHeartbeat();
     _heartbeatTimer = Timer.periodic(const Duration(seconds: 12), (_) => _sendHeartbeat());
+  }
+
+  /// Beat using a position we already have.
+  ///
+  /// The iOS background stream hands us a fresh fix; asking Core Location for
+  /// another one inside a background wake-up is both slower and more likely to
+  /// time out than simply using the one that woke us.
+  Future<void> _sendHeartbeatAt(double lat, double lng) async {
+    if (!mounted) return;
+    final isOnline = state.operationStatus == OperationStatus.available ||
+        state.operationStatus == OperationStatus.busy;
+    if (!isOnline) return;
+    if (state.profile.status != DriverStatus.approved) return;
+    try {
+      await _apiClient.dio.post('/drivers/heartbeat', data: {'lat': lat, 'lng': lng});
+      ReliabilityLog.log(RelEvent.heartbeatSent, {'source': 'ios_bg_stream'});
+    } catch (e) {
+      ReliabilityLog.log(RelEvent.heartbeatFailed,
+          {'source': 'ios_bg_stream', 'reason': e.runtimeType.toString()});
+    }
   }
 
   Future<void> _sendHeartbeat() async {
@@ -924,6 +946,7 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
       );
       _heartbeatTimer?.cancel();
       _stopLocationForegroundService();
+      IosPresenceService.instance.stop();
       ReliabilityLog.log(RelEvent.offlineStopped, {'by': 'toggle'});
       if (_socketService != null) {
         _socketService!.emit('driver:offline', {'driverId': _userId});
@@ -980,7 +1003,16 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
           : ConnectionStatus.connecting,
     );
     _startHeartbeat();
-    _startLocationForegroundService(); // async fire-and-forget
+    _startLocationForegroundService(); // async fire-and-forget (Android)
+    // iOS equivalent: a background location stream, which is the only
+    // Apple-sanctioned way to stay reachable once the app leaves the
+    // foreground. No-op on Android.
+    // Not a cascade: `..start()` after an arrow lambda binds to the lambda's
+    // body, not to the service.
+    IosPresenceService.instance.onFix = (lat, lng) {
+      unawaited(_sendHeartbeatAt(lat, lng));
+    };
+    unawaited(IosPresenceService.instance.start());
     _declarePresence(true, reason: 'driver toggled online');
     _refreshBatteryWarning();
   }
@@ -2158,6 +2190,7 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
     // auth change) can't keep the heartbeat isolate posting with a stale token.
     // If the driver is still online, the fresh controller's auto-resume restarts it.
     _stopLocationForegroundService();
+    IosPresenceService.instance.stop();
     ReliabilityLog.log(RelEvent.logoutCleanup, {});
     _waitTimer?.cancel();
     _countdownTimer?.cancel();
@@ -2176,6 +2209,10 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
 /// Kept beside the driver controller because going online is what triggers
 /// the check, and because the service caches the server's verdict between
 /// checks so a recheck does not always need a round trip.
+final appUpdateServiceProvider = Provider<AppUpdateService>((ref) {
+  return AppUpdateService(ref.watch(apiClientProvider).dio);
+});
+
 final driverReadinessProvider = Provider<DriverReadinessService>((ref) {
   return DriverReadinessService(ref.watch(apiClientProvider).dio);
 });

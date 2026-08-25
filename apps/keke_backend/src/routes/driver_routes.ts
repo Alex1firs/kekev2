@@ -13,6 +13,7 @@ import fs from "fs";
 import sharp from "sharp";
 import { DispatchService } from "../services/dispatch_service";
 import { DriverIntentService } from '../services/driver_intent_service';
+import { AppReleaseService, AppPlatform } from '../services/app_release_service';
 import { IntentActor } from '../models/DriverPresenceIntent';
 import { NearbyKekeFeedService } from "../services/nearby_keke_feed_service";
 import { SmileIdService } from "../services/smile_id_service";
@@ -416,6 +417,30 @@ router.get("/nearby", authMiddleware, async (req: AuthRequest, res: Response) =>
     } catch (err: any) {
         console.error('[DRIVER] Fetch nearby error:', err?.message);
         res.status(500).json(errBody(ErrorCode.INTERNAL_ERROR, "Failed to fetch nearby drivers."));
+    }
+});
+
+/**
+ * GET /api/v1/drivers/app-release?platform=android&build=50
+ *
+ * Deliberately UNAUTHENTICATED. A driver whose session has expired, or who is
+ * on a build so old it can no longer log in, is exactly who most needs to be
+ * told to update — requiring a valid token to learn that would be circular.
+ * The response contains no personal data and nothing an attacker cannot read
+ * off the store listing.
+ */
+router.get("/app-release", async (req: Request, res: Response) => {
+    try {
+        const raw = String(req.query.platform ?? 'android').toLowerCase();
+        const platform: AppPlatform = raw === 'ios' ? 'ios' : 'android';
+        const buildRaw = Number(req.query.build);
+        const build = Number.isFinite(buildRaw) ? Math.trunc(buildRaw) : null;
+        return res.json(await AppReleaseService.check(platform, build));
+    } catch (err: any) {
+        // Never block the app on this. A failed version check means no prompt,
+        // which is strictly better than a driver who cannot get past a dialog.
+        console.error('[DRIVER] app-release check failed:', err?.message);
+        return res.status(200).json({ updateAvailable: false, updateRequired: false });
     }
 });
 

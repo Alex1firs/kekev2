@@ -22,7 +22,7 @@
  * Bump on every shell change. The old cache is deleted on activate, so a stale
  * build cannot outlive a deploy.
  */
-const VERSION = 'v5.13.0';  // Session persistence: durable storage, offline-safe boot
+const VERSION = 'v5.14.0';  // Call passenger from the ride detail sheet
 const SHELL_CACHE = `kd-shell-${VERSION}`;
 
 const SHELL = [

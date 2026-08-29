@@ -198,6 +198,21 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
         case 'ride:request':
           _handleIncomingRequest(data);
           break;
+        case 'ride:operations_assignment':
+          /*
+           * A dispatcher assigned this trip by hand. The driver did not tap
+           * anything, so nothing here knows about the ride yet.
+           *
+           * The payload is treated as a HINT, exactly like a notification
+           * intent: we re-read /rides/active/driver rather than building the
+           * ride from the event. That endpoint is the one authority on what we
+           * are on, and it is what carries the passenger's contact — building
+           * the trip from this payload instead would recreate the original
+           * defect, a ride on screen with no way to phone anybody.
+           */
+          _soundService.playRequestSound();
+          syncStatus(source: DriverRecoverySource.notificationTap);
+          break;
         case 'ride:confirmed':
           // Server-authoritative: DB transaction committed, ride is ours.
           // Moved here from acceptRequest() to prevent optimistic ghost state.
@@ -2145,6 +2160,74 @@ class DriverController extends StateNotifier<DriverState> with WidgetsBindingObs
         isLoading: false,
         errorMessage: 'Could not reach the server. Check your connection and try again.',
       );
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  //  Passenger contact — resolved from the server, not from the offer
+  // ═══════════════════════════════════════════════════════════════════
+
+  /// Ask the server for the passenger's number for the ride we are on.
+  ///
+  /// ── Why this exists ────────────────────────────────────────────────
+  /// The Call button was built entirely from `activeRequest.passengerPhone`,
+  /// which only ever gets filled by two things: the dispatch offer payload,
+  /// and active-ride recovery. A ride assigned by hand from Operations
+  /// Dispatch goes through neither at the moment of assignment, so the button
+  /// had nothing to dial and told the driver the number was unavailable — on
+  /// a ride that was genuinely theirs, with a passenger genuinely waiting.
+  ///
+  /// `/rides/{id}/contact` is the server's purpose-built answer to "may this
+  /// driver phone this passenger, and on what number". It authorises against
+  /// the CURRENT assignment, so a driver released from the ride immediately
+  /// stops being able to call, and every read is recorded. It existed already
+  /// with no client calling it.
+  ///
+  /// The cached number is preferred when we have one, so the common path
+  /// costs nothing; the fetch is the fallback that makes the button work
+  /// regardless of how the ride arrived.
+  Future<PassengerContactResult> resolvePassengerPhone() async {
+    final cached = state.activeRequest?.passengerPhone;
+    if (cached != null && cached.trim().isNotEmpty) {
+      return PassengerContactResult.ok(cached);
+    }
+
+    final rideId = state.activeRequest?.id;
+    if (rideId == null || rideId.isEmpty) {
+      return const PassengerContactResult(PassengerContactOutcome.noRide);
+    }
+
+    try {
+      final res = await _apiClient.dio.get('/rides/$rideId/contact');
+      final data = res.data;
+      if (data is! Map) return const PassengerContactResult(PassengerContactOutcome.failed);
+
+      final phone = data['phone']?.toString().trim() ?? '';
+      if (phone.isEmpty) {
+        // Authorised, but there is nothing to dial. User.phone is nullable on
+        // the server, so this is a real state and not an error.
+        return const PassengerContactResult(PassengerContactOutcome.noNumber);
+      }
+
+      // Cache it on the ride so a second tap does not repeat the round trip,
+      // and so the number survives a rebuild of the HUD.
+      final req = state.activeRequest;
+      if (req != null && req.id == rideId) {
+        state = state.copyWith(
+          activeRequest: req.copyWith(passengerPhone: phone),
+        );
+      }
+      return PassengerContactResult.ok(phone);
+    } on dio.DioException catch (e) {
+      final code = e.response?.statusCode;
+      // 403/404 both mean "not yours" — the server deliberately does not
+      // distinguish a ride that moved on from one that never existed.
+      if (code == 403 || code == 404) {
+        return const PassengerContactResult(PassengerContactOutcome.notAllowed);
+      }
+      return const PassengerContactResult(PassengerContactOutcome.failed);
+    } catch (_) {
+      return const PassengerContactResult(PassengerContactOutcome.failed);
     }
   }
 

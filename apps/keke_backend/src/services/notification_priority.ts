@@ -40,6 +40,8 @@ export const NOTIFICATION_PRIORITY: Record<string, NotificationPriority> = {
     NEW_REQUEST: NotificationPriority.CRITICAL,
     RIDE_ASSIGNED: NotificationPriority.CRITICAL,
     DRIVER_ASSIGNED: NotificationPriority.CRITICAL,
+    /** Operations gave a driver a trip by hand. They are not watching for it. */
+    TRIP_ASSIGNED: NotificationPriority.CRITICAL,
     OTP: NotificationPriority.CRITICAL,
     EMAIL_VERIFICATION: NotificationPriority.CRITICAL,
     PASSWORD_RESET: NotificationPriority.CRITICAL,

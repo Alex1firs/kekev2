@@ -36,7 +36,31 @@
         reassigning: false,
         /** The chosen reason code, while the confirmation is showing. */
         reassignConfirm: null,
+        /** True while the "why are you ringing the passenger?" picker is open. */
+        callingPassenger: false,
     };
+
+    /**
+     * Why a dispatcher is ringing the passenger.
+     *
+     * Mirrors PASSENGER_CONTACT_REASONS in operations_routes.ts. The SERVER
+     * rejects anything not in its own list — this copy only shapes the buttons,
+     * and a stale copy here produces a refused request, never an unrecorded
+     * reveal.
+     */
+    const PASSENGER_CALL_REASONS = [
+        ['NO_DRIVER_FOUND', 'No driver found'],
+        ['LONG_WAIT', 'Long wait — explaining'],
+        ['PICKUP_UNCLEAR', 'Pickup unclear'],
+        ['DRIVER_CANNOT_REACH', 'Driver cannot reach pickup'],
+        ['REASSIGNING_DRIVER', 'Changing the driver'],
+        ['PASSENGER_REQUESTED_CALLBACK', 'They asked for a callback'],
+        ['INCIDENT', 'Incident or safety'],
+    ];
+
+    /** Whether this dispatcher may see a real passenger number at all. */
+    const canRevealPassenger = () =>
+        can('ride:reveal_contact') || can('dispatch:reveal_passenger_contact');
 
     const $$ = (id) => document.getElementById(id);
 
@@ -377,6 +401,43 @@
     }
 
     /**
+     * Ring the passenger.
+     *
+     * ── Why the number is not already on screen ─────────────────────────
+     * The queue ships MASKED contact for every ride, and that is deliberate:
+     * a dispatcher scrolling forty waiting rides should not be carrying forty
+     * real numbers around a park in an unlocked browser. The real number is
+     * fetched for one ride, at the moment somebody decides to ring it, with a
+     * reason — and the server records who looked, when, and why.
+     *
+     * Before this existed the operator had to leave Operations Dispatch,
+     * open the Admin dashboard, find the ride again and reveal it there,
+     * while the passenger stood on a roadside.
+     */
+    async function callPassenger(rideId, reasonCode) {
+        let contact = null;
+        try {
+            contact = await api(`/operations/rides/${encodeURIComponent(rideId)}/passenger-contact`,
+                'POST', { reason: reasonCode });
+        } catch (e) {
+            toast(e?.message || "Could not get the passenger's number.", 'warn');
+            return;
+        } finally {
+            OPS.callingPassenger = false;
+            render();
+        }
+
+        if (!contact?.dialable) {
+            // A real state, not a fault: User.phone is nullable on the server.
+            toast(contact?.hasNumber === false
+                ? 'This passenger has no phone number on file.'
+                : "No number available for this passenger.", 'warn');
+            return;
+        }
+        dial(contact.dialable, contact.name || 'the passenger');
+    }
+
+    /**
      * Hand a number to the OS dialer, with a visible way out if it refuses.
      *
      * A synthesised anchor click is used rather than assigning location.href:
@@ -604,6 +665,33 @@
             <div><span class="ops-dot ops-dot-b"></span> ${esc(r.destinationAddress || 'No address captured')}</div>
           </div>
 
+          <!-- The passenger, and a way to reach them.
+               Masked identity is what the queue carries; the real number is
+               fetched on tap, with a reason, and recorded. Nothing here shows
+               a dialable number until somebody has asked for one. -->
+          <div class="ops-section">
+            <h4>Passenger</h4>
+            <div class="ops-assigned">
+              <div class="ops-assigned-main">
+                <div class="ops-driver-name">${esc(r.passenger?.name || 'Unknown passenger')}</div>
+                <div class="ops-driver-sub">${esc(r.passenger?.phoneMasked || 'no number on file')}</div>
+              </div>
+              <div class="ops-driver-actions">
+                ${canRevealPassenger() && r.passenger
+                  ? `<button class="ops-btn-ghost" data-call-passenger="1">Call passenger</button>` : ''}
+              </div>
+            </div>
+            ${canRevealPassenger() && OPS.callingPassenger ? `
+              <div class="ops-reassign">
+                <div class="ops-reassign-title">Why are you calling this passenger?</div>
+                ${PASSENGER_CALL_REASONS.map(([code, label]) =>
+                  `<button class="ops-btn-ghost ops-reason" data-call-passenger-reason="${code}">${esc(label)}</button>`).join('')}
+                <button class="ops-btn-ghost" data-call-passenger-cancel="1">Cancel</button>
+              </div>` : ''}
+            ${!canRevealPassenger()
+              ? `<p class="ops-note">You do not have permission to see a passenger's number.</p>` : ''}
+          </div>
+
           ${r.driver ? `
           <div class="ops-section">
             <h4>Assigned driver</h4>
@@ -779,6 +867,22 @@
             return;
         }
 
+        if (e.target.closest('[data-call-passenger]')) {
+            OPS.callingPassenger = true;
+            render();
+            return;
+        }
+        if (e.target.closest('[data-call-passenger-cancel]')) {
+            OPS.callingPassenger = false;
+            render();
+            return;
+        }
+        const cpr = e.target.closest('[data-call-passenger-reason]');
+        if (cpr && OPS.selected) {
+            callPassenger(OPS.selected, cpr.dataset.callPassengerReason);
+            return;
+        }
+
         const copy = e.target.closest('[data-copy]');
         if (copy) {
             const n = copy.dataset.copy;
@@ -807,6 +911,7 @@
             OPS.drivers = [];
             OPS.reassigning = false;
             OPS.reassignConfirm = null;
+            OPS.callingPassenger = false;
             render();
             loadInterventions(OPS.selected);
             const r = OPS.rides.find((x) => x.rideId === OPS.selected);
@@ -834,6 +939,7 @@
         OPS.drivers = [];
         OPS.reassigning = false;
         OPS.reassignConfirm = null;
+        OPS.callingPassenger = false;
         render();
         loadInterventions(rideId);
         refresh().then(() => {

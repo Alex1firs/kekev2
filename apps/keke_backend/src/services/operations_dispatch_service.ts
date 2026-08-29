@@ -27,6 +27,15 @@ import { RideControlService, ControlActor } from './ride_control_service';
 import { OperationsAuditService } from './operations_audit_service';
 import { InterventionType, InterventionReason } from '../models/OperationsIntervention';
 import { loadOperationsDispatchConfig } from '../config/operations_dispatch_config';
+import { ContactAccessService, FullContact } from './contact_access_service';
+import { ContactPrivacyConfig } from '../config/contact_privacy_config';
+import { StaffRole } from '../config/staff_permissions';
+
+/**
+ * Rides that are over. Contact access to these is time-boxed rather than open:
+ * Operations Dispatch is a live-ride surface.
+ */
+const TERMINAL_RIDE_STATES = ['completed', 'canceled', 'failed'];
 
 export interface OperationsHost {
     assignDriver(a: {
@@ -364,6 +373,120 @@ export class OperationsDispatchService {
             dialable: toLocalDialable(user?.phone) ?? null,
             name: [profile?.firstName, profile?.lastName].filter(Boolean).join(' ') || 'this driver',
         };
+    }
+
+    /**
+     * Reveal the passenger's number so a dispatcher can ring them.
+     *
+     * ── Why this exists as its own method ───────────────────────────────
+     * The number was reachable only from the Admin dashboard, so an operator
+     * working a stalled ride had to leave Operations Dispatch, find the ride
+     * again in another tool, and reveal it there — while the passenger stood
+     * on a roadside. The information was never the problem; the journey was.
+     *
+     * ── What it does NOT do ─────────────────────────────────────────────
+     * It does not put numbers in the queue payload. The queue ships masked
+     * contact only, and that stays true: this is a per-ride, per-tap, audited
+     * moment, and forty rides on a screen are still forty masked numbers.
+     *
+     * ── Scope ───────────────────────────────────────────────────────────
+     * Deliberately NARROWER than the support desk's reveal. Support handles
+     * historic complaints and may look at a finished ride; Operations Dispatch
+     * exists for rides happening now, so access is limited to live rides plus
+     * the same short grace window the assigned driver gets. Nothing here
+     * widens what any role could already reach.
+     *
+     * Control of the ride is NOT required — matching recordDriverContacted.
+     * A dispatcher rings a waiting passenger to explain the delay, which is
+     * frequently what they do BEFORE deciding to take over, and the lease
+     * exists to stop two people assigning drivers, not to ration a phone call.
+     * The permission is the boundary, and every reveal is recorded.
+     */
+    static async revealPassengerContact(
+        rideId: string,
+        actor: ControlActor,
+        reason: string,
+        ctx: {
+            ipAddress?: string | null;
+            userAgent?: string | null;
+            correlationId?: string | null;
+            /** Carried into the staff audit row so a reveal names the role that held it. */
+            roles?: StaffRole[];
+        } = {},
+    ): Promise<
+        | { ok: true; contact: FullContact }
+        | { ok: false; code: string; message: string }
+    > {
+        const ride = await AppDataSource.getRepository(Ride).findOne({ where: { rideId } });
+        const control = await RideControlService.get(rideId);
+
+        const audit = (outcome: string, code: string | null, detail?: any) =>
+            OperationsAuditService.record({
+                type: InterventionType.PASSENGER_CONTACTED,
+                rideId,
+                staffUserId: actor.staffUserId,
+                staffLabel: actor.label,
+                reason,
+                driverId: ride?.driverId ?? null,
+                priorRideStatus: ride ? String(ride.status) : null,
+                priorControlMode: control?.mode ?? null,
+                outcome,
+                outcomeCode: code,
+                detail: detail ?? null,
+            });
+
+        if (!ride) {
+            await audit('refused', 'RIDE_NOT_FOUND');
+            return { ok: false, code: 'RIDE_NOT_FOUND', message: 'Ride not found.' };
+        }
+
+        const status = String(ride.status);
+        const graceMs = ContactPrivacyConfig.assignedDriverGraceHours * 3600_000;
+        const endedAt = ride.completedAt ?? ride.updatedAt ?? null;
+        const withinGrace = TERMINAL_RIDE_STATES.includes(status)
+            ? !!endedAt && Date.now() - new Date(endedAt).getTime() < graceMs
+            : true;
+        if (!withinGrace) {
+            await audit('refused', 'RIDE_TOO_OLD');
+            return {
+                ok: false,
+                code: 'RIDE_TOO_OLD',
+                message: 'This ride ended too long ago. Support can still reach the passenger.',
+            };
+        }
+
+        let contact: FullContact;
+        try {
+            /*
+             * The reveal itself is recorded CRITICALLY inside this call — if
+             * the audit row cannot be written the number is not returned. The
+             * intervention row below is the Operations-facing view of the same
+             * act, written only once the reveal actually succeeded.
+             */
+            contact = await ContactAccessService.revealPassengerContactForStaff({
+                rideId,
+                // isLegacy is false by construction: the route is behind
+                // requireRealStaff, so the shared admin key never gets here.
+                actor: { staffUserId: actor.staffUserId, roles: ctx.roles ?? [], isLegacy: false },
+                reason,
+                ipAddress: ctx.ipAddress ?? null,
+                userAgent: ctx.userAgent ?? null,
+                correlationId: ctx.correlationId ?? null,
+            });
+        } catch (err: any) {
+            await audit('error', err?.code ?? 'REVEAL_FAILED');
+            return {
+                ok: false,
+                code: err?.code ?? 'REVEAL_FAILED',
+                message: err?.message ?? "We couldn't reveal the passenger's number.",
+            };
+        }
+
+        // `dialable` is recorded, the number never is: the audit answers who
+        // looked and when, and repeating the value in a second table would put
+        // it somewhere nobody thought to protect.
+        await audit('ok', null, { dialable: contact.dialable, rideStatus: status });
+        return { ok: true, contact };
     }
 
     /** Operator-facing sentence for an eligibility rejection code. */

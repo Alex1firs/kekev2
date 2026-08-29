@@ -22,6 +22,13 @@ export enum InterventionType {
     TAKEOVER_RELEASED = "takeover_released",
     CONTROL_EXPIRED = "control_expired",
     DRIVER_CONTACTED = "driver_contacted",
+    /**
+     * A dispatcher revealed and rang the PASSENGER. Distinct from
+     * DRIVER_CONTACTED because it is the one intervention that exposes a
+     * customer's personal data, and "who has seen this number" must be
+     * answerable without reading the free-text of every other row.
+     */
+    PASSENGER_CONTACTED = "passenger_contacted",
     ASSIGNMENT_ATTEMPTED = "assignment_attempted",
     DRIVER_ASSIGNED = "driver_assigned",
     ASSIGNMENT_FAILED = "assignment_failed",

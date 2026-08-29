@@ -133,13 +133,40 @@ void main() {
      */
     test('the passenger name and phone are restored, not a placeholder',
         () async {
+      // The shape the SERVER actually sends: ContactAccessService.FullContact,
+      // whose name field is `firstName`. This test previously invented a `name`
+      // key that no endpoint emits, so it passed while production fell through
+      // to 'Passenger' on every recovery.
       final r = await svc(_dioReturning(_ride('accepted', extra: {
-        'passengerContact': {'name': 'Ada Obi', 'phone': '08031234567'},
+        'passengerContact': {
+          'firstName': 'Ada',
+          'phone': '08031234567',
+          'dialable': true,
+        },
       }))).fetch(source: DriverRecoverySource.coldStart);
 
-      expect(r.snapshot!.request.passengerName, 'Ada Obi');
+      expect(r.snapshot!.request.passengerName, 'Ada');
       expect(r.snapshot!.request.passengerPhone, '08031234567');
       expect(r.snapshot!.request.passengerName, isNot('User'));
+      expect(r.snapshot!.request.passengerName, isNot('Passenger'));
+    });
+
+    test('a passenger with no number on file loses the name, not the ride',
+        () async {
+      // User.phone is nullable server-side, so `phone: null` is a real state.
+      // The ride must still come back — losing it would strand a driver over a
+      // missing phone number.
+      final r = await svc(_dioReturning(_ride('accepted', extra: {
+        'passengerContact': {
+          'firstName': 'Ada',
+          'phone': null,
+          'dialable': false,
+        },
+      }))).fetch(source: DriverRecoverySource.coldStart);
+
+      expect(r.outcome, DriverRecoveryOutcome.found);
+      expect(r.snapshot!.request.passengerName, 'Ada');
+      expect(r.snapshot!.request.passengerPhone, isNull);
     });
 
     test('server state wins over what the driver last saw', () async {

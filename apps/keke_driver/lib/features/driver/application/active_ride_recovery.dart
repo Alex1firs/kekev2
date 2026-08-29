@@ -144,7 +144,12 @@ class DriverActiveRideSnapshot {
         // The backend returns the passenger's contact on this endpoint
         // precisely so a restarted driver can still phone them. The old
         // recovery hardcoded 'User' and dropped the number entirely.
-        passengerName: contactMap['name']?.toString() ??
+        // `firstName` is what the server actually sends (FullContact). The
+        // `name` key was never emitted by any endpoint — reading it first meant
+        // recovery always fell through to 'Passenger', so a driver who
+        // restarted mid-ride collected somebody whose name the app had.
+        passengerName: contactMap['firstName']?.toString() ??
+            contactMap['name']?.toString() ??
             data['passengerName']?.toString() ??
             'Passenger',
         passengerPhone: contactMap['phone']?.toString(),

@@ -48,7 +48,16 @@ export interface MaskedContact {
 export interface FullContact {
     firstName: string;
     phone: string | null;
-    dialable: true;
+    /**
+     * Whether there is actually a number to dial.
+     *
+     * This was hard-coded `true`, which made "you are authorised" and "there is
+     * a number" the same field — so a passenger with no phone on file produced
+     * an authorised grant carrying null, and every caller had to know to check
+     * `phone` anyway. `phone` is nullable because User.phone is nullable: the
+     * account can be created through a path that never collected one.
+     */
+    dialable: boolean;
     /** When this grant lapses. Clients must not cache beyond it. */
     expiresAt: Date;
 }
@@ -138,10 +147,11 @@ export class ContactAccessService {
             correlationId: ctx.correlationId ?? null,
         });
 
+        const phone = toLocalDialable(passenger.phone) ?? null;
         return {
             firstName: passenger.firstName,
-            phone: toLocalDialable(passenger.phone) ?? null,
-            dialable: true,
+            phone,
+            dialable: !!phone,
             expiresAt,
         };
     }
@@ -207,10 +217,11 @@ export class ContactAccessService {
             correlationId: args.correlationId ?? null,
         });
 
+        const phone = toLocalDialable(passenger.phone) ?? null;
         return {
             firstName: passenger.firstName,
-            phone: toLocalDialable(passenger.phone) ?? null,
-            dialable: true,
+            phone,
+            dialable: !!phone,
             expiresAt,
         };
     }

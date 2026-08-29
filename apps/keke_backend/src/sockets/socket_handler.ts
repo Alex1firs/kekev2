@@ -2435,6 +2435,54 @@ export class SocketHandler {
             });
         }
 
+        /*
+         * An OPERATIONS-assigned driver has to be told too — and until now
+         * nobody told them anything.
+         *
+         * Every other way a ride gains a driver leaves that driver's app
+         * holding the ride: direct acceptance came from an offer the app had
+         * already parsed, and a park assignment gets ride:confirmed plus its
+         * own payload. Manual assignment emitted neither, and sent no push. The
+         * ride simply appeared the next time the app happened to run active-ride
+         * recovery — on a cold start, a resume, or a socket reconnect.
+         *
+         * That is what broke Call passenger. The driver app builds its call
+         * button from `activeRequest.passengerPhone`, which is populated by the
+         * offer payload or by recovery; an operations assignment populated
+         * neither, so the button had nothing to dial and said the number was
+         * unavailable.
+         *
+         * The push is the part that fixes handsets already in the field: the
+         * shipped app runs syncStatus() on ANY notification intent, so the tap
+         * pulls the ride and the passenger's contact through the authorised
+         * endpoint. The socket events are for builds that can use them.
+         */
+        if (args.source === 'operations') {
+            this.io.to(`driver:${driverId}`).emit('ride:confirmed', { rideId });
+            this.io.to(`driver:${driverId}`).emit('ride:operations_assignment', {
+                rideId,
+                pickupAddress: currentRide?.pickupAddress ?? null,
+                destinationAddress: currentRide?.destinationAddress ?? null,
+                pickupLat: currentRide?.pickupLat != null ? Number(currentRide.pickupLat) : null,
+                pickupLng: currentRide?.pickupLng != null ? Number(currentRide.pickupLng) : null,
+                destinationLat: currentRide?.destinationLat != null ? Number(currentRide.destinationLat) : null,
+                destinationLng: currentRide?.destinationLng != null ? Number(currentRide.destinationLng) : null,
+                fare: currentRide?.fare ?? null,
+                paymentMode: currentRide?.paymentMode ?? null,
+                pickupCode: ride?.pickupCode ?? null,
+            });
+            // Deliberately NOT type 'RIDE_ASSIGNED': that names the PASSENGER
+            // app's channel (keke_ride_updates), and a message naming a channel
+            // the handset does not have is not displayed at all.
+            void NotificationService.sendToUser(
+                driverId,
+                UserRole.DRIVER,
+                'A trip has been assigned to you',
+                'Dispatch has given you a trip. Open KekeRide to see the pickup.',
+                { type: 'TRIP_ASSIGNED', rideId, intent: 'active' },
+            ).catch(() => { /* the socket may still have carried it */ });
+        }
+
         // Reservation → assignment. The atomic DB UPDATE above (status
         // searching→accepted) is the true arbiter and is retained; here we
         // just confirm/log ownership and release ALL of this ride's ring

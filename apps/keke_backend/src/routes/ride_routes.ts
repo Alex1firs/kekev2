@@ -183,21 +183,42 @@ router.get("/active/driver", authMiddleware, async (req: AuthRequest, res: Respo
         // passenger entirely. Recovery now carries the number, which is both a
         // fix and the precondition for removing it from the offer payload.
         let passengerContact: unknown = null;
+        /*
+         * Why the reason is returned rather than only logged.
+         *
+         * This used to swallow the failure into a console.warn and hand the app
+         * a null. The driver then tapped Call, got "phone number unavailable",
+         * and there was nothing on either side saying WHY — a passenger with no
+         * number on file, an expired grant and a genuine fault all looked
+         * identical. The recovery must still not fail (a contact lookup must
+         * never cost a driver their ride), but the reason travels with it.
+         */
+        let passengerContactUnavailable: string | null = null;
         try {
             passengerContact = await ContactAccessService.passengerContactForAssignedDriver(
                 ride.rideId,
                 req.user!.userId,
                 { ipAddress: req.ip ?? null, correlationId: (req as any).requestId ?? null },
             );
+            if (passengerContact && !(passengerContact as any).phone) {
+                passengerContactUnavailable = 'no_number_on_file';
+            }
         } catch (err: any) {
             // A contact lookup must never break active-ride recovery.
-            console.warn('[RIDES] active driver contact unavailable:', err?.message);
+            passengerContactUnavailable = err instanceof AppError ? err.code : 'lookup_failed';
+            console.warn(JSON.stringify({
+                level: 'warn', scope: 'rides', event: 'driver_contact_unavailable',
+                rideId: ride.rideId, driverId: req.user!.userId,
+                rideStatus: String(ride.status), reason: passengerContactUnavailable,
+                error: err?.message ?? 'unknown',
+            }));
         }
 
         return res.status(200).json({
             ...ride,
             coordination: buildCoordination(ride, 'driver', true),
             passengerContact,
+            passengerContactUnavailable,
         });
     } catch (err: any) {
         console.error('[RIDES] Active driver ride error:', err?.message);

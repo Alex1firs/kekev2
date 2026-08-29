@@ -278,6 +278,93 @@ router.post('/rides/:rideId/contact-driver', interventionLimiter, requireStaffPe
     }
 });
 
+/**
+ * Why a dispatcher is ringing the passenger.
+ *
+ * A fixed vocabulary rather than free text, for the same reason the void
+ * reasons are: a reveal is a privacy event, and "what were people using this
+ * for last month" must be a GROUP BY. It also removes the friction of typing a
+ * justification while somebody is waiting on a roadside — which is how reason
+ * fields end up full of "x".
+ */
+export const PASSENGER_CONTACT_REASONS: Record<string, string> = {
+    NO_DRIVER_FOUND: 'No driver found — informing the passenger',
+    LONG_WAIT: 'Long wait — explaining the delay',
+    PICKUP_UNCLEAR: 'Pickup location unclear',
+    DRIVER_CANNOT_REACH: 'Driver cannot reach the pickup',
+    REASSIGNING_DRIVER: 'Changing the assigned driver',
+    PASSENGER_REQUESTED_CALLBACK: 'Passenger asked to be called back',
+    INCIDENT: 'Incident or safety concern',
+};
+
+/**
+ * POST /operations/rides/:rideId/passenger-contact
+ *
+ * Reveal the passenger's number for THIS ride, at this moment, to this named
+ * dispatcher. Requires a contact-reveal permission — `ops:queue_read` is not
+ * enough, and neither is holding the lease.
+ *
+ * The queue payload is unchanged and still carries masked contact only. This
+ * route is the single place a real number leaves the Operations surface.
+ */
+router.post('/rides/:rideId/passenger-contact', interventionLimiter, requireRealStaff, requireStaffPermission(
+    StaffPermission.RIDE_REVEAL_CONTACT,
+    StaffPermission.DISPATCH_REVEAL_PASSENGER_CONTACT,
+), async (req: StaffRequest, res: Response) => {
+    try {
+        const rideId = String(req.params.rideId);
+        const code = String(req.body?.reason ?? '');
+        if (!PASSENGER_CONTACT_REASONS[code]) {
+            return fail(res, 400, ErrorCode.VALIDATION_ERROR,
+                'Choose why you are contacting this passenger.');
+        }
+
+        const result = await OperationsDispatchService.revealPassengerContact(
+            rideId,
+            actorOf(req),
+            code,
+            {
+                ipAddress: req.ip ?? null,
+                userAgent: req.get('user-agent') ?? null,
+                correlationId: (req as any).requestId ?? null,
+                roles: req.actor?.roles ?? [],
+            },
+        );
+
+        if (!result.ok) {
+            const status = result.code === 'RIDE_NOT_FOUND' ? 404
+                : result.code === 'RIDE_TOO_OLD' ? 403 : 500;
+            const code = result.code === 'RIDE_NOT_FOUND' ? ErrorCode.RIDE_NOT_FOUND
+                : status === 403 ? ErrorCode.FORBIDDEN : ErrorCode.INTERNAL_ERROR;
+            return fail(res, status, code, result.message);
+        }
+
+        /*
+         * 200 with dialable:false rather than an error when the passenger has
+         * no number on file. That is a fact the operator needs — it is the
+         * difference between "try again" and "this person cannot be phoned at
+         * all, use the in-app chat" — and dressing it up as a failure sent
+         * dispatchers hunting for a fault that does not exist.
+         */
+        res.json({
+            ok: true,
+            name: result.contact.firstName,
+            dialable: result.contact.phone,
+            hasNumber: result.contact.dialable,
+            expiresAt: result.contact.expiresAt,
+        });
+    } catch (err: any) {
+        console.error('[OPS] passenger-contact error:', err?.message);
+        fail(res, 500, ErrorCode.INTERNAL_ERROR, "Could not reveal the passenger's number.");
+    }
+});
+
+/** GET /operations/passenger-contact-reasons — the vocabulary, for the UI. */
+router.get('/passenger-contact-reasons', requireStaffPermission(StaffPermission.OPS_QUEUE_READ),
+    (_req: StaffRequest, res: Response) => {
+        res.json({ reasons: Object.entries(PASSENGER_CONTACT_REASONS).map(([code, label]) => ({ code, label })) });
+    });
+
 /** POST /operations/drivers/:driverId/favourite — ranking only, never a bypass. */
 router.post('/drivers/:driverId/favourite', interventionLimiter, requireStaffPermission(StaffPermission.OPS_QUEUE_READ), async (req: StaffRequest, res: Response) => {
     try {

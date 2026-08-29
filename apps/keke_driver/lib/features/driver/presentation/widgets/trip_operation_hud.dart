@@ -101,7 +101,7 @@ class TripOperationHUD extends ConsumerWidget {
                     ],
 
                     const SizedBox(height: 14),
-                    _buildPassengerRow(context),
+                    _buildPassengerRow(context, ref),
 
                     if (state.tripStep != TripStep.completed) ...[
                       const SizedBox(height: 14),
@@ -439,7 +439,7 @@ class TripOperationHUD extends ConsumerWidget {
     );
   }
 
-  Widget _buildPassengerRow(BuildContext context) {
+  Widget _buildPassengerRow(BuildContext context, WidgetRef ref) {
     final unread = state.chatMessages.where((m) => m.isPassenger).length;
 
     return Container(
@@ -515,24 +515,7 @@ class TripOperationHUD extends ConsumerWidget {
           _ActionCircle(
             icon: Icons.phone_rounded,
             color: AppColors.success,
-            onTap: () async {
-              String phone = state.activeRequest?.passengerPhone ?? '';
-              if (phone.isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                      content: Text("Passenger's phone number is unavailable")),
-                );
-                return;
-              }
-              phone = phone.replaceAll(RegExp(r'\s+'), '');
-              if (phone.startsWith('+234')) {
-                phone = '0${phone.substring(4)}';
-              } else if (phone.startsWith('234')) {
-                phone = '0${phone.substring(3)}';
-              }
-              final uri = Uri(scheme: 'tel', path: phone);
-              if (await canLaunchUrl(uri)) await launchUrl(uri);
-            },
+            onTap: () => _dialPassenger(context, ref),
           ),
         ],
       ),
@@ -553,7 +536,7 @@ class TripOperationHUD extends ConsumerWidget {
         // Report it first: a tel: hand-off may never return to this app, and the
         // call is evidence the ride is alive whether or not we see it again.
         controller.respondToCoordination(action);
-        _dialPassenger(context);
+        _dialPassenger(context, ref);
         return;
       case CoordinationAction.messageOtherParty:
         controller.respondToCoordination(action);
@@ -584,15 +567,28 @@ class TripOperationHUD extends ConsumerWidget {
 
   /// Dial the passenger, normalising to a locally dialable format. Nigerian
   /// networks reject +234 from some handsets, so the leading zero form is used.
-  Future<void> _dialPassenger(BuildContext context) async {
-    String phone = state.activeRequest?.passengerPhone ?? '';
-    if (phone.isEmpty) {
+  ///
+  /// The number is resolved through the controller rather than read straight
+  /// off `activeRequest`. That field is only ever populated by a dispatch offer
+  /// or by active-ride recovery, so a ride assigned by hand from Operations
+  /// Dispatch left it empty and this button dead-ended on "unavailable" for a
+  /// ride the driver genuinely held. The controller falls back to the server,
+  /// which authorises against the CURRENT assignment.
+  Future<void> _dialPassenger(BuildContext context, WidgetRef ref) async {
+    final result =
+        await ref.read(driverControllerProvider.notifier).resolvePassengerPhone();
+
+    if (!result.dialable) {
+      if (!context.mounted) return;
+      // The specific reason, not one generic sentence: "no number on file" and
+      // "we could not ask the server" call for different actions.
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Passenger's phone number is unavailable")),
+        SnackBar(content: Text(result.message)),
       );
       return;
     }
-    phone = phone.replaceAll(RegExp(r'\s+'), '');
+
+    String phone = result.phone!.replaceAll(RegExp(r'\s+'), '');
     if (phone.startsWith('+234')) {
       phone = '0${phone.substring(4)}';
     } else if (phone.startsWith('234')) {

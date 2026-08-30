@@ -14,6 +14,8 @@ import { CommunicationCampaign, CommunicationCampaignChannel } from "../models/C
 import { MarketingPushJob } from "../models/MarketingPushJob";
 import { CommunicationTrigger } from "../models/CommunicationTrigger";
 import { DriverPresenceIntent } from "../models/DriverPresenceIntent";
+import { ServiceZone } from "../models/ServiceZone";
+import { ServiceAreaMiss } from "../models/ServiceAreaMiss";
 import { CommunicationDispatch } from "../models/CommunicationDispatch";
 import { CommunicationTestSubject } from "../models/CommunicationTestSubject";
 
@@ -37,6 +39,7 @@ export const AppDataSource = new DataSource({
     CommunicationCampaignEvent, InAppMessageDelivery,
     CommunicationTrigger, CommunicationDispatch, CommunicationTestSubject,
     DriverPresenceIntent,
+    ServiceZone, ServiceAreaMiss,
 ],
 
     migrations: ["dist/migrations/*.js"],

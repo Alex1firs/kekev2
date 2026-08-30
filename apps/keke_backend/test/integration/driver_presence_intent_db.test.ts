@@ -79,7 +79,10 @@ describeDb('driver presence — intent vs device health (database)', () => {
         for (const t of ['driver_presence_intent', 'device_token', 'driver_profile', 'user']) {
             await ds.query(`TRUNCATE TABLE ${SCHEMA}."${t}" CASCADE`);
         }
-        await redis.flushall();
+        // flushdb, not flushall: FLUSHALL clears every logical database, which
+        // wiped the zone parity suite's keys when the two ran in parallel
+        // workers. Test isolation only; nothing about presence changes.
+        await redis.flushdb();
         jest.restoreAllMocks();
     });
 

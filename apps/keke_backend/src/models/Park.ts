@@ -56,6 +56,14 @@ export class Park {
     @Column({ type: "varchar", length: 300, nullable: true })
     addressLine!: string | null;
 
+    /**
+     * The service zone this park sits in. Park SELECTION still uses the park's
+     * own serviceRadiusKm — this is provenance and reporting, not a second
+     * geographic gate.
+     */
+    @Column({ type: "varchar", length: 16, nullable: true })
+    zoneCode!: string | null;
+
     @Column({ type: "varchar", length: 80, nullable: true })
     city!: string | null;
 

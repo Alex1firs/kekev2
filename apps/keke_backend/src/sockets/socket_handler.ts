@@ -34,6 +34,11 @@ import {
 } from '../services/ride_outcome';
 import { publishCommunicationEvent } from '../services/communication_events';
 import { DriverCandidateService } from '../services/driver_candidate_service';
+import { ServiceZoneResolver, ZoneResolution } from '../services/service_zone_resolver';
+import { ServiceZonePolicy, logWouldRefuseRequest } from '../services/service_zone_policy';
+import { ServiceAreaMissService } from '../services/service_area_miss_service';
+import { ServiceZoneService } from '../services/service_zone_service';
+import { ZoneEnforcement } from '../models/ServiceZone';
 import { DriverIntentService } from '../services/driver_intent_service';
 import { IntentActor } from '../models/DriverPresenceIntent';
 import { User, UserRole } from '../models/User';
@@ -724,6 +729,90 @@ export class SocketHandler {
                     log.error('Passenger active-ride DB check failed:', err);
                 }
 
+                /*
+                 * ── Service zone ────────────────────────────────────────
+                 *
+                 * Resolved BEFORE the ride row exists, so a request we cannot
+                 * serve never becomes a ride: no row in the ride table, no
+                 * dispatch run, no 110-second search ending in "nobody came".
+                 *
+                 * In Phase 1 every zone is `off`, so nothing is refused and the
+                 * only effect is that the ride carries its zone from birth.
+                 * The miss is recorded in EVERY mode, which is the point — by
+                 * the time enforcement is switched on we already know from real
+                 * data how many requests it will turn away.
+                 */
+                const zoneResolution: ZoneResolution =
+                    await ServiceZoneResolver.resolve({ lat: pickupLat, lng: pickupLng });
+                let rideZoneCode: string | null = null;
+                let rideZoneMatch: string | null = null;
+
+                if (zoneResolution.kind === 'inside') {
+                    rideZoneCode = zoneResolution.zoneCode;
+                    rideZoneMatch = zoneResolution.match;
+                } else {
+                    // The enforcement mode of the zone this pickup is NEAREST
+                    // to. A point outside every zone has no zone of its own, so
+                    // the nearest one's policy is what decides whether we refuse.
+                    const nearest = zoneResolution.kind === 'outside'
+                        ? zoneResolution.nearestZoneCode : null;
+                    const policy = await ServiceZonePolicy.forRide(nearest);
+                    const enforcing = policy.mode === ZoneEnforcement.ENFORCE;
+
+                    if (zoneResolution.kind === 'outside') {
+                        rideZoneMatch = 'none';
+                        logWouldRefuseRequest({
+                            passengerId, nearestZoneCode: nearest,
+                            distanceM: zoneResolution.distanceM,
+                            mode: String(policy.mode), applied: enforcing,
+                        });
+                    } else {
+                        // A genuine fault. Loud, and never conflated with a miss.
+                        log.error(JSON.stringify({
+                            level: 'error', scope: 'service_zone', event: 'resolver_error',
+                            reason: zoneResolution.reason, rideId, passengerId,
+                        }));
+                    }
+
+                    void ServiceAreaMissService.record({
+                        passengerId, lat: pickupLat, lng: pickupLng,
+                        resolution: zoneResolution,
+                        enforcementAtTime: String(policy.mode),
+                        refused: enforcing && zoneResolution.kind === 'outside',
+                    });
+
+                    if (zoneResolution.kind === 'outside' && enforcing) {
+                        await DispatchService.releasePassengerActive(passengerId, rideId);
+                        socket.emit('ride:error', {
+                            code: 'OUTSIDE_SERVICE_AREA',
+                            message: "KekeRide isn't available at this pickup location yet. "
+                                   + "We're expanding quickly.",
+                        });
+                        return;
+                    }
+
+                    if (zoneResolution.kind === 'error'
+                        && await ServiceZoneService.shouldFailClosed()) {
+                        // Two or more zones are enforcing, so an unconstrained
+                        // dispatch could now cross a city boundary. Refusing is
+                        // the safer error; with one zone it would not be.
+                        await DispatchService.releasePassengerActive(passengerId, rideId);
+                        socket.emit('ride:error', {
+                            code: 'SERVICE_TEMPORARILY_UNAVAILABLE',
+                            message: 'We could not start your ride just now. Please try again.',
+                        });
+                        return;
+                    }
+                }
+
+                // Destination is optional on the wire. NaN resolves to a
+                // `bad_point` error, which yields a null code — the honest
+                // answer for a destination we were never given. Reporting only;
+                // no dispatch decision reads this.
+                const destinationZone = await ServiceZoneResolver.resolve({
+                    lat: destinationLat ?? NaN, lng: destinationLng ?? NaN,
+                });
+
                 // 4-character alphanumeric pickup code for passenger/driver verification at boarding
                 const pickupCode = Math.random().toString(36).substring(2, 6).toUpperCase();
 
@@ -736,6 +825,13 @@ export class SocketHandler {
                         pickupAddress, destinationAddress, pickupLat, pickupLng,
                         destinationLat, destinationLng,
                         pickupCode,
+                        // Written once, in the same statement that creates the
+                        // ride, and never recomputed. A ride that started in
+                        // Onitsha stays an Onitsha ride even if the boundary is
+                        // later redrawn.
+                        zoneCode: rideZoneCode,
+                        zoneMatchKind: rideZoneMatch,
+                        destinationZoneCode: ServiceZoneResolver.codeOf(destinationZone),
                         estimatedDistanceM: request.estimatedDistanceM ?? null,
                         estimatedDurationSec: request.estimatedDurationSec ?? null,
                         // Structured locality, when the app resolved it. Null
@@ -1962,6 +2058,37 @@ export class SocketHandler {
     private dispatchPorts(rideId: string, payload: any, run: () => DispatchRun | undefined): DispatchPorts {
         const isCash = payload.isCash === true;
 
+        /*
+         * The ride's zone, and whether it decides anything.
+         *
+         * Resolved ONCE per dispatch run and memoised, not per tier: the answer
+         * cannot change mid-ride, and repeating it would add a lookup to a hot
+         * path for no information.
+         *
+         * While enforcement is `off` — which is every zone in Phase 1 —
+         * `constrain` is false and `rideZoneCode` is never passed down, so
+         * DriverEligibilityService runs exactly the query set it ran before
+         * service zones existed. That is what makes the parity claim literal
+         * rather than approximate.
+         */
+        let zonePolicyPromise: Promise<{ constrain: boolean; zoneCode: string | null }> | null = null;
+        const zonePolicy = () => {
+            if (!zonePolicyPromise) {
+                zonePolicyPromise = (async () => {
+                    try {
+                        const ride = await AppDataSource.getRepository(Ride).findOne({
+                            where: { rideId }, select: ['rideId', 'zoneCode'] as any,
+                        });
+                        const policy = await ServiceZonePolicy.forRide(ride?.zoneCode ?? null);
+                        return { constrain: policy.constrain, zoneCode: policy.zoneCode };
+                    } catch {
+                        return { constrain: false, zoneCode: null };
+                    }
+                })();
+            }
+            return zonePolicyPromise;
+        };
+
         return {
             /*
              * Fresh drivers first, exactly as before. Only if that cannot fill
@@ -1969,8 +2096,15 @@ export class SocketHandler {
              * quiet — and they join only on a fix taken after they answered.
              */
             findNearby: async (lat, lng, radiusKm, limit) => {
+                const zp = await zonePolicy();
                 const { candidates, wakes } = await DriverCandidateService.findFor(
-                    lat, lng, radiusKm, limit, { wantWakes: true, rideId },
+                    lat, lng, radiusKm, limit, {
+                        wantWakes: true,
+                        rideId,
+                        // Absent unless the zone enforces, so the wake tier is
+                        // untouched in Phase 1.
+                        ...(zp.constrain && zp.zoneCode ? { zoneCode: zp.zoneCode } : {}),
+                    },
                 );
                 if (wakes.length > 0) {
                     rlog('presence_wake', {
@@ -1988,11 +2122,16 @@ export class SocketHandler {
             // DriverEligibilityService) so a marker can never represent supply
             // dispatch would refuse. Dispatch additionally passes this ride's
             // explicit rejectors; the map feed deliberately does not.
-            filterEligible: (driverIds: string[]): Promise<EligibilityResult> =>
-                DriverEligibilityService.filter(driverIds, {
+            filterEligible: async (driverIds: string[]): Promise<EligibilityResult> => {
+                const zp = await zonePolicy();
+                return DriverEligibilityService.filter(driverIds, {
                     isCash,
                     excluded: this.rideExclusions.get(rideId),
-                }),
+                    // Undefined unless the zone is actually enforcing, so the
+                    // geographic check is not merely skipped — it is absent.
+                    rideZoneCode: zp.constrain ? zp.zoneCode : undefined,
+                });
+            },
 
             getRideStatus: async (id: string) => {
                 const ride = await AppDataSource.getRepository(Ride).findOne({ where: { rideId: id } });

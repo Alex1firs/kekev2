@@ -1,0 +1,2036 @@
+{
+ "generatedFrom": "Phase 0 approved boundaries (approved 30 Aug 2026); WGS84 metric constants aligned with service_zone_geometry.ts",
+ "zones": [
+  {
+   "code": "ONI",
+   "name": "Onitsha",
+   "bufferMeters": 400,
+   "priority": 100,
+   "polygon": [
+    [
+     6.247,
+     6.788
+    ],
+    [
+     6.238,
+     6.828
+    ],
+    [
+     6.202,
+     6.856
+    ],
+    [
+     6.179,
+     6.881
+    ],
+    [
+     6.143,
+     6.879
+    ],
+    [
+     6.112,
+     6.852
+    ],
+    [
+     6.08,
+     6.836
+    ],
+    [
+     6.056,
+     6.808
+    ],
+    [
+     6.06,
+     6.778
+    ],
+    [
+     6.088,
+     6.757
+    ],
+    [
+     6.155,
+     6.754
+    ],
+    [
+     6.205,
+     6.758
+    ]
+   ]
+  },
+  {
+   "code": "AWK",
+   "name": "Awka",
+   "bufferMeters": 400,
+   "priority": 100,
+   "polygon": [
+    [
+     6.266,
+     7.076
+    ],
+    [
+     6.268,
+     7.118
+    ],
+    [
+     6.251,
+     7.145
+    ],
+    [
+     6.221,
+     7.138
+    ],
+    [
+     6.193,
+     7.102
+    ],
+    [
+     6.176,
+     7.074
+    ],
+    [
+     6.181,
+     7.042
+    ],
+    [
+     6.206,
+     7.026
+    ],
+    [
+     6.24,
+     7.033
+    ]
+   ]
+  }
+ ],
+ "vectors": [
+  {
+   "lat": 6.247,
+   "lng": 6.788,
+   "label": "ONI vertex 0",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.238,
+   "lng": 6.828,
+   "label": "ONI vertex 1",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.202,
+   "lng": 6.856,
+   "label": "ONI vertex 2",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.179,
+   "lng": 6.881,
+   "label": "ONI vertex 3",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.143,
+   "lng": 6.879,
+   "label": "ONI vertex 4",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.112,
+   "lng": 6.852,
+   "label": "ONI vertex 5",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.08,
+   "lng": 6.836,
+   "label": "ONI vertex 6",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.056,
+   "lng": 6.808,
+   "label": "ONI vertex 7",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.06,
+   "lng": 6.778,
+   "label": "ONI vertex 8",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.088,
+   "lng": 6.757,
+   "label": "ONI vertex 9",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.155,
+   "lng": 6.754,
+   "label": "ONI vertex 10",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.205,
+   "lng": 6.758,
+   "label": "ONI vertex 11",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.266,
+   "lng": 7.076,
+   "label": "AWK vertex 0",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.268,
+   "lng": 7.118,
+   "label": "AWK vertex 1",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.251,
+   "lng": 7.145,
+   "label": "AWK vertex 2",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.221,
+   "lng": 7.138,
+   "label": "AWK vertex 3",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.193,
+   "lng": 7.102,
+   "label": "AWK vertex 4",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.176,
+   "lng": 7.074,
+   "label": "AWK vertex 5",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.181,
+   "lng": 7.042,
+   "label": "AWK vertex 6",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.206,
+   "lng": 7.026,
+   "label": "AWK vertex 7",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.24,
+   "lng": 7.033,
+   "label": "AWK vertex 8",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.1667,
+   "lng": 6.7833,
+   "label": "landmark: Onitsha centre",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.15,
+   "lng": 6.8333,
+   "label": "landmark: Nkpor",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.1333,
+   "lng": 6.8,
+   "label": "landmark: Obosi",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.15,
+   "lng": 6.8667,
+   "label": "landmark: Ogidi",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.0167,
+   "lng": 6.75,
+   "label": "landmark: Atani",
+   "expect": {
+    "kind": "outside",
+    "zoneCode": null,
+    "nearestZoneCode": "ONI",
+    "match": null,
+    "distanceM": 5704
+   }
+  },
+  {
+   "lat": 6.0167,
+   "lng": 6.9167,
+   "label": "landmark: Nnewi",
+   "expect": {
+    "kind": "outside",
+    "zoneCode": null,
+    "nearestZoneCode": "ONI",
+    "match": null,
+    "distanceM": 11348
+   }
+  },
+  {
+   "lat": 6.2,
+   "lng": 6.7333,
+   "label": "landmark: Asaba (Delta)",
+   "expect": {
+    "kind": "outside",
+    "zoneCode": null,
+    "nearestZoneCode": "ONI",
+    "match": null,
+    "distanceM": 2681
+   }
+  },
+  {
+   "lat": 6.2109,
+   "lng": 7.074,
+   "label": "landmark: Awka centre",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.213,
+   "lng": 7.07,
+   "label": "landmark: Aroma junction",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.245,
+   "lng": 7.118,
+   "label": "landmark: UNIZIK/Ifite",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.235,
+   "lng": 7.06,
+   "label": "landmark: Okpuno",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.19,
+   "lng": 7.07,
+   "label": "landmark: Amawbia",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.2411467,
+   "lng": 6.8080933,
+   "label": "ONI edge 0 inside -150m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.2438533,
+   "lng": 6.8079067,
+   "label": "ONI edge 0 +150m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "buffer",
+    "distanceM": 144
+   }
+  },
+  {
+   "lat": 6.2460999,
+   "lng": 6.8077518,
+   "label": "ONI edge 0 +399m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "buffer",
+    "distanceM": 382
+   }
+  },
+  {
+   "lat": 6.2461179,
+   "lng": 6.8077506,
+   "label": "ONI edge 0 +401m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "buffer",
+    "distanceM": 384
+   }
+  },
+  {
+   "lat": 6.2560334,
+   "lng": 6.807067,
+   "label": "ONI edge 0 +1500m",
+   "expect": {
+    "kind": "outside",
+    "zoneCode": null,
+    "nearestZoneCode": "ONI",
+    "match": null,
+    "distanceM": 1437
+   }
+  },
+  {
+   "lat": 6.2187302,
+   "lng": 6.841523,
+   "label": "ONI edge 1 inside -150m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.2212698,
+   "lng": 6.842477,
+   "label": "ONI edge 1 +150m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "buffer",
+    "distanceM": 128
+   }
+  },
+  {
+   "lat": 6.2233776,
+   "lng": 6.8432689,
+   "label": "ONI edge 1 +399m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "buffer",
+    "distanceM": 340
+   }
+  },
+  {
+   "lat": 6.2233945,
+   "lng": 6.8432753,
+   "label": "ONI edge 1 +401m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "buffer",
+    "distanceM": 342
+   }
+  },
+  {
+   "lat": 6.2326977,
+   "lng": 6.8467704,
+   "label": "ONI edge 1 +1500m",
+   "expect": {
+    "kind": "outside",
+    "zoneCode": null,
+    "nearestZoneCode": "ONI",
+    "match": null,
+    "distanceM": 1279
+   }
+  },
+  {
+   "lat": 6.1896492,
+   "lng": 6.8674443,
+   "label": "ONI edge 2 inside -150m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.1913508,
+   "lng": 6.8695557,
+   "label": "ONI edge 2 +150m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "buffer",
+    "distanceM": 148
+   }
+  },
+  {
+   "lat": 6.1927632,
+   "lng": 6.871308,
+   "label": "ONI edge 2 +399m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "buffer",
+    "distanceM": 395
+   }
+  },
+  {
+   "lat": 6.1927745,
+   "lng": 6.8713221,
+   "label": "ONI edge 2 +401m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "buffer",
+    "distanceM": 397
+   }
+  },
+  {
+   "lat": 6.1990082,
+   "lng": 6.8790565,
+   "label": "ONI edge 2 +1500m",
+   "expect": {
+    "kind": "outside",
+    "zoneCode": null,
+    "nearestZoneCode": "ONI",
+    "match": null,
+    "distanceM": 1483
+   }
+  },
+  {
+   "lat": 6.1607177,
+   "lng": 6.8786744,
+   "label": "ONI edge 3 inside -150m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.1612823,
+   "lng": 6.8813256,
+   "label": "ONI edge 3 +150m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "buffer",
+    "distanceM": 145
+   }
+  },
+  {
+   "lat": 6.1617509,
+   "lng": 6.8835262,
+   "label": "ONI edge 3 +399m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "buffer",
+    "distanceM": 385
+   }
+  },
+  {
+   "lat": 6.1617546,
+   "lng": 6.8835438,
+   "label": "ONI edge 3 +401m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "buffer",
+    "distanceM": 387
+   }
+  },
+  {
+   "lat": 6.1638228,
+   "lng": 6.8932563,
+   "label": "ONI edge 3 +1500m",
+   "expect": {
+    "kind": "outside",
+    "zoneCode": null,
+    "nearestZoneCode": "ONI",
+    "match": null,
+    "distanceM": 1448
+   }
+  },
+  {
+   "lat": 6.127987,
+   "lng": 6.8642351,
+   "label": "ONI edge 4 inside -150m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.127013,
+   "lng": 6.8667649,
+   "label": "ONI edge 4 +150m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "buffer",
+    "distanceM": 141
+   }
+  },
+  {
+   "lat": 6.1262046,
+   "lng": 6.8688646,
+   "label": "ONI edge 4 +399m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "buffer",
+    "distanceM": 375
+   }
+  },
+  {
+   "lat": 6.1261982,
+   "lng": 6.8688814,
+   "label": "ONI edge 4 +401m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "buffer",
+    "distanceM": 377
+   }
+  },
+  {
+   "lat": 6.1226302,
+   "lng": 6.8781488,
+   "label": "ONI edge 4 +1500m",
+   "expect": {
+    "kind": "outside",
+    "zoneCode": null,
+    "nearestZoneCode": "ONI",
+    "match": null,
+    "distanceM": 1409
+   }
+  },
+  {
+   "lat": 6.0971756,
+   "lng": 6.8433238,
+   "label": "ONI edge 5 inside -150m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.0948244,
+   "lng": 6.8446762,
+   "label": "ONI edge 5 +150m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "buffer",
+    "distanceM": 125
+   }
+  },
+  {
+   "lat": 6.092873,
+   "lng": 6.8457988,
+   "label": "ONI edge 5 +399m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "buffer",
+    "distanceM": 333
+   }
+  },
+  {
+   "lat": 6.0928573,
+   "lng": 6.8458078,
+   "label": "ONI edge 5 +401m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "buffer",
+    "distanceM": 334
+   }
+  },
+  {
+   "lat": 6.0842443,
+   "lng": 6.8507625,
+   "label": "ONI edge 5 +1500m",
+   "expect": {
+    "kind": "outside",
+    "zoneCode": null,
+    "nearestZoneCode": "ONI",
+    "match": null,
+    "distanceM": 1251
+   }
+  },
+  {
+   "lat": 6.0693506,
+   "lng": 6.8218735,
+   "label": "ONI edge 6 inside -150m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.0666494,
+   "lng": 6.8221265,
+   "label": "ONI edge 6 +150m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "buffer",
+    "distanceM": 123
+   }
+  },
+  {
+   "lat": 6.0644073,
+   "lng": 6.8223366,
+   "label": "ONI edge 6 +399m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "buffer",
+    "distanceM": 326
+   }
+  },
+  {
+   "lat": 6.0643893,
+   "lng": 6.8223382,
+   "label": "ONI edge 6 +401m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "buffer",
+    "distanceM": 328
+   }
+  },
+  {
+   "lat": 6.0544937,
+   "lng": 6.8232653,
+   "label": "ONI edge 6 +1500m",
+   "expect": {
+    "kind": "outside",
+    "zoneCode": null,
+    "nearestZoneCode": "ONI",
+    "match": null,
+    "distanceM": 1226
+   }
+  },
+  {
+   "lat": 6.0593184,
+   "lng": 6.7933191,
+   "label": "ONI edge 7 inside -150m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.0566816,
+   "lng": 6.7926809,
+   "label": "ONI edge 7 +150m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "buffer",
+    "distanceM": 149
+   }
+  },
+  {
+   "lat": 6.054493,
+   "lng": 6.7921513,
+   "label": "ONI edge 7 +399m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "buffer",
+    "distanceM": 397
+   }
+  },
+  {
+   "lat": 6.0544754,
+   "lng": 6.792147,
+   "label": "ONI edge 7 +401m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "buffer",
+    "distanceM": 399
+   }
+  },
+  {
+   "lat": 6.0448159,
+   "lng": 6.7898093,
+   "label": "ONI edge 7 +1500m",
+   "expect": {
+    "kind": "outside",
+    "zoneCode": null,
+    "nearestZoneCode": "ONI",
+    "match": null,
+    "distanceM": 1492
+   }
+  },
+  {
+   "lat": 6.0751404,
+   "lng": 6.7682339,
+   "label": "ONI edge 8 inside -150m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.0728596,
+   "lng": 6.7667661,
+   "label": "ONI edge 8 +150m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "buffer",
+    "distanceM": 141
+   }
+  },
+  {
+   "lat": 6.0709666,
+   "lng": 6.7655479,
+   "label": "ONI edge 8 +399m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "buffer",
+    "distanceM": 374
+   }
+  },
+  {
+   "lat": 6.0709514,
+   "lng": 6.7655381,
+   "label": "ONI edge 8 +401m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "buffer",
+    "distanceM": 376
+   }
+  },
+  {
+   "lat": 6.0625961,
+   "lng": 6.7601612,
+   "label": "ONI edge 8 +1500m",
+   "expect": {
+    "kind": "outside",
+    "zoneCode": null,
+    "nearestZoneCode": "ONI",
+    "match": null,
+    "distanceM": 1407
+   }
+  },
+  {
+   "lat": 6.122039,
+   "lng": 6.7567436,
+   "label": "ONI edge 9 inside -150m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.120961,
+   "lng": 6.7542564,
+   "label": "ONI edge 9 +150m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "buffer",
+    "distanceM": 140
+   }
+  },
+  {
+   "lat": 6.1200662,
+   "lng": 6.752192,
+   "label": "ONI edge 9 +399m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "buffer",
+    "distanceM": 373
+   }
+  },
+  {
+   "lat": 6.120059,
+   "lng": 6.7521754,
+   "label": "ONI edge 9 +401m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "buffer",
+    "distanceM": 375
+   }
+  },
+  {
+   "lat": 6.1161097,
+   "lng": 6.7430638,
+   "label": "ONI edge 9 +1500m",
+   "expect": {
+    "kind": "outside",
+    "zoneCode": null,
+    "nearestZoneCode": "ONI",
+    "match": null,
+    "distanceM": 1402
+   }
+  },
+  {
+   "lat": 6.1793355,
+   "lng": 6.7571816,
+   "label": "ONI edge 10 inside -150m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.1806645,
+   "lng": 6.7548184,
+   "label": "ONI edge 10 +150m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "buffer",
+    "distanceM": 136
+   }
+  },
+  {
+   "lat": 6.1817676,
+   "lng": 6.7528569,
+   "label": "ONI edge 10 +399m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "buffer",
+    "distanceM": 362
+   }
+  },
+  {
+   "lat": 6.1817765,
+   "lng": 6.7528412,
+   "label": "ONI edge 10 +401m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "buffer",
+    "distanceM": 364
+   }
+  },
+  {
+   "lat": 6.1866451,
+   "lng": 6.744184,
+   "label": "ONI edge 10 +1500m",
+   "expect": {
+    "kind": "outside",
+    "zoneCode": null,
+    "nearestZoneCode": "ONI",
+    "match": null,
+    "distanceM": 1362
+   }
+  },
+  {
+   "lat": 6.2247999,
+   "lng": 6.7736319,
+   "label": "ONI edge 11 inside -150m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.2272001,
+   "lng": 6.7723681,
+   "label": "ONI edge 11 +150m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "buffer",
+    "distanceM": 134
+   }
+  },
+  {
+   "lat": 6.2291924,
+   "lng": 6.7713192,
+   "label": "ONI edge 11 +399m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "buffer",
+    "distanceM": 357
+   }
+  },
+  {
+   "lat": 6.2292084,
+   "lng": 6.7713108,
+   "label": "ONI edge 11 +401m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "buffer",
+    "distanceM": 358
+   }
+  },
+  {
+   "lat": 6.2380014,
+   "lng": 6.7666812,
+   "label": "ONI edge 11 +1500m",
+   "expect": {
+    "kind": "outside",
+    "zoneCode": null,
+    "nearestZoneCode": "ONI",
+    "match": null,
+    "distanceM": 1341
+   }
+  },
+  {
+   "lat": 6.2656995,
+   "lng": 7.0966143,
+   "label": "AWK edge 0 inside -150m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.2683005,
+   "lng": 7.0973857,
+   "label": "AWK edge 0 +150m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "buffer",
+    "distanceM": 142
+   }
+  },
+  {
+   "lat": 6.2704593,
+   "lng": 7.0980258,
+   "label": "AWK edge 0 +399m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "buffer",
+    "distanceM": 377
+   }
+  },
+  {
+   "lat": 6.2704767,
+   "lng": 7.098031,
+   "label": "AWK edge 0 +401m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "buffer",
+    "distanceM": 379
+   }
+  },
+  {
+   "lat": 6.280005,
+   "lng": 7.1008565,
+   "label": "AWK edge 0 +1500m",
+   "expect": {
+    "kind": "outside",
+    "zoneCode": null,
+    "nearestZoneCode": "AWK",
+    "match": null,
+    "distanceM": 1416
+   }
+  },
+  {
+   "lat": 6.258668,
+   "lng": 7.1304293,
+   "label": "AWK edge 1 inside -150m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.260332,
+   "lng": 7.1325707,
+   "label": "AWK edge 1 +150m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "buffer",
+    "distanceM": 141
+   }
+  },
+  {
+   "lat": 6.2617131,
+   "lng": 7.134348,
+   "label": "AWK edge 1 +399m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "buffer",
+    "distanceM": 375
+   }
+  },
+  {
+   "lat": 6.2617242,
+   "lng": 7.1343623,
+   "label": "AWK edge 1 +401m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "buffer",
+    "distanceM": 377
+   }
+  },
+  {
+   "lat": 6.2678198,
+   "lng": 7.1422068,
+   "label": "AWK edge 1 +1500m",
+   "expect": {
+    "kind": "outside",
+    "zoneCode": null,
+    "nearestZoneCode": "AWK",
+    "match": null,
+    "distanceM": 1410
+   }
+  },
+  {
+   "lat": 6.2356899,
+   "lng": 7.1401804,
+   "label": "AWK edge 2 inside -150m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.2363101,
+   "lng": 7.1428196,
+   "label": "AWK edge 2 +150m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "buffer",
+    "distanceM": 134
+   }
+  },
+  {
+   "lat": 6.236825,
+   "lng": 7.1450101,
+   "label": "AWK edge 2 +399m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "buffer",
+    "distanceM": 358
+   }
+  },
+  {
+   "lat": 6.2368291,
+   "lng": 7.1450277,
+   "label": "AWK edge 2 +401m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "buffer",
+    "distanceM": 359
+   }
+  },
+  {
+   "lat": 6.2391014,
+   "lng": 7.1546959,
+   "label": "AWK edge 2 +1500m",
+   "expect": {
+    "kind": "outside",
+    "zoneCode": null,
+    "nearestZoneCode": "AWK",
+    "match": null,
+    "distanceM": 1344
+   }
+  },
+  {
+   "lat": 6.2075321,
+   "lng": 7.1187532,
+   "label": "AWK edge 3 inside -150m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.2064679,
+   "lng": 7.1212468,
+   "label": "AWK edge 3 +150m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "buffer",
+    "distanceM": 131
+   }
+  },
+  {
+   "lat": 6.2055847,
+   "lng": 7.1233165,
+   "label": "AWK edge 3 +399m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "buffer",
+    "distanceM": 349
+   }
+  },
+  {
+   "lat": 6.2055776,
+   "lng": 7.1233331,
+   "label": "AWK edge 3 +401m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "buffer",
+    "distanceM": 351
+   }
+  },
+  {
+   "lat": 6.2016794,
+   "lng": 7.1324681,
+   "label": "AWK edge 3 +1500m",
+   "expect": {
+    "kind": "outside",
+    "zoneCode": null,
+    "nearestZoneCode": "AWK",
+    "match": null,
+    "distanceM": 1311
+   }
+  },
+  {
+   "lat": 6.1858482,
+   "lng": 7.0878501,
+   "label": "AWK edge 4 inside -150m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.1831518,
+   "lng": 7.0881499,
+   "label": "AWK edge 4 +150m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "buffer",
+    "distanceM": 136
+   }
+  },
+  {
+   "lat": 6.1809137,
+   "lng": 7.0883987,
+   "label": "AWK edge 4 +399m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "buffer",
+    "distanceM": 362
+   }
+  },
+  {
+   "lat": 6.1808957,
+   "lng": 7.0884007,
+   "label": "AWK edge 4 +401m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "buffer",
+    "distanceM": 364
+   }
+  },
+  {
+   "lat": 6.1710176,
+   "lng": 7.0894989,
+   "label": "AWK edge 4 +1500m",
+   "expect": {
+    "kind": "outside",
+    "zoneCode": null,
+    "nearestZoneCode": "AWK",
+    "match": null,
+    "distanceM": 1361
+   }
+  },
+  {
+   "lat": 6.1796701,
+   "lng": 7.0586858,
+   "label": "AWK edge 5 inside -150m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.1773299,
+   "lng": 7.0573142,
+   "label": "AWK edge 5 +150m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "buffer",
+    "distanceM": 140
+   }
+  },
+  {
+   "lat": 6.1753875,
+   "lng": 7.0561759,
+   "label": "AWK edge 5 +399m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "buffer",
+    "distanceM": 371
+   }
+  },
+  {
+   "lat": 6.1753719,
+   "lng": 7.0561667,
+   "label": "AWK edge 5 +401m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "buffer",
+    "distanceM": 373
+   }
+  },
+  {
+   "lat": 6.166799,
+   "lng": 7.0511424,
+   "label": "AWK edge 5 +1500m",
+   "expect": {
+    "kind": "outside",
+    "zoneCode": null,
+    "nearestZoneCode": "AWK",
+    "match": null,
+    "distanceM": 1395
+   }
+  },
+  {
+   "lat": 6.1941819,
+   "lng": 7.0351717,
+   "label": "AWK edge 6 inside -150m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.1928181,
+   "lng": 7.0328283,
+   "label": "AWK edge 6 +150m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "buffer",
+    "distanceM": 150
+   }
+  },
+  {
+   "lat": 6.1916861,
+   "lng": 7.0308833,
+   "label": "AWK edge 6 +399m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "buffer",
+    "distanceM": 399
+   }
+  },
+  {
+   "lat": 6.191677,
+   "lng": 7.0308677,
+   "label": "AWK edge 6 +401m",
+   "expect": {
+    "kind": "outside",
+    "zoneCode": null,
+    "nearestZoneCode": "AWK",
+    "match": null,
+    "distanceM": 401
+   }
+  },
+  {
+   "lat": 6.186681,
+   "lng": 7.0222831,
+   "label": "AWK edge 6 +1500m",
+   "expect": {
+    "kind": "outside",
+    "zoneCode": null,
+    "nearestZoneCode": "AWK",
+    "match": null,
+    "distanceM": 1499
+   }
+  },
+  {
+   "lat": 6.2229861,
+   "lng": 7.0308554,
+   "label": "AWK edge 7 inside -150m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.2230139,
+   "lng": 7.0281446,
+   "label": "AWK edge 7 +150m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "buffer",
+    "distanceM": 147
+   }
+  },
+  {
+   "lat": 6.2230369,
+   "lng": 7.0258947,
+   "label": "AWK edge 7 +399m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "buffer",
+    "distanceM": 392
+   }
+  },
+  {
+   "lat": 6.2230371,
+   "lng": 7.0258766,
+   "label": "AWK edge 7 +401m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "buffer",
+    "distanceM": 394
+   }
+  },
+  {
+   "lat": 6.2231388,
+   "lng": 7.0159462,
+   "label": "AWK edge 7 +1500m",
+   "expect": {
+    "kind": "outside",
+    "zoneCode": null,
+    "nearestZoneCode": "AWK",
+    "match": null,
+    "distanceM": 1472
+   }
+  },
+  {
+   "lat": 6.2520205,
+   "lng": 7.0554378,
+   "label": "AWK edge 8 inside -150m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.2539795,
+   "lng": 7.0535622,
+   "label": "AWK edge 8 +150m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "buffer",
+    "distanceM": 146
+   }
+  },
+  {
+   "lat": 6.2556055,
+   "lng": 7.0520054,
+   "label": "AWK edge 8 +399m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "buffer",
+    "distanceM": 389
+   }
+  },
+  {
+   "lat": 6.2556185,
+   "lng": 7.0519929,
+   "label": "AWK edge 8 +401m",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "buffer",
+    "distanceM": 391
+   }
+  },
+  {
+   "lat": 6.2627949,
+   "lng": 7.0451218,
+   "label": "AWK edge 8 +1500m",
+   "expect": {
+    "kind": "outside",
+    "zoneCode": null,
+    "nearestZoneCode": "AWK",
+    "match": null,
+    "distanceM": 1464
+   }
+  },
+  {
+   "lat": 6.4705704,
+   "lng": 3.5914687,
+   "label": "pickup RIDE-1779304019739",
+   "expect": {
+    "kind": "outside",
+    "zoneCode": null,
+    "nearestZoneCode": "ONI",
+    "match": null,
+    "distanceM": 351647
+   }
+  },
+  {
+   "lat": 6.1616784,
+   "lng": 6.7765747,
+   "label": "pickup RIDE-1783894941194",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.1614247,
+   "lng": 6.7766482,
+   "label": "pickup RIDE-1783888138694",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.1617242,
+   "lng": 6.7768431,
+   "label": "pickup RIDE-1783887861281",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.1616865,
+   "lng": 6.7767824,
+   "label": "pickup RIDE-1783960958747",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.1610575,
+   "lng": 6.7835334,
+   "label": "pickup RIDE-1784022447921",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.1617186,
+   "lng": 6.7767045,
+   "label": "pickup RIDE-1784125046039",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.161687,
+   "lng": 6.7767832,
+   "label": "pickup RIDE-1784138579934",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.1617471,
+   "lng": 6.7767266,
+   "label": "pickup RIDE-1784094554999",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.1616872,
+   "lng": 6.7767816,
+   "label": "pickup RIDE-1784182156826",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.1617342,
+   "lng": 6.7768383,
+   "label": "pickup RIDE-1784181415465",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.1617349,
+   "lng": 6.7767922,
+   "label": "pickup RIDE-1784480772367",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.1617381,
+   "lng": 6.7767982,
+   "label": "pickup RIDE-1784539199563",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.1614908,
+   "lng": 6.776648,
+   "label": "pickup RIDE-1784568748240",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.1615425,
+   "lng": 6.7766513,
+   "label": "pickup RIDE-1784568310056",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.1533777,
+   "lng": 6.7884303,
+   "label": "pickup RIDE-1784718190411",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.1466966,
+   "lng": 6.8131248,
+   "label": "pickup RIDE-1784809162003",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.161685,
+   "lng": 6.7766875,
+   "label": "pickup RIDE-1784803191182",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.1765662,
+   "lng": 6.7973236,
+   "label": "pickup RIDE-1784979159469",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.1739191,
+   "lng": 6.7953536,
+   "label": "pickup RIDE-1785234465210",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.173951,
+   "lng": 6.7953781,
+   "label": "pickup RIDE-1785495446887",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.1616963,
+   "lng": 6.7767352,
+   "label": "pickup RIDE-1785677015009",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.1616916,
+   "lng": 6.7767981,
+   "label": "pickup RIDE-1785653229640",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.1738467,
+   "lng": 6.79546,
+   "label": "pickup RIDE-1785847865806",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.1348624,
+   "lng": 6.7927705,
+   "label": "pickup RIDE-1786031418064",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.161738,
+   "lng": 6.7767418,
+   "label": "pickup RIDE-1786132787967",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.1615882,
+   "lng": 6.7766746,
+   "label": "pickup RIDE-1786187053465",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.1615993,
+   "lng": 6.7766316,
+   "label": "pickup RIDE-1786456182466",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.1610747,
+   "lng": 6.7836797,
+   "label": "pickup RIDE-1786535802228",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.1795395,
+   "lng": 6.8657586,
+   "label": "pickup RIDE-1786705984794",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.1616251,
+   "lng": 6.7767248,
+   "label": "pickup RIDE-1787161431799",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.1479195,
+   "lng": 6.8021956,
+   "label": "pickup RIDE-1787247173523",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.2109,
+   "lng": 7.074,
+   "label": "pickup RIDE-1787487461568",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.1617258,
+   "lng": 6.7767082,
+   "label": "pickup RIDE-1787679124631",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  },
+  {
+   "lat": 6.1616605,
+   "lng": 6.7768154,
+   "label": "pickup RIDE-1787910432154",
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact",
+    "distanceM": 0
+   }
+  }
+ ]
+}

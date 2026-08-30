@@ -19,6 +19,8 @@ export * from "./StaffRoleAssignment";
 export * from "./StaffSession";
 export * from "./StaffAuditEvent";
 export * from "./ContactRevealEvent";
+export * from "./ServiceZone";
+export * from "./ServiceAreaMiss";
 export * from "./Park";
 export * from "./ParkZone";
 export * from "./DispatcherShift";

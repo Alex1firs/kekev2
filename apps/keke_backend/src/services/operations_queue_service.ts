@@ -53,6 +53,8 @@ export interface QueueRow {
     attention: { triggers: AttentionTrigger[]; severity: AttentionSeverity };
 
     passenger: { id: string; name: string; phoneMasked: string | null } | null;
+    /** Which city this ride belongs to. Null for rides created before zones. */
+    zoneCode: string | null;
     pickupAddress: string | null;
     pickupArea: string | null;
     destinationAddress: string | null;
@@ -151,6 +153,9 @@ export class OperationsQueueService {
                 passenger: p
                     ? { id: r.passengerId, name: maskName(p.firstName, p.lastName), phoneMasked: maskPhone(p.phone) }
                     : null,
+                // Display only in Phase 1: a dispatcher can see that a request
+                // is an Awka one without anything being filtered for them.
+                zoneCode: (r as any).zoneCode ?? null,
                 pickupAddress: r.pickupAddress ?? null,
                 pickupArea: pickupArea.area,
                 destinationAddress: r.destinationAddress ?? null,

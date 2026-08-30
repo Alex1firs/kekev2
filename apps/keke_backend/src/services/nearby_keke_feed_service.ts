@@ -20,6 +20,7 @@
  */
 import { DispatchService } from './dispatch_service';
 import { DriverEligibilityService } from './driver_eligibility_service';
+import { ServiceZonePolicy } from './service_zone_policy';
 import { NearbyMarkerService, MarkerFeed } from './nearby_marker_service';
 import { loadDispatchConfig } from '../config/dispatch_config';
 
@@ -81,7 +82,18 @@ export class NearbyKekeFeedService {
     //    filtering out drivers who declined this ride would leak their response.
     const { eligible } = await DriverEligibilityService.filter(
       discovered.map((d) => d.driverId),
-      { isCash: ride.paymentMode === 'cash' },
+      {
+        isCash: ride.paymentMode === 'cash',
+        /*
+         * A marker must never represent supply dispatch would refuse — which is
+         * this file's founding rule. Once a zone enforces, an Awka Keke on an
+         * Onitsha passenger's map is exactly that, so the same constraint
+         * applies here. Undefined while enforcement is off, so the marker feed
+         * is unchanged in Phase 1.
+         */
+        rideZoneCode: (await ServiceZonePolicy.forRide((ride as any).zoneCode ?? null)).constrain
+          ? (ride as any).zoneCode : undefined,
+      },
     );
     const eligibleSet = new Set(eligible);
 
@@ -138,6 +150,13 @@ export class NearbyKekeFeedService {
 
     // No ride yet, so no payment mode: the cash-debt gate cannot be evaluated
     // and is skipped rather than guessed. Every other rule still applies.
+    //
+    // Deliberately NOT zone-constrained. There is no ride and therefore no
+    // ride zone; the honest equivalent would be the viewer's own zone, and at
+    // the browsing radius (2 km by default) that is already what the geo query
+    // returns — Onitsha and Awka are 16 km apart at their closest edges. Adding
+    // a resolver call to a polled map endpoint would buy nothing and cost a
+    // round trip on every poll.
     const { eligible } = await DriverEligibilityService.filter(
       discovered.map((d) => d.driverId),
       { isCash: false },

@@ -23,6 +23,8 @@
 import { DispatchService } from './dispatch_service';
 import { DriverIntentService } from './driver_intent_service';
 import { DriverWakeService } from './driver_wake_service';
+import { resolveAgainst } from './service_zone_resolver';
+import { ServiceZoneService } from './service_zone_service';
 import { redis } from '../config/redis';
 
 export interface Candidate {
@@ -66,7 +68,27 @@ export class DriverCandidateService {
         lng: number,
         radiusKm: number,
         limit: number,
-        opts: { wantWakes?: boolean; rideId?: string } = {},
+        opts: {
+            wantWakes?: boolean;
+            rideId?: string;
+            /**
+             * When set, only drivers whose LAST-KNOWN position resolves to this
+             * zone are worth waking.
+             *
+             * Undefined unless the ride's zone is actually enforcing, so in
+             * Phase 1 this parameter is never supplied and the wake tier runs
+             * the code it has always run.
+             *
+             * This filters the CANDIDATE LIST, not the wake mechanism. Nothing
+             * about durable ONLINE intent, heartbeat timing, the foreground
+             * service, the FCM wake payload, the notification channel or the
+             * stale/quiet/unreachable state machine changes — a driver who is
+             * woken is woken exactly as before. The only difference is that,
+             * once a zone enforces, we stop ringing the phone of a driver in
+             * another city for a ride they could never be given.
+             */
+            zoneCode?: string;
+        } = {},
     ): Promise<CandidateOutcome> {
         // ── Tier 1: the existing path, unchanged ────────────────────────
         const fresh = await DispatchService.findNearbyDriversWithDistance(lat, lng, radiusKm, limit);
@@ -79,7 +101,13 @@ export class DriverCandidateService {
         // ── Tier 2: drivers who want work but whose phone is quiet ──────
         const stale = await this.staleOnlineNear(lat, lng, radiusKm * STALE_RADIUS_FACTOR);
         const already = new Set(candidates.map((c) => c.driverId));
-        const toWake = stale.filter((s) => !already.has(s.driverId)).slice(0, MAX_WAKES_PER_ROUND);
+        const inZone = opts.zoneCode
+            ? await this.filterToZone(stale.map((s) => s.driverId), opts.zoneCode)
+            : null;
+        const toWake = stale
+            .filter((s) => !already.has(s.driverId))
+            .filter((s) => inZone === null || inZone.has(s.driverId))
+            .slice(0, MAX_WAKES_PER_ROUND);
 
         if (toWake.length === 0) return { candidates, wakes: [] };
 
@@ -134,6 +162,47 @@ export class DriverCandidateService {
      * A driver admitted through here is only ever dispatched on the fix their
      * phone returns after waking.
      */
+    /**
+     * Which of these drivers were last seen inside `zoneCode`.
+     *
+     * Uses LAST-KNOWN position, because by definition these drivers have no
+     * live fix — that is what makes them wake candidates. A stale position
+     * decides only whether ringing them is worth a push; it never makes anyone
+     * dispatchable, and DriverEligibilityService re-checks against live GPS
+     * before any offer.
+     *
+     * A driver with no recorded position at all is KEPT. We do not know they
+     * are elsewhere, and declining to ring somebody on the strength of an
+     * absence would quietly shrink supply.
+     */
+    private static async filterToZone(
+        driverIds: string[], zoneCode: string,
+    ): Promise<Set<string>> {
+        const keep = new Set(driverIds);
+        try {
+            const zones = await ServiceZoneService.operationalZones();
+            const positions = await DispatchService.lastKnownPositions(driverIds);
+            for (const id of driverIds) {
+                const p = positions.get(id);
+                if (!p) continue;                       // unknown, not "elsewhere"
+                const r = resolveAgainst({ lat: p.lat, lng: p.lng }, zones);
+                if (r.kind === 'error') continue;       // a fault is not evidence
+                // Dropped both when they are in a DIFFERENT zone and when they
+                // are outside every zone: either way we know they are not here.
+                // The first version only checked the former, which left a
+                // driver parked outside all coverage being rung for a ride they
+                // could never be given — and while AWK is draft, an Awka driver
+                // resolves as `outside` rather than as AWK, so that was every
+                // Awka driver.
+                if (!(r.kind === 'inside' && r.zoneCode === zoneCode)) keep.delete(id);
+            }
+        } catch {
+            // Cannot evaluate: wake everyone, exactly as before.
+            return new Set(driverIds);
+        }
+        return keep;
+    }
+
     private static async staleOnlineNear(
         lat: number,
         lng: number,

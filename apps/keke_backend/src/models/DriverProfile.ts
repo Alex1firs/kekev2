@@ -88,6 +88,18 @@ export class DriverProfile {
 
     /** The park this driver normally works out of. Roster membership is separate. */
     @Index()
+    /**
+     * Where this driver is REGISTERED. Changed by staff, rarely, and audited.
+     *
+     * Deliberately NOT what decides where they may work: that comes from their
+     * live position at dispatch time. A driver who lives in Awka and spends
+     * Saturday working Onitsha is dispatchable in Onitsha on Saturday, and this
+     * field does not get a vote. It exists for roster, badges, reporting and
+     * the Operations default filter.
+     */
+    @Column({ type: "varchar", length: 16, nullable: true })
+    homeZoneCode!: string | null;
+
     @Column({ type: "varchar", nullable: true })
     homeParkId!: string | null;
 

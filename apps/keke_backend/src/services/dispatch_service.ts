@@ -118,6 +118,34 @@ export class DispatchService {
   }
 
   /**
+   * Live positions for a set of drivers, straight from the geo index.
+   *
+   * Deliberately the LIVE index (`drivers:locations`), never `driver:lastpos`.
+   * Geographic eligibility must be decided on where a driver is, not where they
+   * were forty minutes ago — a stale fix is intelligence for a dispatcher
+   * deciding who to ring, and was never allowed to make anyone dispatchable.
+   *
+   * One pipelined call for the whole batch. Drivers with no live entry are
+   * simply absent from the map; the caller must not read that as "elsewhere".
+   */
+  static async livePositions(
+    driverIds: string[],
+  ): Promise<Map<string, { lat: number; lng: number }>> {
+    const out = new Map<string, { lat: number; lng: number }>();
+    if (driverIds.length === 0) return out;
+
+    const raw = (await redis.geopos(this.DRIVER_GEO_KEY, ...driverIds)) as Array<[string, string] | null>;
+    for (let i = 0; i < driverIds.length; i += 1) {
+      const pos = raw?.[i];
+      if (!pos) continue;
+      const lng = Number(pos[0]);
+      const lat = Number(pos[1]);
+      if (Number.isFinite(lat) && Number.isFinite(lng)) out.set(driverIds[i], { lat, lng });
+    }
+    return out;
+  }
+
+  /**
    * Find available drivers within radius
    */
   static async findNearbyDrivers(lat: number, lng: number, radiusKm: number, limit: number = 10): Promise<string[]> {

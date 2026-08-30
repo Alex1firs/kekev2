@@ -30,6 +30,8 @@ import { DriverEligibilityService } from './driver_eligibility_service';
 import { OperationsDispatchService } from './operations_dispatch_service';
 import { maskName, maskPhone } from './dispatch_monitor_query_service';
 import { redis } from '../config/redis';
+import { resolveAgainst } from './service_zone_resolver';
+import { ServiceZoneService } from './service_zone_service';
 
 /** Presence, strongest first. Mirrors AdminService.getLiveDrivers. */
 export type DriverPresenceState =
@@ -59,6 +61,19 @@ export interface DiscoveredDriver {
      * who to ring, not a statement of where anyone is.
      */
     distanceIsLastKnown: boolean;
+
+    /**
+     * The operational zone this driver's LIVE position resolves to, and whether
+     * it matches the ride's.
+     *
+     * Shown, never used to hide anybody. This screen exists so a dispatcher can
+     * see the whole picture — it already displays "cannot assign: already on
+     * active ride" rather than dropping that driver — and a driver who silently
+     * disappeared from the list would simply be rung on the phone instead.
+     * Assignment itself is refused server-side.
+     */
+    zoneCode: string | null;
+    inRideZone: boolean | null;
     lastKnownAgeSeconds: number | null;
 
     assignable: boolean;
@@ -182,6 +197,14 @@ export class OperationsDriverDiscovery {
         const eligibleSet = new Set(eligibility.eligible);
         const reasonById = new Map(eligibility.rejected.map((r) => [r.driverId, r.reason]));
 
+        /*
+         * Zone labelling. Loaded once for the whole list; a failure leaves every
+         * driver unlabelled rather than removing anyone, because this screen's
+         * job is to show the dispatcher everything.
+         */
+        const zoneSet = await ServiceZoneService.operationalZones().catch(() => []);
+        const rideZoneCode: string | null = (ride as any)?.zoneCode ?? null;
+
         const drivers: DiscoveredDriver[] = profiles.map((p, i) => {
             const fresh = avail[i] === 'true';
             const seenMs = lastSeen[i] ? Number(lastSeen[i]) : null;
@@ -215,6 +238,15 @@ export class OperationsDriverDiscovery {
                 lastKnownAgeSeconds = stored.at ? Math.round((now - stored.at) / 1000) : null;
             }
 
+            // Live position only. A driver we cannot locate has no zone — which
+            // is different from being in the wrong one, and is shown as such.
+            let zoneCode: string | null = null;
+            if (hasLive && zoneSet.length > 0) {
+                const r = resolveAgainst({ lat: liveLat, lng: liveLng }, zoneSet);
+                if (r.kind === 'inside') zoneCode = r.zoneCode;
+            }
+            const inRideZone = rideZoneCode ? zoneCode === rideZoneCode : null;
+
             const assignable = eligibleSet.has(p.userId);
             const reason = assignable ? null : reasonById.get(p.userId) ?? 'not_available';
 
@@ -229,6 +261,8 @@ export class OperationsDriverDiscovery {
                 distanceKm: distanceKm != null ? Number(distanceKm.toFixed(2)) : null,
                 distanceIsLastKnown,
                 lastKnownAgeSeconds,
+                zoneCode,
+                inRideZone,
                 assignable,
                 ineligibleReason: reason,
                 ineligibleExplanation: reason

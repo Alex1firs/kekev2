@@ -270,6 +270,37 @@ export class Ride {
 
     /** Neighbourhood — "Awada", "Upper Iweka". The most operationally useful. */
     @Index()
+    /**
+     * The service zone containing this ride's PICKUP, resolved at creation and
+     * never recomputed.
+     *
+     * Written once, in the same spirit as `parkId` and `dispatchMode`: a ride
+     * that started in Onitsha stays an Onitsha ride even if the boundary is
+     * later redrawn. Recomputing history is how two reports start disagreeing.
+     *
+     * Null on every ride created before service zones existed, and on any ride
+     * the resolver could not place. Null means "unknown", never "outside".
+     */
+    @Column({ type: "varchar", length: 16, nullable: true })
+    zoneCode!: string | null;
+
+    /**
+     * `exact` | `buffer` | `none`. Kept separate from `zoneCode` so the
+     * question "how many rides depend on the 400 m edge tolerance" stays
+     * answerable — if that number is ever more than trivial, a boundary is
+     * drawn wrongly and the fix is to redraw it, not to widen the buffer.
+     */
+    @Column({ type: "varchar", length: 8, nullable: true })
+    zoneMatchKind!: string | null;
+
+    /**
+     * Reporting only. A cross-city trip is ONE ride, belonging to its pickup's
+     * zone; this records where it was going so demand between cities is
+     * measurable. Nothing in dispatch may read it.
+     */
+    @Column({ type: "varchar", length: 16, nullable: true })
+    destinationZoneCode!: string | null;
+
     @Column({ type: "varchar", length: 120, nullable: true })
     pickupSubLocality!: string | null;
 

@@ -14,9 +14,8 @@ import { Ride } from '../models/Ride';
 import { DriverProfile } from '../models/DriverProfile';
 import { WalletService } from './wallet_service';
 import { DispatchService } from './dispatch_service';
-import { resolveAgainst } from './service_zone_resolver';
-import { ServiceZoneService } from './service_zone_service';
 import { ZonePolicy, ServiceZonePolicy, logWouldRejectCandidate } from './service_zone_policy';
+import { DriverZoneEligibility } from './driver_zone_eligibility';
 
 /** Statuses that mean a driver is mid-ride and must not be offered another. */
 /*
@@ -214,35 +213,16 @@ export class DriverEligibilityService {
   private static async outsideZone(
     driverIds: string[], policy: ZonePolicy,
   ): Promise<Map<string, string | null>> {
-    // Driver id -> the zone they ARE in (null when outside every zone), so the
+    // Driver id -> the zone they ARE in (null when in no zone), so an
     // observation can say where they were rather than only that they failed.
+    //
+    // The freshness contract lives in DriverZoneEligibility, deliberately in
+    // one place: this used to inline its own position lookup and zone compare,
+    // which is how two call sites end up disagreeing about what "current" means.
     const out = new Map<string, string | null>();
-    try {
-      const zones = await ServiceZoneService.operationalZones();
-      const positions = await DispatchService.livePositions(driverIds);
-      for (const id of driverIds) {
-        const p = positions.get(id);
-        if (!p) continue;                       // unknown position, not "elsewhere"
-        const r = resolveAgainst(p, zones);
-        if (r.kind === 'error') continue;       // a fault is not evidence of location
-        const driverZone = r.kind === 'inside' ? r.zoneCode : null;
-        /*
-         * A ride with NO zone — outside every service area — can be matched by
-         * nobody. Under enforce every driver is "outside" it, which is correct:
-         * there is no zone to be inside. This is the null-zone gap closed at
-         * the eligibility layer as well as the assignment layer.
-         */
-        if (policy.zoneCode && driverZone === policy.zoneCode) continue;
-        out.set(id, driverZone);
-      }
-    } catch (err: any) {
-      // Cannot evaluate: constrain nothing. The alternative — excluding
-      // everybody — would take a city off the road because Redis blinked.
-      console.warn(JSON.stringify({
-        level: 'warn', scope: 'service_zone', event: 'eligibility_zone_check_failed',
-        zoneCode: policy.zoneCode, coverage: policy.coverage, error: err?.message ?? 'unknown',
-      }));
-      return new Map();
+    const verdicts = await DriverZoneEligibility.verdicts(driverIds, policy.zoneCode);
+    for (const [driverId, v] of verdicts) {
+      if (!v.eligible) out.set(driverId, v.driverZone);
     }
     return out;
   }

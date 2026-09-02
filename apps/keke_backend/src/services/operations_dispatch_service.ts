@@ -28,12 +28,10 @@ import { OperationsAuditService } from './operations_audit_service';
 import { InterventionType, InterventionReason } from '../models/OperationsIntervention';
 import { loadOperationsDispatchConfig } from '../config/operations_dispatch_config';
 import { ContactAccessService, FullContact } from './contact_access_service';
+import { ManualAssignmentZoneGuard } from './manual_assignment_zone_guard';
 import { ContactPrivacyConfig } from '../config/contact_privacy_config';
 import { StaffRole } from '../config/staff_permissions';
 import { ServiceZonePolicy, ZoneCoverage, logWouldRejectCandidate } from './service_zone_policy';
-import { resolveAgainst } from './service_zone_resolver';
-import { ServiceZoneService } from './service_zone_service';
-import { DispatchService } from './dispatch_service';
 
 /**
  * Rides that are over. Contact access to these is time-boxed rather than open:
@@ -225,50 +223,20 @@ export class OperationsDispatchService {
          * then assigned. Nothing stopped a dispatcher handing an Onitsha ride
          * to a driver 33 km away in Awka.
          *
-         * Server-side, because hiding the driver in the list was never the
-         * safety mechanism. Reported in observe mode and refused in enforce, so
-         * the two modes measure the same thing.
+         * The rule itself lives in ManualAssignmentZoneGuard, because park
+         * dispatch is the other way a human puts a driver on a ride and the two
+         * must not be allowed to drift apart.
          */
-        const zonePolicy = await ServiceZonePolicy.forRide(
-            ride.zoneCode ?? null, ride.zoneMatchKind ?? null);
-
-        if (ServiceZonePolicy.active(zonePolicy)) {
-            const driverZone = await this.zoneOfDriver(driverId);
-            /*
-             * Two distinct refusals, and the second is the one the Kano ride
-             * walked straight through:
-             *
-             *   IN_ZONE          the driver must be in the ride's zone.
-             *   OUT_OF_COVERAGE  the ride belongs to NO service area, so there
-             *                    is no driver who could serve it. Nobody is
-             *                    assignable, and that is not a special case to
-             *                    be skipped — it is the strongest possible
-             *                    reason to refuse.
-             *
-             * The previous version guarded only the first, so a ride with a
-             * null zone reached this check and passed it without the check ever
-             * running. UNRESOLVED still passes — a fault must not refuse work.
-             */
-            const outOfCoverage = zonePolicy.coverage === ZoneCoverage.OUT_OF_COVERAGE;
-            const mismatched = zonePolicy.coverage === ZoneCoverage.IN_ZONE
-                && driverZone !== zonePolicy.zoneCode;
-
-            if (outOfCoverage || mismatched) {
-                logWouldRejectCandidate({
-                    rideId, driverId, rideZone: zonePolicy.zoneCode, driverZone,
-                    mode: String(zonePolicy.mode), applied: zonePolicy.constrain,
-                });
-                if (zonePolicy.constrain) {
-                    const why = outOfCoverage
-                        ? 'This pickup is outside every KekeRide service area, so no driver can be assigned.'
-                        : `This driver is not currently in the ${zonePolicy.zoneCode} service area.`;
-                    return fail('DRIVER_OUTSIDE_RIDE_ZONE', why, {
-                        rideZone: zonePolicy.zoneCode,
-                        driverZone,
-                        coverage: zonePolicy.coverage,
-                    });
-                }
-            }
+        const zoneVerdict = await ManualAssignmentZoneGuard.evaluate(
+            { rideId, zoneCode: ride.zoneCode ?? null, zoneMatchKind: ride.zoneMatchKind ?? null },
+            driverId,
+        );
+        if (zoneVerdict.refuse) {
+            return fail('DRIVER_OUTSIDE_RIDE_ZONE', zoneVerdict.message!, {
+                rideZone: zoneVerdict.rideZone,
+                driverZone: zoneVerdict.driverZone,
+                coverage: zoneVerdict.coverage,
+            });
         }
 
         if (!this.host) return fail('HOST_UNAVAILABLE', 'Dispatch is not available right now.');
@@ -548,27 +516,6 @@ export class OperationsDispatchService {
         // it somewhere nobody thought to protect.
         await audit('ok', null, { dialable: contact.dialable, rideStatus: status });
         return { ok: true, contact };
-    }
-
-    /**
-     * Which operational zone a driver is in right now, from live GPS only.
-     *
-     * Null when we do not know — no live fix, resolver fault, or genuinely
-     * outside every zone. The caller treats null as "not in the ride's zone",
-     * which is correct for an assignment decision: we may not place a driver we
-     * cannot locate into a city we cannot confirm they are in.
-     */
-    private static async zoneOfDriver(driverId: string): Promise<string | null> {
-        try {
-            const positions = await DispatchService.livePositions([driverId]);
-            const p = positions.get(driverId);
-            if (!p) return null;
-            const zones = await ServiceZoneService.operationalZones();
-            const r = resolveAgainst(p, zones);
-            return r.kind === 'inside' ? r.zoneCode : null;
-        } catch {
-            return null;
-        }
     }
 
     /** Operator-facing sentence for an eligibility rejection code. */

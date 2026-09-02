@@ -422,3 +422,53 @@
 }
 @keyframes opsPulse { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
 @media (prefers-reduced-motion: reduce) { .ops-silence-dot { animation: none; } }
+
+/* ── Service zone ─────────────────────────────────────────────────── */
+/*
+ * Which city, on every surface where somebody decides who drives.
+ *
+ * Blue is the ordinary case and carries no alarm: most rides belong to a city
+ * and that is not news. The two states that DO need to interrupt a dispatcher
+ * are coloured — a pickup outside every service area, and a driver who is not
+ * in the ride's city — because those are the two situations that produced the
+ * Kano incident and the 33 km cross-city assignment.
+ */
+.ops-zone-line { margin-top: 6px; }
+.ops-zone {
+    display: inline-block;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    padding: 2px 8px;
+    border-radius: 20px;
+    background: rgba(96, 165, 250, 0.14);
+    color: var(--blue);
+    border: 1px solid rgba(96, 165, 250, 0.32);
+    white-space: nowrap;
+}
+/* This pickup is outside every active service area. */
+.ops-zone-out {
+    background: rgba(244, 63, 94, 0.14);
+    color: var(--red);
+    border-color: rgba(244, 63, 94, 0.34);
+}
+/* A driver in a real city, but not this ride's. */
+.ops-zone-mismatch {
+    background: rgba(251, 146, 60, 0.14);
+    color: var(--orange);
+    border-color: rgba(251, 146, 60, 0.34);
+}
+/* We do not know: no live fix, or a ride from before zones existed.
+   Deliberately muted — an absence of information is not an alarm, and
+   must not be mistaken for one. */
+.ops-zone-unknown {
+    background: rgba(139, 151, 166, 0.12);
+    color: var(--text-dim);
+    border-color: rgba(139, 151, 166, 0.3);
+}
+/* "Drivers for Awka" — the question the list below is answering. */
+.ops-for-zone {
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--blue);
+}

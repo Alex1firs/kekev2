@@ -12,7 +12,7 @@
  * missing was a test of the CONTRACT — that off, observe and enforce are three
  * distinct behaviours rather than two.
  */
-import { ServiceZonePolicy, ZoneCoverage } from '../../src/services/service_zone_policy';
+import { ServiceZonePolicy, ZoneCoverage, coverageOf } from '../../src/services/service_zone_policy';
 import { ServiceZoneService } from '../../src/services/service_zone_service';
 import { ServiceZoneStatus, ZoneEnforcement } from '../../src/models/ServiceZone';
 import { boundingBox, LatLng } from '../../src/services/service_zone_geometry';
@@ -191,5 +191,56 @@ describe('failure policy', () => {
             if (prev === undefined) delete process.env.SERVICE_ZONES_ENABLED;
             else process.env.SERVICE_ZONES_ENABLED = prev;
         }
+    });
+});
+
+/*
+ * The Operations console shows an operator which city a ride belongs to, and
+ * it must reach the same conclusion the dispatch policy reaches. Two
+ * derivations of "which coverage state is this ride in" would eventually
+ * disagree, and the screen would say "Awka" about a ride nobody may be
+ * assigned to.
+ */
+describe('coverageOf — the derivation the screen and the policy share', () => {
+    const OPEN = new Set(['ONI', 'AWK']);
+    const ONI_ONLY = new Set(['ONI']);
+
+    it('a code naming an operational zone is IN_ZONE', () => {
+        expect(coverageOf('ONI', 'exact', OPEN)).toBe(ZoneCoverage.IN_ZONE);
+        expect(coverageOf('AWK', 'buffer', OPEN)).toBe(ZoneCoverage.IN_ZONE);
+    });
+
+    it('a code naming a DRAFT city is OUT_OF_COVERAGE, not in that city', () => {
+        // Production today: the ride really is in Awka, and Awka really is not
+        // open. The second fact is the one that governs who can be sent.
+        expect(coverageOf('AWK', 'exact', ONI_ONLY)).toBe(ZoneCoverage.OUT_OF_COVERAGE);
+    });
+
+    it('no code but a completed lookup is OUT_OF_COVERAGE — we looked, and found nothing', () => {
+        expect(coverageOf(null, 'none', OPEN)).toBe(ZoneCoverage.OUT_OF_COVERAGE);
+    });
+
+    it('no code and no lookup is UNRESOLVED — a legacy ride, not a refusal', () => {
+        // The distinction the Kano incident turned on. Conflating these is how
+        // "we never classified this" became "this is fine".
+        expect(coverageOf(null, null, OPEN)).toBe(ZoneCoverage.UNRESOLVED);
+        expect(coverageOf(undefined, undefined, OPEN)).toBe(ZoneCoverage.UNRESOLVED);
+    });
+
+    it('agrees with ServiceZonePolicy.forRide on every combination', () => {
+        // The property that makes sharing worthwhile: if these two ever
+        // diverge, this test fails rather than the dispatcher's screen lying.
+        const cases: Array<[string | null, string | null]> = [
+            ['ONI', 'exact'], ['ONI', 'buffer'], ['AWK', 'exact'],
+            [null, 'none'], [null, null],
+        ];
+        withZones(
+            zone('ONI', ServiceZoneStatus.ACTIVE, ZoneEnforcement.OBSERVE),
+            zone('AWK', ServiceZoneStatus.ACTIVE, ZoneEnforcement.OBSERVE),
+        );
+        return Promise.all(cases.map(async ([code, match]) => {
+            const policy = await ServiceZonePolicy.forRide(code, match);
+            expect(coverageOf(code, match, OPEN)).toBe(policy.coverage);
+        }));
     });
 });

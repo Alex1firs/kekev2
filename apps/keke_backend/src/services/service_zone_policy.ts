@@ -79,6 +79,34 @@ function strongest(modes: ZoneEnforcement[]): ZoneEnforcement {
     return ZoneEnforcement.OFF;
 }
 
+/**
+ * Which of the three coverage states a ride is in, given the zones that are
+ * currently operational.
+ *
+ * Pure, and shared: `forRide` uses it to decide policy, and the Operations
+ * queue uses it to decide what to show an operator. One derivation, so the
+ * screen cannot say "Awka" about a ride the dispatcher is not allowed to
+ * assign, or "outside every service area" about one that is merely unclassified.
+ *
+ *   zoneCode names an operational zone  → IN_ZONE
+ *   zoneCode names a non-operational one → OUT_OF_COVERAGE  (classified into a
+ *                                          draft city: real, but not open)
+ *   no zoneCode, matchKind 'none'        → OUT_OF_COVERAGE  (we looked, nothing)
+ *   anything else                        → UNRESOLVED       (we never looked)
+ */
+export function coverageOf(
+    zoneCode: string | null | undefined,
+    matchKind: string | null | undefined,
+    operationalCodes: ReadonlySet<string>,
+): ZoneCoverage {
+    if (zoneCode) {
+        return operationalCodes.has(zoneCode)
+            ? ZoneCoverage.IN_ZONE
+            : ZoneCoverage.OUT_OF_COVERAGE;
+    }
+    return matchKind === 'none' ? ZoneCoverage.OUT_OF_COVERAGE : ZoneCoverage.UNRESOLVED;
+}
+
 export class ServiceZonePolicy {
     /**
      * The posture governing rides that belong to NO zone.
@@ -127,7 +155,8 @@ export class ServiceZonePolicy {
                 const zone = zones.find((z) => z.code === zoneCode);
                 // A code that names no ACTIVE zone is not in coverage. This is
                 // the AWK case once a ride has been classified into a draft
-                // polygon: classified, but not operational.
+                // polygon: classified, but not operational. `coverageOf` makes
+                // the same call for the Operations screen.
                 if (!zone) return this.outOfCoverage(zoneCode);
                 return {
                     zoneCode,

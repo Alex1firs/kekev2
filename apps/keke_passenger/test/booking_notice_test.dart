@@ -43,6 +43,7 @@ void main() {
         RideOutcome.requestExpired,
         RideOutcome.passengerCancelled,
         RideOutcome.activeRideExists,
+        RideOutcome.outsideServiceArea,
       ]) {
         expect(BookingNotice.of(outcome).tone, RideOutcomeTone.info,
             reason: '${outcome.code} must not use error styling');
@@ -60,7 +61,7 @@ void main() {
       }
     });
 
-    test('all eight outcomes have distinct titles and bodies', () {
+    test('all nine outcomes have distinct titles and bodies', () {
       final titles = <String>{};
       final bodies = <String>{};
       for (final outcome in RideOutcome.values) {
@@ -70,7 +71,7 @@ void main() {
         expect(bodies.add(notice.body), isTrue,
             reason: 'duplicate body for ${outcome.code}');
       }
-      expect(RideOutcome.values.length, 8);
+      expect(RideOutcome.values.length, 9);
     });
 
     test('the no-driver availability copy is the agreed product copy', () {
@@ -98,6 +99,42 @@ void main() {
       expect(notice.canSearchAgain, isFalse);
       expect(notice.canChangePickup, isFalse);
       expect(notice.title, 'You already have a ride in progress');
+    });
+
+    group('outside the service area', () {
+      /*
+       * The gap this closes: OUTSIDE_SERVICE_AREA was not a wire code the app
+       * knew, so it fell through to serverFailed and a passenger standing in
+       * Kano was told something had gone wrong on our end and to try again in
+       * a moment. Nothing had gone wrong, and trying again could never work.
+       */
+      test('the wire code maps to its own outcome, not to a server failure', () {
+        expect(RideOutcomeWire.fromCode('OUTSIDE_SERVICE_AREA'),
+            RideOutcome.outsideServiceArea);
+        expect(RideOutcomeWire.fromCode('OUTSIDE_SERVICE_AREA'),
+            isNot(RideOutcome.serverFailed));
+      });
+
+      test('it reads as information about the PLACE, not a fault or a ban', () {
+        final notice = BookingNotice.of(RideOutcome.outsideServiceArea);
+        expect(notice.tone, RideOutcomeTone.info);
+        expect(notice.isError, isFalse);
+        // Nothing in the copy may suggest the person is at fault or barred.
+        final text = '${notice.title} ${notice.body}'.toLowerCase();
+        for (final word in ['blocked', 'banned', 'not allowed', 'denied',
+                            'went wrong', 'error', 'unauthorised']) {
+          expect(text, isNot(contains(word)),
+              reason: 'the passenger is not blocked — the pickup is out of range');
+        }
+      });
+
+      test('it offers a new pickup, and does NOT offer a pointless retry', () {
+        final notice = BookingNotice.of(RideOutcome.outsideServiceArea);
+        expect(notice.canSearchAgain, isFalse,
+            reason: 'searching again from the same pin can never succeed');
+        expect(notice.canChangePickup, isTrue,
+            reason: 'moving the pickup is the only thing that can help');
+      });
     });
 
     test('semantics label announces tone so it survives colour blindness', () {

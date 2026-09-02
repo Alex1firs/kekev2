@@ -29,6 +29,17 @@ enum RideOutcome {
 
   /// The passenger already has a live ride — a second booking is blocked.
   activeRideExists,
+
+  /// The pickup point is outside every city KekeRide has launched in.
+  ///
+  /// Deliberately NOT a failure and deliberately NOT about the passenger. The
+  /// account is fine, the app is fine, and the same person is served normally
+  /// the moment they are standing somewhere we operate. What is out of range
+  /// is the pin on the map, and the copy has to say exactly that — the
+  /// alternative, which the app did until now, was to fall through to
+  /// [serverFailed] and tell somebody in Kano that something went wrong on our
+  /// end and they should try again in a moment.
+  outsideServiceArea,
 }
 
 /// Visual weight of a notice. Red is reserved for [RideOutcomeTone.error];
@@ -55,6 +66,8 @@ extension RideOutcomeWire on RideOutcome {
         return 'INVALID_ROUTE';
       case RideOutcome.activeRideExists:
         return 'ACTIVE_RIDE_EXISTS';
+      case RideOutcome.outsideServiceArea:
+        return 'OUTSIDE_SERVICE_AREA';
     }
   }
 
@@ -79,6 +92,8 @@ extension RideOutcomeWire on RideOutcome {
       case 'ACTIVE_RIDE_EXISTS':
       case 'ALREADY_ON_RIDE':
         return RideOutcome.activeRideExists;
+      case 'OUTSIDE_SERVICE_AREA':
+        return RideOutcome.outsideServiceArea;
       case 'SERVER_FAILED':
       case 'INTERNAL_ERROR':
       case 'RIDE_NOT_FOUND':
@@ -193,6 +208,23 @@ class BookingNotice {
           title: 'You already have a ride in progress',
           body: 'Finish or cancel your current ride before booking another one.',
           icon: Icons.pending_actions_rounded,
+          dispatchResult: dispatchResult,
+        );
+      case RideOutcome.outsideServiceArea:
+        // Info, not error: nothing is broken and nobody is blocked.
+        //
+        // `canSearchAgain` is false on purpose. Searching again from the same
+        // pin cannot succeed, and inviting it would leave a passenger tapping
+        // a button forever. Moving the pickup is the only thing that can help,
+        // so that is the only thing offered.
+        return BookingNotice(
+          outcome: outcome,
+          tone: RideOutcomeTone.info,
+          title: 'KekeRide isn\'t in this area yet',
+          body: 'We haven\'t launched around your pickup point. '
+              'We\'re expanding — set a pickup inside a city we serve to ride now.',
+          icon: Icons.not_listed_location_rounded,
+          canChangePickup: true,
           dispatchResult: dispatchResult,
         );
 

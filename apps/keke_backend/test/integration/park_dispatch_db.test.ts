@@ -48,6 +48,8 @@ describeDb('park dispatch fallback (database)', () => {
     let DriverPresenceService: typeof import('../../src/services/driver_presence_service').DriverPresenceService;
     let BadgeService: typeof import('../../src/services/badge_service').BadgeService;
     let ParkDispatchService: typeof import('../../src/services/park_dispatch_service').ParkDispatchService;
+    let ManualAssignmentZoneGuard:
+        typeof import('../../src/services/manual_assignment_zone_guard').ManualAssignmentZoneGuard;
     let ParkDispatchJobRepository: typeof import('../../src/repositories/park_dispatch_job_repository').ParkDispatchJobRepository;
 
     const OPS: any = { staffUserId: 'ACTOR_OPS', roles: [StaffRole.OPERATIONS_ADMIN], isLegacy: false };
@@ -193,6 +195,8 @@ describeDb('park dispatch fallback (database)', () => {
         const dataSourceModule = await import('../../src/config/data_source');
         Object.defineProperty(dataSourceModule, 'AppDataSource', { value: ds, writable: true, configurable: true });
 
+        ManualAssignmentZoneGuard =
+            (await import('../../src/services/manual_assignment_zone_guard')).ManualAssignmentZoneGuard;
         ParkService = (await import('../../src/services/park_service')).ParkService;
         ParkRosterService = (await import('../../src/services/park_roster_service')).ParkRosterService;
         DispatcherShiftService = (await import('../../src/services/dispatcher_shift_service')).DispatcherShiftService;
@@ -521,6 +525,68 @@ describeDb('park dispatch fallback (database)', () => {
 
             await expect(ParkDispatchService.assignDriver(dispatcherActor, jobId, driverId, ParkAssignmentMode.ELECTRONIC))
                 .rejects.toMatchObject({ statusCode: 409 });
+        });
+
+        /*
+         * ── Geography ────────────────────────────────────────────────────
+         *
+         * Park dispatch is the SECOND way a human puts a driver on a ride, and
+         * it checked roster membership, assignability and presence at the park
+         * — none of which is geography. A park roster is not a geographic
+         * fence: a park can hold a job for a pickup that classified elsewhere,
+         * and an out-of-coverage ride has no city at all.
+         *
+         * These tests are about the WIRING. The rule itself is proven against
+         * real Redis positions in awka_certification_db.test.ts; what has to be
+         * true here is that this path consults it, and obeys it.
+         */
+        it('consults the shared zone guard before assigning, with the RIDE\'s zone', async () => {
+            const { dispatcherActor, driverId, jobId, ride } = await setup();
+            await ds.getRepository(Ride).update({ rideId: ride.rideId },
+                { zoneCode: 'ONI', zoneMatchKind: 'exact' } as any);
+
+            const spy = jest.spyOn(ManualAssignmentZoneGuard, 'evaluate');
+            try {
+                await ParkDispatchService.assignDriver(
+                    dispatcherActor, jobId, driverId, ParkAssignmentMode.VERBAL);
+                expect(spy).toHaveBeenCalled();
+                const [guardedRide, guardedDriver] = spy.mock.calls[0];
+                expect(guardedRide.rideId).toBe(ride.rideId);
+                expect(guardedRide.zoneCode).toBe('ONI');
+                expect(guardedDriver).toBe(driverId);
+            } finally { spy.mockRestore(); }
+        });
+
+        it('REFUSES the assignment when the guard refuses — enforcement', async () => {
+            const { dispatcherActor, driverId, jobId } = await setup();
+            const spy = jest.spyOn(ManualAssignmentZoneGuard, 'evaluate').mockResolvedValue({
+                refuse: true, violated: true, coverage: 'in_zone' as any, mode: 'enforce',
+                rideZone: 'ONI', driverZone: 'AWK',
+                message: 'This driver is not currently in the ONI service area.',
+            });
+            try {
+                await expect(ParkDispatchService.assignDriver(
+                    dispatcherActor, jobId, driverId, ParkAssignmentMode.VERBAL))
+                    .rejects.toThrow(/not currently in the ONI service area/);
+            } finally { spy.mockRestore(); }
+        });
+
+        it('ALLOWS the assignment when the guard only OBSERVES — not enforcement', async () => {
+            // The same violation, reported rather than applied. Observation
+            // must not quietly become enforcement on this path either.
+            const { dispatcherActor, driverId, jobId, ride } = await setup();
+            const spy = jest.spyOn(ManualAssignmentZoneGuard, 'evaluate').mockResolvedValue({
+                refuse: false, violated: true, coverage: 'in_zone' as any, mode: 'observe',
+                rideZone: 'ONI', driverZone: 'AWK',
+                message: 'This driver is not currently in the ONI service area.',
+            });
+            try {
+                await ParkDispatchService.assignDriver(
+                    dispatcherActor, jobId, driverId, ParkAssignmentMode.VERBAL);
+                const fresh = await ds.getRepository(Ride).findOneBy({ rideId: ride.rideId });
+                expect(String(fresh!.status)).toBe('accepted');
+                expect(fresh!.driverId).toBe(driverId);
+            } finally { spy.mockRestore(); }
         });
 
         it('refuses a driver who is not on this park roster', async () => {

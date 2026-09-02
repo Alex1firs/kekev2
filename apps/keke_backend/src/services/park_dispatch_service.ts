@@ -50,6 +50,7 @@ import { DriverPresenceState, PresenceSource } from '../models/DriverPresence';
 import { ParkDispatchSwitch } from './park_dispatch_switch';
 import { StaffPushEscalation } from './staff_push_escalation';
 import { RideOutcomeCode } from './ride_outcome';
+import { ManualAssignmentZoneGuard } from './manual_assignment_zone_guard';
 
 export const ParkDispatchAuditAction = {
     PARK_JOB_CLAIMED: 'PARK_JOB_CLAIMED',
@@ -602,6 +603,30 @@ export class ParkDispatchService {
                 presence.state
                     ? `This driver is ${presence.state.replace(/_/g, ' ')} — only drivers at the park and waiting can be assigned.`
                     : 'This driver has no recorded presence at the park.');
+        }
+
+        /*
+         * ── Cross-zone guard ────────────────────────────────────────────
+         *
+         * Park dispatch is the OTHER way a human puts a driver on a ride, and
+         * it checked roster membership, assignability and presence at the park
+         * — none of which is geography. A park roster is not a geographic fence:
+         * a park in one city can hold a job for a pickup that classified
+         * elsewhere, and a ride outside every service area has no city at all.
+         *
+         * Same rule as the Operations console, from the same module, so the two
+         * manual paths cannot drift apart. Refused only under enforcement;
+         * under observe this evaluates, logs, and lets the dispatcher through.
+         */
+        const rideRow = await AppDataSource.getRepository(Ride)
+            .findOne({ where: { rideId: job.rideId } });
+        const zoneVerdict = await ManualAssignmentZoneGuard.evaluate({
+            rideId: job.rideId,
+            zoneCode: (rideRow as any)?.zoneCode ?? null,
+            zoneMatchKind: (rideRow as any)?.zoneMatchKind ?? null,
+        }, driverId);
+        if (zoneVerdict.refuse) {
+            throw new AppError(409, ErrorCode.VALIDATION_ERROR, zoneVerdict.message!);
         }
 
         // ── SMARTPHONE: offer and wait ──────────────────────────────────

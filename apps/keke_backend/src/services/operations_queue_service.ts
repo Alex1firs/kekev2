@@ -23,6 +23,8 @@ import { DispatchControlMode } from '../models/RideDispatchControl';
 import { loadOperationsDispatchConfig } from '../config/operations_dispatch_config';
 import { outcomeLabel, classifyOutcome, RideOutcomeCode, resolveAreaLine } from './ride_outcome';
 import { areaOf } from './dispatch_monitor_query_service';
+import { ServiceZoneService } from './service_zone_service';
+import { coverageOf, ZoneCoverage } from './service_zone_policy';
 
 /** What the queue says about a ride at a glance. */
 export type QueueState =
@@ -55,6 +57,22 @@ export interface QueueRow {
     passenger: { id: string; name: string; phoneMasked: string | null } | null;
     /** Which city this ride belongs to. Null for rides created before zones. */
     zoneCode: string | null;
+    /**
+     * The human name of that city — "Onitsha", "Awka".
+     *
+     * Served from the zone table rather than mapped in the console, so a third
+     * city needs a row and not a front-end release. Null when the ride has no
+     * zone, or names one that is no longer operational.
+     */
+    zoneName: string | null;
+    /**
+     * in_zone · out_of_coverage · unresolved.
+     *
+     * The distinction an operator has to be able to make at a glance:
+     * "this pickup is outside every active service area" is a different
+     * situation from "this ride predates zones and we never classified it".
+     */
+    zoneCoverage: ZoneCoverage;
     pickupAddress: string | null;
     pickupArea: string | null;
     destinationAddress: string | null;
@@ -117,11 +135,15 @@ export class OperationsQueueService {
         }
 
         const ids = rides.map((r) => r.rideId);
-        const [rollups, people, controls] = await Promise.all([
+        const [rollups, people, controls, zones] = await Promise.all([
             DispatchMonitorQueryService.rollupsFor(ids),
             DispatchMonitorQueryService.peopleFor(rides),
             RideControlService.getMany(ids),
+            // Cached for 60s in-process; one load for the whole queue.
+            ServiceZoneService.operationalZones().catch(() => []),
         ]);
+        const zoneNames = new Map(zones.map((z) => [z.code, z.name]));
+        const operationalCodes = new Set(zones.map((z) => z.code));
 
         const counts = this.emptyCounts();
         const rows: QueueRow[] = rides.map((r) => {
@@ -153,9 +175,13 @@ export class OperationsQueueService {
                 passenger: p
                     ? { id: r.passengerId, name: maskName(p.firstName, p.lastName), phoneMasked: maskPhone(p.phone) }
                     : null,
-                // Display only in Phase 1: a dispatcher can see that a request
-                // is an Awka one without anything being filtered for them.
+                // Display only: a dispatcher can see that a request is an Awka
+                // one without anything being filtered for them. Assignment
+                // safety is server-side, in ManualAssignmentZoneGuard.
                 zoneCode: (r as any).zoneCode ?? null,
+                zoneName: zoneNames.get((r as any).zoneCode) ?? null,
+                zoneCoverage: coverageOf(
+                    (r as any).zoneCode ?? null, (r as any).zoneMatchKind ?? null, operationalCodes),
                 pickupAddress: r.pickupAddress ?? null,
                 pickupArea: pickupArea.area,
                 destinationAddress: r.destinationAddress ?? null,

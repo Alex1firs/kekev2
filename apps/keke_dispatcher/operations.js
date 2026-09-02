@@ -20,6 +20,7 @@
         tab: 'attention',        // attention | live | drivers | history
         selected: null,          // rideId of the open detail sheet
         drivers: [],
+        rideZone: null,          // which city the open ride belongs to
         driverCategory: 'ALL',
         interventions: [],
         config: null,
@@ -487,8 +488,10 @@
             const data = await api(
                 `/operations/rides/${encodeURIComponent(rideId)}/drivers?category=${OPS.driverCategory}`);
             OPS.drivers = data.drivers || [];
+            OPS.rideZone = data.rideZone || null;
         } catch {
             OPS.drivers = [];
+            OPS.rideZone = null;
         }
         render();
     }
@@ -527,6 +530,7 @@
             <div class="ops-wait">${esc(waited(r.waitingSeconds))}</div>
             <div class="ops-state">${esc(STATE_TEXT[r.queueState] || r.queueState)}</div>
           </div>
+          <div class="ops-zone-line">${zoneChip(r)}</div>
           <div class="ops-route">
             <div class="ops-leg"><span class="ops-dot ops-dot-a"></span>
               ${esc(r.pickupArea || r.pickupAddress || 'Area not recorded')}</div>
@@ -544,6 +548,44 @@
         </article>`;
     }
 
+    /**
+     * Which city, said plainly.
+     *
+     * The server sends the name ("Onitsha", "Awka") and the coverage state, so
+     * a third city needs a database row rather than a release of this file. An
+     * operator must never have to know that ONI means Onitsha.
+     *
+     * Three visual states because there are three situations, and the
+     * dangerous one is the middle: a pickup outside every service area looks
+     * exactly like an unclassified legacy ride if both render as nothing.
+     */
+    function zoneChip(row) {
+        if (!row) return '';
+        if (row.zoneCoverage === 'out_of_coverage') {
+            return `<span class="ops-zone ops-zone-out">Outside service areas</span>`;
+        }
+        if (row.zoneCoverage === 'unresolved' || !row.zoneCode) {
+            return `<span class="ops-zone ops-zone-unknown">Zone not determined</span>`;
+        }
+        return `<span class="ops-zone">${esc(row.zoneName || row.zoneCode)}</span>`;
+    }
+
+    /**
+     * A driver's geography, from their LIVE position only.
+     *
+     * `stale` is its own state on purpose. A last-known fix tells us whose
+     * phone is worth ringing; it does not tell us which city somebody is in,
+     * and printing a city name from one would be a lie the operator would act
+     * on. The server decides this — see DiscoveredDriver.zoneState.
+     */
+    function driverZoneChip(d) {
+        const cls = d.zoneState === 'in_zone'
+            ? (d.inRideZone === false ? 'ops-zone ops-zone-mismatch' : 'ops-zone')
+            : d.zoneState === 'outside' ? 'ops-zone ops-zone-out'
+            : 'ops-zone ops-zone-unknown';
+        return `<span class="${cls}">${esc(d.zoneLabel || '—')}</span>`;
+    }
+
     function driverRow(d, rideId) {
         const dist = d.distanceKm == null ? '—'
             : `${d.distanceKm} km${d.distanceIsLastKnown ? '' : ''}`;
@@ -552,8 +594,24 @@
         const lastKnown = d.distanceIsLastKnown
             ? `<span class="ops-stale">last known ${esc(ago(d.lastKnownAgeSeconds))}</span>` : '';
 
+        /*
+         * Under ENFORCEMENT the server refuses a cross-zone assignment, so the
+         * button must not be offered. This is honesty, not security — the
+         * security is ManualAssignmentZoneGuard, server-side, and it holds
+         * whatever this file does.
+         *
+         * Under OBSERVE `enforced` is false and nothing is blocked here: the
+         * platform genuinely allows the assignment, and a console that pretends
+         * otherwise would be enforcing geography that nobody switched on.
+         */
+        const zoneBlocked = !!(OPS.rideZone && OPS.rideZone.enforced && d.inRideZone === false);
+        const zoneBlockText = OPS.rideZone && OPS.rideZone.code
+            ? `Not in ${esc(OPS.rideZone.name || OPS.rideZone.code)} — cannot be assigned to this ride.`
+            : 'This pickup is outside every service area, so no driver can be assigned.';
+        const canAssign = d.assignable && !zoneBlocked;
+
         return `
-        <div class="ops-driver ${d.assignable ? '' : 'ops-driver-blocked'}">
+        <div class="ops-driver ${canAssign ? '' : 'ops-driver-blocked'}">
           <div class="ops-driver-main">
             <div class="ops-driver-name">
               ${d.favourite ? '<span class="ops-star">★</span>' : ''}${esc(d.name)}
@@ -562,14 +620,16 @@
               ${esc(d.vehiclePlate || 'no plate')} · ${esc(d.presence.toLowerCase().replace('_', ' '))}
               ${d.presence !== 'ONLINE' ? ' · seen ' + esc(ago(d.lastSeenSeconds)) : ''}
             </div>
-            <div class="ops-driver-sub">${esc(dist)} ${lastKnown}</div>
-            ${d.assignable ? '' :
-              `<div class="ops-driver-block">${esc(d.ineligibleExplanation || 'Cannot assign')}</div>`}
+            <div class="ops-driver-sub">${esc(dist)} ${lastKnown} ${driverZoneChip(d)}</div>
+            ${zoneBlocked
+              ? `<div class="ops-driver-block">${zoneBlockText}</div>`
+              : d.assignable ? ''
+              : `<div class="ops-driver-block">${esc(d.ineligibleExplanation || 'Cannot assign')}</div>`}
           </div>
           <div class="ops-driver-actions">
             ${can('ops:contact_driver')
               ? `<button class="ops-btn-ghost" data-call="${esc(d.driverId)}">Call</button>` : ''}
-            ${d.assignable && can('ops:assign')
+            ${canAssign && can('ops:assign')
               ? `<button class="ops-btn" data-assign="${esc(d.driverId)}">Assign</button>`
               : `<button class="ops-btn" disabled>Assign</button>`}
           </div>
@@ -636,6 +696,7 @@
           <div>
             <div class="ops-sheet-title">${esc(r.pickupArea || 'Area not recorded')} → ${esc(r.destinationArea || '—')}</div>
             <div class="ops-sheet-sub">${esc(r.passenger?.name || 'Unknown')} · waiting ${esc(waited(r.waitingSeconds))}</div>
+            <div class="ops-zone-line">${zoneChip(r)}</div>
           </div>
           <button class="ops-close" data-close="1" aria-label="Close">✕</button>
         </div>
@@ -745,7 +806,8 @@
           ${mine ? `
           <div class="ops-section">
             <div class="ops-section-head">
-              <h4>Drivers</h4>
+              <h4>Drivers${OPS.rideZone
+                ? ` <span class="ops-for-zone">for ${esc(OPS.rideZone.label)}</span>` : ''}</h4>
               <select id="ops-driver-cat">
                 ${['ALL','ONLINE','NEARBY','FAVOURITE','OFFLINE','AT_PARK','BUSY']
                   .map((c) => `<option value="${c}" ${OPS.driverCategory===c?'selected':''}>${c.replace('_',' ')}</option>`).join('')}

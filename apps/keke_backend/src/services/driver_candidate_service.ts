@@ -23,8 +23,7 @@
 import { DispatchService } from './dispatch_service';
 import { DriverIntentService } from './driver_intent_service';
 import { DriverWakeService } from './driver_wake_service';
-import { resolveAgainst } from './service_zone_resolver';
-import { ServiceZoneService } from './service_zone_service';
+import { DriverZoneEligibility } from './driver_zone_eligibility';
 import { redis } from '../config/redis';
 
 export interface Candidate {
@@ -54,6 +53,14 @@ const AUDIBLE_WAKE_LIMIT = Number(process.env.DISPATCH_AUDIBLE_WAKES || 3);
 
 /** Radius multiplier when deciding who is worth waking on a stale position. */
 const STALE_RADIUS_FACTOR = 1.5;
+
+/**
+ * How much wider to cast the discovery net when a zone constraint will be
+ * applied afterwards, so that filtering removes the wrong-city drivers rather
+ * than the candidates themselves. 3x keeps the Redis cost trivial while
+ * covering a tier where two thirds of the nearest drivers are across a border.
+ */
+const ZONE_OVERFETCH_FACTOR = 3;
 
 export class DriverCandidateService {
     /**
@@ -90,8 +97,26 @@ export class DriverCandidateService {
             zoneCode?: string;
         } = {},
     ): Promise<CandidateOutcome> {
-        // ── Tier 1: the existing path, unchanged ────────────────────────
-        const fresh = await DispatchService.findNearbyDriversWithDistance(lat, lng, radiusKm, limit);
+        /*
+         * ── Tier 1: nearest live drivers ────────────────────────────────
+         *
+         * When a zone constraint is active we OVER-FETCH, because discovery is
+         * radius-based and zone-agnostic while eligibility is not. Without this
+         * the zone filter SHRINKS the candidate pool instead of reaching
+         * further: a tier that discovers 10 drivers of whom 6 are in the
+         * neighbouring city offers the ride to 4, rather than to the 10 nearest
+         * drivers who could actually take it.
+         *
+         * It cannot bite for Onitsha and Awka — 16.3 km apart at their closest
+         * edges against a 6.5 km maximum reach, so discovery cannot cross. It
+         * would bite the first time two zones share a border, which is the
+         * situation this architecture has to survive without being redesigned.
+         *
+         * Zero cost when unconstrained: the multiplier is 1.
+         */
+        const overFetch = opts.zoneCode ? ZONE_OVERFETCH_FACTOR : 1;
+        const fresh = await DispatchService.findNearbyDriversWithDistance(
+            lat, lng, radiusKm, limit * overFetch);
         const candidates: Candidate[] = fresh.map((f) => ({ ...f, tier: 'fresh' as const }));
 
         if (candidates.length >= limit || opts.wantWakes === false) {
@@ -175,32 +200,19 @@ export class DriverCandidateService {
      * are elsewhere, and declining to ring somebody on the strength of an
      * absence would quietly shrink supply.
      */
+    /**
+     * Which stale-online drivers are worth waking for a ride in `zoneCode`.
+     *
+     * Delegates to DriverZoneEligibility so the rule about how old a
+     * last-known position may be lives in one place. A stale fix may only ever
+     * exclude somebody from a wake, never make them eligible — and beyond
+     * WAKE_POSITION_MAX_AGE_MS it stops excluding too, because a position that
+     * old says nothing about where the driver is now.
+     */
     private static async filterToZone(
         driverIds: string[], zoneCode: string,
     ): Promise<Set<string>> {
-        const keep = new Set(driverIds);
-        try {
-            const zones = await ServiceZoneService.operationalZones();
-            const positions = await DispatchService.lastKnownPositions(driverIds);
-            for (const id of driverIds) {
-                const p = positions.get(id);
-                if (!p) continue;                       // unknown, not "elsewhere"
-                const r = resolveAgainst({ lat: p.lat, lng: p.lng }, zones);
-                if (r.kind === 'error') continue;       // a fault is not evidence
-                // Dropped both when they are in a DIFFERENT zone and when they
-                // are outside every zone: either way we know they are not here.
-                // The first version only checked the former, which left a
-                // driver parked outside all coverage being rung for a ride they
-                // could never be given — and while AWK is draft, an Awka driver
-                // resolves as `outside` rather than as AWK, so that was every
-                // Awka driver.
-                if (!(r.kind === 'inside' && r.zoneCode === zoneCode)) keep.delete(id);
-            }
-        } catch {
-            // Cannot evaluate: wake everyone, exactly as before.
-            return new Set(driverIds);
-        }
-        return keep;
+        return DriverZoneEligibility.wakeCandidatesForZone(driverIds, zoneCode);
     }
 
     private static async staleOnlineNear(

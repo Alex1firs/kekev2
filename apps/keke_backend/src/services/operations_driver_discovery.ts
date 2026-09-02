@@ -75,6 +75,22 @@ export interface DiscoveredDriver {
      */
     zoneCode: string | null;
     inRideZone: boolean | null;
+    /** Human name of `zoneCode` — "Onitsha", "Awka". Null when there is none. */
+    zoneName: string | null;
+    /**
+     * What we actually know about this driver's geography, as one word.
+     *
+     *   in_zone   live fix, inside an operational zone (`zoneName` names it)
+     *   outside   live fix, inside none of them
+     *   stale     no live fix — we do NOT know where this driver is
+     *
+     * `stale` exists so the console cannot present a last-known position as
+     * current geography. A 40-minute-old fix is a hint about whose phone to
+     * ring, and the screen must say so rather than printing a city name.
+     */
+    zoneState: 'in_zone' | 'outside' | 'stale';
+    /** Ready-to-render label for `zoneState`. Server-side so a third city needs no console release. */
+    zoneLabel: string;
     lastKnownAgeSeconds: number | null;
 
     assignable: boolean;
@@ -126,10 +142,32 @@ export class OperationsDriverDiscovery {
     static async forRide(
         rideId: string,
         opts: { category?: DriverCategory; limit?: number } = {},
-    ): Promise<{ pickup: { lat: number; lng: number } | null; rideCoverage: string | null; drivers: DiscoveredDriver[] }> {
+    ): Promise<{
+        pickup: { lat: number; lng: number } | null;
+        rideCoverage: string | null;
+        /** The ride's own city, for the header of the picker. */
+        rideZone: {
+            code: string | null;
+            name: string | null;
+            label: string;
+            /**
+             * The ride's zone is ENFORCING, so a cross-zone assignment will be
+             * refused by the server.
+             *
+             * The console reads this to disable the Assign button rather than
+             * merely warning — a button that is offered and then rejected
+             * teaches an operator that the screen is unreliable. It is false
+             * under observe, where the server genuinely does allow the
+             * assignment and the UI must not invent a restriction the platform
+             * has not made.
+             */
+            enforced: boolean;
+        } | null;
+        drivers: DiscoveredDriver[];
+    }> {
         const limit = Math.min(Math.max(opts.limit ?? 40, 1), 200);
         const ride = await AppDataSource.getRepository(Ride).findOne({ where: { rideId } });
-        if (!ride) return { pickup: null, rideCoverage: null, drivers: [] };
+        if (!ride) return { pickup: null, rideCoverage: null, rideZone: null, drivers: [] };
 
         const pLat = Number(ride.pickupLat);
         const pLng = Number(ride.pickupLng);
@@ -139,7 +177,7 @@ export class OperationsDriverDiscovery {
         const profiles = await AppDataSource.getRepository(DriverProfile).find({
             where: { status: DriverStatus.APPROVED },
         });
-        if (profiles.length === 0) return { pickup, rideCoverage: null, drivers: [] };
+        if (profiles.length === 0) return { pickup, rideCoverage: null, rideZone: null, drivers: [] };
         const ids = profiles.map((p) => p.userId);
 
         const [users, activeRides, favourites, lastPositions] = await Promise.all([
@@ -204,6 +242,7 @@ export class OperationsDriverDiscovery {
          * job is to show the dispatcher everything.
          */
         const zoneSet = await ServiceZoneService.operationalZones().catch(() => []);
+        const zoneNames = new Map(zoneSet.map((z) => [z.code, z.name]));
         const rideZoneCode: string | null = (ride as any)?.zoneCode ?? null;
         /*
          * The ride's own coverage, so a dispatcher can be told the difference
@@ -235,11 +274,25 @@ export class OperationsDriverDiscovery {
             else if (ageMs != null) presence = 'OFFLINE';
             else presence = 'NEVER_SEEN';
 
-            // Live GEO first; last-known only as a labelled fallback.
+            /*
+             * Live GEO first; last-known only as a labelled fallback.
+             *
+             * `fresh` is part of the test, and has to be: `drivers:locations`
+             * has no TTL, so a GEO entry can outlive the driver's shift by
+             * hours. Reading the coordinate alone once made this screen label a
+             * driver "Awka" on a fix from the previous evening.
+             *
+             * The availability key is the honest signal, and it is a structural
+             * one rather than a convention: updateDriverLocation writes the GEO
+             * entry and the 45-second key in the SAME pipeline, so a live key
+             * proves the coordinate behind it is under 45 seconds old. This is
+             * the identical rule DriverZoneEligibility applies to dispatch —
+             * the picker must not be more credulous than the dispatcher.
+             */
             const pair = Array.isArray(geos[i]) ? geos[i][0] : null;
             const liveLng = pair ? parseFloat(pair[0]) : NaN;
             const liveLat = pair ? parseFloat(pair[1]) : NaN;
-            const hasLive = Number.isFinite(liveLat) && Number.isFinite(liveLng);
+            const hasLive = fresh && Number.isFinite(liveLat) && Number.isFinite(liveLng);
             const stored = lastPositions.get(p.userId) ?? null;
 
             let distanceKm: number | null = null;
@@ -268,6 +321,19 @@ export class OperationsDriverDiscovery {
             const inRideZone = outOfCoverage ? false
                 : (rideZoneCode ? zoneCode === rideZoneCode : null);
 
+            /*
+             * Three states, not two. "Outside every service area" and "we have
+             * no current fix for this driver" look identical if both render as
+             * a blank cell, and they are opposite situations: the first is a
+             * fact about the driver, the second is an absence of facts.
+             */
+            const zoneState: 'in_zone' | 'outside' | 'stale' =
+                !hasLive ? 'stale' : (zoneCode ? 'in_zone' : 'outside');
+            const zoneName = zoneCode ? zoneNames.get(zoneCode) ?? zoneCode : null;
+            const zoneLabel = zoneState === 'stale' ? 'Location stale'
+                : zoneState === 'outside' ? 'Outside service areas'
+                : zoneName!;
+
             const assignable = eligibleSet.has(p.userId);
             const reason = assignable ? null : reasonById.get(p.userId) ?? 'not_available';
 
@@ -284,6 +350,9 @@ export class OperationsDriverDiscovery {
                 lastKnownAgeSeconds,
                 zoneCode,
                 inRideZone,
+                zoneName,
+                zoneState,
+                zoneLabel,
                 assignable,
                 ineligibleReason: reason,
                 ineligibleExplanation: reason
@@ -313,7 +382,22 @@ export class OperationsDriverDiscovery {
             return a.name.localeCompare(b.name);
         });
 
-        return { pickup, rideCoverage, drivers: filtered.slice(0, limit) };
+        /*
+         * The picker's own header. A dispatcher choosing a driver must be able
+         * to see which city they are choosing FOR — otherwise every driver row
+         * below is a label without a question.
+         */
+        const rideZoneName = rideZoneCode ? zoneNames.get(rideZoneCode) ?? null : null;
+        const rideZone = {
+            code: rideZoneCode,
+            name: rideZoneName,
+            label: outOfCoverage
+                ? 'Outside every service area'
+                : (rideZoneName ?? (rideZoneCode ?? 'Zone not determined')),
+            enforced: ridePolicy?.constrain === true,
+        };
+
+        return { pickup, rideCoverage, rideZone, drivers: filtered.slice(0, limit) };
     }
 
     private static matchesCategory(d: DiscoveredDriver, c: DriverCategory): boolean {

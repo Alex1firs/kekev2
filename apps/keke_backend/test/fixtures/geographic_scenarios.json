@@ -1,0 +1,368 @@
+{
+ "note": "Geographic scenarios for multi-city dispatch. Generated from the approved Phase 0 boundaries; expectations computed with the same WGS84 constants as service_zone_geometry.ts. Coordinate-shaped scenarios only \u2014 driver-state scenarios (stale location, fresh-outside-home, GPS drift) are behavioural and live in the test suites.",
+ "vectors": [
+  {
+   "scenario": "ONI_INTERIOR",
+   "label": "Onitsha core (Main Market)",
+   "lat": 6.1667,
+   "lng": 6.7833,
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact"
+   }
+  },
+  {
+   "scenario": "ONI_INTERIOR",
+   "label": "Nkpor",
+   "lat": 6.15,
+   "lng": 6.8333,
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact"
+   }
+  },
+  {
+   "scenario": "ONI_INTERIOR",
+   "label": "Okpoko",
+   "lat": 6.09,
+   "lng": 6.8,
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact"
+   }
+  },
+  {
+   "scenario": "ONI_BOUNDARY",
+   "label": "ONI edge 3, 30 m inside",
+   "lat": 6.1609435,
+   "lng": 6.8797349,
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact"
+   }
+  },
+  {
+   "scenario": "ONI_BOUNDARY",
+   "label": "ONI edge 7, 30 m inside",
+   "lat": 6.0582637,
+   "lng": 6.7930638,
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "exact"
+   }
+  },
+  {
+   "scenario": "ONI_BUFFER",
+   "label": "ONI edge 0, 250 m out (in buffer)",
+   "lat": 6.2447556,
+   "lng": 6.8078445,
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "buffer"
+   }
+  },
+  {
+   "scenario": "ONI_JUST_OUTSIDE_BUFFER",
+   "label": "ONI edge 0, 600 m out (past buffer)",
+   "lat": 6.2479134,
+   "lng": 6.8076268,
+   "expect": {
+    "kind": "outside",
+    "nearestZoneCode": "ONI",
+    "distanceM": 575
+   }
+  },
+  {
+   "scenario": "ONI_BUFFER",
+   "label": "ONI edge 4, 250 m out (in buffer)",
+   "lat": 6.1266884,
+   "lng": 6.8676081,
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "buffer"
+   }
+  },
+  {
+   "scenario": "ONI_JUST_OUTSIDE_BUFFER",
+   "label": "ONI edge 4, 600 m out (past buffer)",
+   "lat": 6.1255521,
+   "lng": 6.8705595,
+   "expect": {
+    "kind": "outside",
+    "nearestZoneCode": "ONI",
+    "distanceM": 564
+   }
+  },
+  {
+   "scenario": "ONI_BUFFER",
+   "label": "ONI edge 8, 250 m out (in buffer)",
+   "lat": 6.0720994,
+   "lng": 6.7662769,
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "ONI",
+    "match": "buffer"
+   }
+  },
+  {
+   "scenario": "ONI_JUST_OUTSIDE_BUFFER",
+   "label": "ONI edge 8, 600 m out (past buffer)",
+   "lat": 6.0694384,
+   "lng": 6.7645645,
+   "expect": {
+    "kind": "outside",
+    "nearestZoneCode": "ONI",
+    "distanceM": 563
+   }
+  },
+  {
+   "scenario": "AWK_INTERIOR",
+   "label": "Awka centre",
+   "lat": 6.2109,
+   "lng": 7.074,
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "exact"
+   }
+  },
+  {
+   "scenario": "AWK_INTERIOR",
+   "label": "UNIZIK / Ifite",
+   "lat": 6.245,
+   "lng": 7.118,
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "exact"
+   }
+  },
+  {
+   "scenario": "AWK_INTERIOR",
+   "label": "Amawbia",
+   "lat": 6.19,
+   "lng": 7.07,
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "exact"
+   }
+  },
+  {
+   "scenario": "AWK_INTERIOR",
+   "label": "Okpuno",
+   "lat": 6.235,
+   "lng": 7.06,
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "exact"
+   }
+  },
+  {
+   "scenario": "AWK_BOUNDARY",
+   "label": "AWK edge 2, 30 m inside",
+   "lat": 6.235938,
+   "lng": 7.1412361,
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "exact"
+   }
+  },
+  {
+   "scenario": "AWK_BOUNDARY",
+   "label": "AWK edge 6, 30 m inside",
+   "lat": 6.1936364,
+   "lng": 7.0342343,
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "exact"
+   }
+  },
+  {
+   "scenario": "AWK_BUFFER",
+   "label": "AWK edge 0, 250 m out (in buffer)",
+   "lat": 6.2691675,
+   "lng": 7.0976428,
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "buffer"
+   }
+  },
+  {
+   "scenario": "AWK_JUST_OUTSIDE_BUFFER",
+   "label": "AWK edge 0, 600 m out (past buffer)",
+   "lat": 6.272202,
+   "lng": 7.0985426,
+   "expect": {
+    "kind": "outside",
+    "nearestZoneCode": "AWK",
+    "distanceM": 566
+   }
+  },
+  {
+   "scenario": "AWK_BUFFER",
+   "label": "AWK edge 3, 250 m out (in buffer)",
+   "lat": 6.2061132,
+   "lng": 7.122078,
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "buffer"
+   }
+  },
+  {
+   "scenario": "AWK_JUST_OUTSIDE_BUFFER",
+   "label": "AWK edge 3, 600 m out (past buffer)",
+   "lat": 6.2048717,
+   "lng": 7.1249872,
+   "expect": {
+    "kind": "outside",
+    "nearestZoneCode": "AWK",
+    "distanceM": 524
+   }
+  },
+  {
+   "scenario": "AWK_BUFFER",
+   "label": "AWK edge 6, 250 m out (in buffer)",
+   "lat": 6.1923635,
+   "lng": 7.0320472,
+   "expect": {
+    "kind": "inside",
+    "zoneCode": "AWK",
+    "match": "buffer"
+   }
+  },
+  {
+   "scenario": "AWK_JUST_OUTSIDE_BUFFER",
+   "label": "AWK edge 6, 600 m out (past buffer)",
+   "lat": 6.1907724,
+   "lng": 7.0293132,
+   "expect": {
+    "kind": "outside",
+    "nearestZoneCode": "AWK",
+    "distanceM": 599
+   }
+  },
+  {
+   "scenario": "KANO",
+   "label": "Kano \u2014 real incident RIDE-1788200485896",
+   "lat": 12.0363172,
+   "lng": 8.4730917,
+   "expect": {
+    "kind": "outside",
+    "nearestZoneCode": "AWK",
+    "distanceM": 655215
+   }
+  },
+  {
+   "scenario": "KANO",
+   "label": "Kano \u2014 real incident pickup A",
+   "lat": 12.0496169,
+   "lng": 8.4556127,
+   "expect": {
+    "kind": "outside",
+    "nearestZoneCode": "AWK",
+    "distanceM": 656207
+   }
+  },
+  {
+   "scenario": "LAGOS",
+   "label": "Lagos area \u2014 real request 2 Sep",
+   "lat": 6.4419225,
+   "lng": 3.5525527,
+   "expect": {
+    "kind": "outside",
+    "nearestZoneCode": "ONI",
+    "distanceM": 355692
+   }
+  },
+  {
+   "scenario": "LAGOS",
+   "label": "Lagos \u2014 historical dev traffic",
+   "lat": 6.50445,
+   "lng": 3.34736,
+   "expect": {
+    "kind": "outside",
+    "nearestZoneCode": "ONI",
+    "distanceM": 378883
+   }
+  },
+  {
+   "scenario": "ADJACENT_STATE",
+   "label": "Asaba \u2014 across the Niger, Delta State",
+   "lat": 6.2,
+   "lng": 6.7333,
+   "expect": {
+    "kind": "outside",
+    "nearestZoneCode": "ONI",
+    "distanceM": 2681
+   }
+  },
+  {
+   "scenario": "FUTURE_ZONE",
+   "label": "Nnewi \u2014 future zone, deliberately outside",
+   "lat": 6.0167,
+   "lng": 6.9167,
+   "expect": {
+    "kind": "outside",
+    "nearestZoneCode": "ONI",
+    "distanceM": 11348
+   }
+  },
+  {
+   "scenario": "HELD_OUTSIDE",
+   "label": "Atani \u2014 held outside by decision",
+   "lat": 6.0167,
+   "lng": 6.75,
+   "expect": {
+    "kind": "outside",
+    "nearestZoneCode": "ONI",
+    "distanceM": 5704
+   }
+  },
+  {
+   "scenario": "BETWEEN_ZONES",
+   "label": "ONI-AWK corridor \u2014 just past the ONI buffer",
+   "lat": 6.1819048,
+   "lng": 6.8833008,
+   "expect": {
+    "kind": "outside",
+    "nearestZoneCode": "ONI",
+    "distanceM": 409
+   }
+  },
+  {
+   "scenario": "BETWEEN_ZONES",
+   "label": "ONI-AWK corridor \u2014 midway between the cities",
+   "lat": 6.192557,
+   "lng": 6.9533595,
+   "expect": {
+    "kind": "outside",
+    "nearestZoneCode": "ONI",
+    "distanceM": 8147
+   }
+  },
+  {
+   "scenario": "BETWEEN_ZONES",
+   "label": "ONI-AWK corridor \u2014 just before the AWK buffer",
+   "lat": 6.2032092,
+   "lng": 7.0234182,
+   "expect": {
+    "kind": "outside",
+    "nearestZoneCode": "AWK",
+    "distanceM": 407
+   }
+  }
+ ]
+}

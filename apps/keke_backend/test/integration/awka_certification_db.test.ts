@@ -619,6 +619,49 @@ describeDb('AWKA PRE-LAUNCH CERTIFICATION', () => {
         expect(oni.status).toBe(ServiceZoneStatus.ACTIVE);
     });
 
+    it('INDEPENDENCE — activating AWK does NOT enable enforcement anywhere', async () => {
+        /*
+         * The coupling this exists to prevent: `active` quietly meaning
+         * `enforce`. Opening a city and starting to refuse people outside it
+         * are two decisions, and a launch that silently made the second one
+         * would refuse an out-of-coverage passenger on the day we opened Awka
+         * — on an app build that has no words for it.
+         */
+        await today();                                    // AWK draft/off
+        await ServiceZoneService.setMode('AWK', { status: ServiceZoneStatus.ACTIVE });
+
+        const zones = await ServiceZoneService.list();
+        const awk = zones.find((z: any) => z.code === 'AWK');
+        const oni = zones.find((z: any) => z.code === 'ONI');
+        expect(awk.status).toBe(ServiceZoneStatus.ACTIVE);
+        expect(awk.enforcement).toBe(ZoneEnforcement.OFF);   // untouched
+        expect(oni.enforcement).toBe(ZoneEnforcement.OBSERVE); // and ONI untouched
+        expect(await ServiceZoneService.enforcingZoneCount()).toBe(0);
+
+        // An Awka ride now classifies AWK and is dispatched — and refuses nothing.
+        const drv = await driver(AWKA_AROMA, 'AWK');
+        const { rideId } = await ride(AWKA);
+        const row = await ds.getRepository(Ride).findOneBy({ rideId });
+        expect(row!.zoneCode).toBe('AWK');
+        const policy = await ServiceZonePolicy.forRide(row!.zoneCode, row!.zoneMatchKind);
+        expect(policy.constrain).toBe(false);
+        expect((await dispatch(AWKA, rideId, 'AWK', 'exact')).eligible).toContain(drv);
+
+        // And an out-of-coverage pickup is still not refused.
+        const out = await ServiceZonePolicy.forRide(null, 'none');
+        expect(out.constrain).toBe(false);
+    });
+
+    it('INDEPENDENCE — enforcement can be raised and lowered without touching status', async () => {
+        await awkaOpen();
+        for (const mode of [ZoneEnforcement.ENFORCE, ZoneEnforcement.OBSERVE, ZoneEnforcement.OFF]) {
+            await ServiceZoneService.setMode('AWK', { enforcement: mode });
+            const awk = (await ServiceZoneService.list()).find((z: any) => z.code === 'AWK');
+            expect(awk.enforcement).toBe(mode);
+            expect(awk.status).toBe(ServiceZoneStatus.ACTIVE);   // never moves
+        }
+    });
+
     it('ACTIVATION SAFETY — a draft zone can never be set to enforce', async () => {
         await today();
         await expect(ServiceZoneService.setMode('AWK', { enforcement: ZoneEnforcement.ENFORCE }))

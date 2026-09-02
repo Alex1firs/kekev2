@@ -28,7 +28,17 @@
     "wallet:reconcile": "ts-node src/scripts/wallet_reconcile.ts",
     "wallet:reconcile:prod": "node dist/scripts/wallet_reconcile.js",
     "wallet:reconcile-debt": "ts-node src/scripts/reconcile_debt_wallets.ts",
-    "wallet:reconcile-debt:prod": "node dist/scripts/reconcile_debt_wallets.js"
+    "wallet:reconcile-debt:prod": "node dist/scripts/reconcile_debt_wallets.js",
+    "zone:status": "ts-node src/scripts/zone_control.ts status",
+    "zone:status:prod": "node dist/scripts/zone_control.js status",
+    "zone:probe": "ts-node src/scripts/zone_control.ts probe",
+    "zone:probe:prod": "node dist/scripts/zone_control.js probe",
+    "zone:activate": "ts-node src/scripts/zone_control.ts activate",
+    "zone:activate:prod": "node dist/scripts/zone_control.js activate",
+    "zone:rollback": "ts-node src/scripts/zone_control.ts rollback",
+    "zone:rollback:prod": "node dist/scripts/zone_control.js rollback",
+    "zone:enforcement": "ts-node src/scripts/zone_control.ts enforcement",
+    "zone:enforcement:prod": "node dist/scripts/zone_control.js enforcement"
   },
   "keywords": [],
   "author": "",

@@ -70,6 +70,7 @@ describeDb('Phase 1 parity — enforcement off changes nothing (database)', () =
     let DriverCandidateService: typeof import('../../src/services/driver_candidate_service').DriverCandidateService;
     let ServiceZoneService: typeof import('../../src/services/service_zone_service').ServiceZoneService;
     let ServiceZonePolicy: typeof import('../../src/services/service_zone_policy').ServiceZonePolicy;
+    let ZoneCoverage: typeof import('../../src/services/service_zone_policy').ZoneCoverage;
     let ServiceZoneResolver: typeof import('../../src/services/service_zone_resolver').ServiceZoneResolver;
 
     const uuid = () => require('crypto').randomUUID();
@@ -97,6 +98,7 @@ describeDb('Phase 1 parity — enforcement off changes nothing (database)', () =
         DriverCandidateService = require('../../src/services/driver_candidate_service').DriverCandidateService;
         ServiceZoneService = require('../../src/services/service_zone_service').ServiceZoneService;
         ServiceZonePolicy = require('../../src/services/service_zone_policy').ServiceZonePolicy;
+        ZoneCoverage = require('../../src/services/service_zone_policy').ZoneCoverage;
         ServiceZoneResolver = require('../../src/services/service_zone_resolver').ServiceZoneResolver;
         redis = require('../../src/config/redis').redis;
     });
@@ -212,7 +214,9 @@ describeDb('Phase 1 parity — enforcement off changes nothing (database)', () =
             pickup.lat, pickup.lng, radiusKm, limit, { wantWakes: true, rideId: 'legacy' });
         const eligibility = await DriverEligibilityService.filter(
             candidates.map((c) => c.driverId), { isCash: true });
-        return snapshot(candidates, wakes, eligibility);
+        // Same shape as zoneChain so the two are directly comparable; `_raw` is
+        // excluded from every parity assertion below.
+        return { ...snapshot(candidates, wakes, eligibility), _raw: eligibility };
     }
 
     /**
@@ -220,15 +224,20 @@ describeDb('Phase 1 parity — enforcement off changes nothing (database)', () =
      * decides, and passes `rideZoneCode` only when the zone is enforcing.
      */
     async function zoneChain(
-        pickup: { lat: number; lng: number }, radiusKm: number, limit: number, rideZone: string | null,
+        pickup: { lat: number; lng: number }, radiusKm: number, limit: number,
+        rideZone: string | null, matchKind: string | null = 'exact',
     ) {
         const { candidates, wakes } = await DriverCandidateService.findFor(
             pickup.lat, pickup.lng, radiusKm, limit, { wantWakes: true, rideId: 'zoned' });
-        const policy = await ServiceZonePolicy.forRide(rideZone);
+        const policy = await ServiceZonePolicy.forRide(rideZone, matchKind);
         const eligibility = await DriverEligibilityService.filter(
             candidates.map((c) => c.driverId),
-            { isCash: true, rideZoneCode: policy.constrain ? policy.zoneCode : undefined });
-        return snapshot(candidates, wakes, eligibility);
+            {
+                isCash: true,
+                rideId: 'zoned',
+                zonePolicy: ServiceZonePolicy.active(policy) ? policy : undefined,
+            });
+        return { ...snapshot(candidates, wakes, eligibility), _raw: eligibility };
     }
 
     /**
@@ -238,6 +247,8 @@ describeDb('Phase 1 parity — enforcement off changes nothing (database)', () =
      * dispatch depends on and a reordering would be a real behaviour change.
      */
     function snapshot(candidates: any[], wakes: any[], eligibility: any) {
+        // `zoneObservations` is deliberately excluded: it is the one field
+        // observe may populate, and parity is about everything else.
         return {
             candidateIds: candidates.map((c) => c.driverId),
             candidateTiers: candidates.map((c) => `${c.driverId}:${c.tier}`),
@@ -270,7 +281,11 @@ describeDb('Phase 1 parity — enforcement off changes nothing (database)', () =
         const legacy = await legacyChain(ONITSHA, 5, 10);
         const zoned = await zoneChain(ONITSHA, 5, 10, 'ONI');
 
-        expect(zoned).toEqual(legacy);
+        // `_raw` carries the observation channel, which is the one thing observe
+        // may differ on. Everything that decides anything is compared.
+        const { _raw: _l, ...legacyDecisions } = legacy;
+        const { _raw: _z, ...zonedDecisions } = zoned;
+        expect(zonedDecisions).toEqual(legacyDecisions);
         // And the fixture actually exercised something.
         expect(legacy.candidateIds.length).toBeGreaterThan(0);
         expect(legacy.candidateIds).toContain(near);
@@ -349,8 +364,12 @@ describeDb('Phase 1 parity — enforcement off changes nothing (database)', () =
         const zoned = await zoneChain(ONITSHA, 40, 20, 'ONI');
 
         expect(legacy.candidateIds).toContain(awka);
-        expect(zoned).toEqual(legacy);
+        const { _raw: _l2, ...legacyDecisions } = legacy;
+        const { _raw: _z2, ...zonedDecisions } = zoned;
+        expect(zonedDecisions).toEqual(legacyDecisions);
         expect(zoned.eligible).toContain(awka);
+        // OFF must not even evaluate the constraint.
+        expect(zoned._raw.zoneObservations).toBeUndefined();
     });
 
     it('and the SAME setup diverges once ONI enforces — proving the test can fail', async () => {
@@ -403,6 +422,158 @@ describeDb('Phase 1 parity — enforcement off changes nothing (database)', () =
         const keep = await DriverCandidate.filterToZone(idsOff, 'ONI');
         expect(keep.has(local)).toBe(true);
         expect(keep.has(awka)).toBe(false);
+    });
+
+    // ══════════════════════════════════════════════════════════════════
+    //  OBSERVE parity — the Phase 1b requirement
+    // ══════════════════════════════════════════════════════════════════
+
+    it('OBSERVE evaluates the constraint and changes absolutely nothing', async () => {
+        /*
+         * The heart of Phase 1b. Observe must compute exactly what enforcement
+         * would do and then discard it. If any of these arrays differ, observe
+         * is altering dispatch and must not be enabled.
+         */
+        const awka = await driver(AWKA);
+        const local = await driver({ lat: 6.1670, lng: 6.7840 });
+        await ride(ONITSHA, 'ONI');
+
+        await seedZones(ZoneEnforcement.OFF);
+        const off = await zoneChain(ONITSHA, 40, 20, 'ONI');
+
+        await seedZones(ZoneEnforcement.OBSERVE);
+        const observe = await zoneChain(ONITSHA, 40, 20, 'ONI');
+
+        // Every decision-bearing field is identical.
+        expect(observe.candidateIds).toEqual(off.candidateIds);
+        expect(observe.candidateTiers).toEqual(off.candidateTiers);
+        expect(observe.freshTier).toEqual(off.freshTier);
+        expect(observe.wakeTier).toEqual(off.wakeTier);
+        expect(observe.wokenDrivers).toEqual(off.wokenDrivers);
+        expect(observe.eligible).toEqual(off.eligible);
+        expect(observe.rejected).toEqual(off.rejected);
+
+        // The Awka driver is still eligible — observe removed nobody.
+        expect(observe.eligible).toContain(awka);
+        expect(observe.eligible).toContain(local);
+
+        // But the constraint WAS evaluated, and said so.
+        expect(observe._raw.zoneObservations).toBeDefined();
+        const seen = observe._raw.zoneObservations!.map((o: any) => o.driverId);
+        expect(seen).toContain(awka);
+        expect(seen).not.toContain(local);
+        expect(off._raw.zoneObservations).toBeUndefined();
+    });
+
+    it('OBSERVE reports WHERE the out-of-zone driver actually was', async () => {
+        const awka = await driver(AWKA);
+        await ride(ONITSHA, 'ONI');
+        await seedZones(ZoneEnforcement.OBSERVE);
+
+        const r = await zoneChain(ONITSHA, 40, 20, 'ONI');
+        const obs = r._raw.zoneObservations!.find((o: any) => o.driverId === awka);
+        expect(obs).toBeDefined();
+        expect(obs.reason).toBe('outside_ride_zone');
+        // AWK is draft, so the driver resolves to no operational zone at all.
+        expect(obs.driverZone).toBeNull();
+    });
+
+    it('the three modes produce three distinct eligibility outcomes', async () => {
+        const awka = await driver(AWKA);
+        await driver({ lat: 6.1670, lng: 6.7840 });
+        await ride(ONITSHA, 'ONI');
+
+        await seedZones(ZoneEnforcement.OFF);
+        const off = await zoneChain(ONITSHA, 40, 20, 'ONI');
+        await seedZones(ZoneEnforcement.OBSERVE);
+        const obs = await zoneChain(ONITSHA, 40, 20, 'ONI');
+        await seedZones(ZoneEnforcement.ENFORCE);
+        const enf = await zoneChain(ONITSHA, 40, 20, 'ONI');
+
+        expect(off.eligible).toContain(awka);                        // allowed
+        expect(obs.eligible).toContain(awka);                        // allowed, but seen
+        expect(enf.eligible).not.toContain(awka);                    // refused
+        expect(off._raw.zoneObservations).toBeUndefined();           // not measured
+        expect(obs._raw.zoneObservations).toBeDefined();             // measured
+        expect(enf.rejected.join(' ')).toContain(`${awka}:outside_ride_zone`);
+    });
+
+    // ══════════════════════════════════════════════════════════════════
+    //  Kano, across all three modes
+    // ══════════════════════════════════════════════════════════════════
+
+    it('KANO — the real incident coordinates, in every mode', async () => {
+        const KANO = { lat: 12.0363172, lng: 8.4730917 };   // RIDE-1788200485896
+
+        for (const mode of [ZoneEnforcement.OFF, ZoneEnforcement.OBSERVE, ZoneEnforcement.ENFORCE]) {
+            await seedZones(mode);
+            const r = await ServiceZoneResolver.resolve(KANO);
+            expect(r.kind).toBe('outside');
+            if (r.kind === 'outside') {
+                expect(r.nearestZoneCode).toBe('ONI');
+                expect(r.distanceM).toBeGreaterThan(600_000);
+            }
+
+            // The decision the ride-creation gate makes, in the same shape.
+            const posture = await ServiceZonePolicy.globalPosture();
+            const wouldRefuse = posture === ZoneEnforcement.ENFORCE;
+            expect(wouldRefuse).toBe(mode === ZoneEnforcement.ENFORCE);
+        }
+    });
+
+    it('KANO — a ride that exists with no zone is unassignable to anyone under enforce', async () => {
+        // The Operations gap. A ride whose pickup resolved OUTSIDE belongs to
+        // no service area, so no driver is in its zone — including a driver
+        // standing in Onitsha, which is exactly what happened on 31 August.
+        await seedZones(ZoneEnforcement.ENFORCE);
+        const policy = await ServiceZonePolicy.forRide(null, 'none');
+        expect(policy.coverage).toBe(ZoneCoverage.OUT_OF_COVERAGE);
+        expect(policy.constrain).toBe(true);
+        expect(ServiceZonePolicy.refusalReason(policy))
+            .toBe('pickup is outside every operational service area');
+
+        await seedZones(ZoneEnforcement.OBSERVE);
+        const obs = await ServiceZonePolicy.forRide(null, 'none');
+        expect(obs.constrain).toBe(false);
+        expect(obs.observe).toBe(true);
+        expect(ServiceZonePolicy.refusalReason(obs)).not.toBeNull();
+    });
+
+    it('AWKA — classified, but never operational while draft', async () => {
+        await seedZones(ZoneEnforcement.ENFORCE);   // ONI enforcing, AWK still draft
+
+        // Runtime resolution cannot see the draft zone at all.
+        const runtime = await ServiceZoneResolver.resolve(AWKA);
+        expect(runtime.kind).toBe('outside');
+
+        // And a ride already carrying zoneCode AWK is out of coverage, not in
+        // zone — a drafted polygon is geography, not a service area.
+        const policy = await ServiceZonePolicy.forRide('AWK', 'exact');
+        expect(policy.coverage).toBe(ZoneCoverage.OUT_OF_COVERAGE);
+        expect(policy.constrain).toBe(true);
+        expect(ServiceZonePolicy.refusalReason(policy)).toContain('not an operational service area');
+    });
+
+    it('an ONI ride is unaffected in every mode', async () => {
+        const local = await driver({ lat: 6.1670, lng: 6.7840 });
+        await ride(ONITSHA, 'ONI');
+
+        for (const mode of [ZoneEnforcement.OFF, ZoneEnforcement.OBSERVE, ZoneEnforcement.ENFORCE]) {
+            await seedZones(mode);
+            const r = await zoneChain(ONITSHA, 5, 10, 'ONI');
+            expect(r.eligible).toContain(local);
+            expect(r.rejected.join(' ')).not.toContain('outside_ride_zone');
+        }
+    });
+
+    it('an UNRESOLVED ride is never constrained, even under enforce', async () => {
+        // A ride from before service zones, or one created during a resolver
+        // fault. Refusing it would punish somebody for our outage.
+        await seedZones(ZoneEnforcement.ENFORCE);
+        const p = await ServiceZonePolicy.forRide(null, null);
+        expect(p.coverage).toBe(ZoneCoverage.UNRESOLVED);
+        expect(p.constrain).toBe(false);
+        expect(p.observe).toBe(false);
     });
 
     // ══════════════════════════════════════════════════════════════════

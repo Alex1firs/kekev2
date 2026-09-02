@@ -84,15 +84,23 @@ export class NearbyKekeFeedService {
       discovered.map((d) => d.driverId),
       {
         isCash: ride.paymentMode === 'cash',
+        rideId: ride.rideId,
         /*
-         * A marker must never represent supply dispatch would refuse — which is
-         * this file's founding rule. Once a zone enforces, an Awka Keke on an
+         * A marker must never represent supply dispatch would refuse — this
+         * file's founding rule. Once a zone enforces, an Awka Keke on an
          * Onitsha passenger's map is exactly that, so the same constraint
-         * applies here. Undefined while enforcement is off, so the marker feed
-         * is unchanged in Phase 1.
+         * applies.
+         *
+         * Passed under observe too: the eligibility service evaluates and logs
+         * but returns identical arrays, so the markers a passenger sees are
+         * unchanged. The passenger's map is the last place a measurement should
+         * be visible.
          */
-        rideZoneCode: (await ServiceZonePolicy.forRide((ride as any).zoneCode ?? null)).constrain
-          ? (ride as any).zoneCode : undefined,
+        zonePolicy: await (async () => {
+          const p = await ServiceZonePolicy.forRide(
+            (ride as any).zoneCode ?? null, (ride as any).zoneMatchKind ?? null);
+          return ServiceZonePolicy.active(p) ? p : undefined;
+        })(),
       },
     );
     const eligibleSet = new Set(eligible);

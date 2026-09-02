@@ -1,0 +1,42 @@
+{
+  "note": "Coordinates from real production incidents, frozen so the geometry that let them through — or that would refuse them — can never drift silently. Deliberately SEPARATE from service_zone_golden.json, which is the approved Phase 0 boundary fixture and must stay exactly as approved.",
+  "incidents": [
+    {
+      "id": "KANO-2026-08-31",
+      "summary": "Ten ride requests from Kano State, 31 Aug 2026 18:19-18:27 UTC, from a passenger who registered at 18:16 the same evening. All ten resolved outside every active zone. One was manually assigned by Operations to a driver in Onitsha, 666 km away, whose phone was pushed.",
+      "expect": { "kind": "outside", "nearestZoneCode": "ONI" },
+      "vectors": [
+        { "lat": 12.0496169, "lng": 8.4556127, "label": "Kano pickup A (4 requests)", "distanceM": 667377 },
+        { "lat": 12.0492694, "lng": 8.4534450, "label": "Kano pickup B (4 requests)", "distanceM": 667276 },
+        { "lat": 12.0363172, "lng": 8.4730917, "label": "Kano pickup C - the ASSIGNED ride RIDE-1788200485896", "distanceM": 666487 },
+        { "lat": 12.0188433, "lng": 8.4945757, "label": "Kano pickup D (final request)", "distanceM": 665284 },
+        { "lat": 11.9427708, "lng": 8.4744855, "label": "Kano destination (all ten)", "distanceM": 656586 }
+      ]
+    },
+    {
+      "id": "OSUN-2026-08-29",
+      "summary": "RIDE-1787993532992. Pickup in Osun State, ~278 km away, manually assigned to an Onitsha driver TWO DAYS BEFORE service zones were deployed. Evidence that the cross-city assignment hole pre-dates Phase 1 rather than being caused by it.",
+      "expect": { "kind": "outside", "nearestZoneCode": "ONI" },
+      "vectors": [
+        { "lat": 7.6183740, "lng": 4.7334494, "label": "Osun pickup - assigned to an Onitsha driver" }
+      ]
+    },
+    {
+      "id": "DRIVER-POSITIONS-AT-ASSIGNMENT",
+      "summary": "Where the drivers actually were when they were given those out-of-zone rides. Both resolve ONI exact, so both assignments crossed hundreds of kilometres.",
+      "expect": { "kind": "inside", "zoneCode": "ONI", "match": "exact" },
+      "vectors": [
+        { "lat": 6.1499293, "lng": 6.8114886, "label": "driver 584a6805 accepting the Kano ride" },
+        { "lat": 6.2204883, "lng": 6.8047079, "label": "driver accepting the Osun ride" }
+      ]
+    }
+  ],
+  "boundaryMargin": {
+    "note": "Across all 932 ONI-classified production rides, the closest any legitimate ride sits to the ONI boundary. This is the narrowest real margin enforcement must respect, and the number to re-check before any boundary change.",
+    "closestRideMetresInside": 392,
+    "ridesWithin400m": 3,
+    "ridesWithin1000m": 8,
+    "medianMetresInside": 2456,
+    "totalOniRides": 932
+  }
+}

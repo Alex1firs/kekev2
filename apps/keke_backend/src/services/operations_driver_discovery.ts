@@ -32,6 +32,7 @@ import { maskName, maskPhone } from './dispatch_monitor_query_service';
 import { redis } from '../config/redis';
 import { resolveAgainst } from './service_zone_resolver';
 import { ServiceZoneService } from './service_zone_service';
+import { ServiceZonePolicy, ZoneCoverage } from './service_zone_policy';
 
 /** Presence, strongest first. Mirrors AdminService.getLiveDrivers. */
 export type DriverPresenceState =
@@ -125,10 +126,10 @@ export class OperationsDriverDiscovery {
     static async forRide(
         rideId: string,
         opts: { category?: DriverCategory; limit?: number } = {},
-    ): Promise<{ pickup: { lat: number; lng: number } | null; drivers: DiscoveredDriver[] }> {
+    ): Promise<{ pickup: { lat: number; lng: number } | null; rideCoverage: string | null; drivers: DiscoveredDriver[] }> {
         const limit = Math.min(Math.max(opts.limit ?? 40, 1), 200);
         const ride = await AppDataSource.getRepository(Ride).findOne({ where: { rideId } });
-        if (!ride) return { pickup: null, drivers: [] };
+        if (!ride) return { pickup: null, rideCoverage: null, drivers: [] };
 
         const pLat = Number(ride.pickupLat);
         const pLng = Number(ride.pickupLng);
@@ -138,7 +139,7 @@ export class OperationsDriverDiscovery {
         const profiles = await AppDataSource.getRepository(DriverProfile).find({
             where: { status: DriverStatus.APPROVED },
         });
-        if (profiles.length === 0) return { pickup, drivers: [] };
+        if (profiles.length === 0) return { pickup, rideCoverage: null, drivers: [] };
         const ids = profiles.map((p) => p.userId);
 
         const [users, activeRides, favourites, lastPositions] = await Promise.all([
@@ -204,6 +205,20 @@ export class OperationsDriverDiscovery {
          */
         const zoneSet = await ServiceZoneService.operationalZones().catch(() => []);
         const rideZoneCode: string | null = (ride as any)?.zoneCode ?? null;
+        /*
+         * The ride's own coverage, so a dispatcher can be told the difference
+         * between "this driver is in the wrong city" and "this ride is outside
+         * every service area, so nobody is in the right one".
+         *
+         * Without it, an out-of-coverage ride showed `inRideZone: null` against
+         * every driver — indistinguishable from "we did not check". That is the
+         * same null-means-nothing gap that let the Kano ride be assigned.
+         */
+        const ridePolicy = await ServiceZonePolicy.forRide(
+            rideZoneCode, (ride as any)?.zoneMatchKind ?? null,
+        ).catch(() => null);
+        const rideCoverage = ridePolicy?.coverage ?? null;
+        const outOfCoverage = rideCoverage === ZoneCoverage.OUT_OF_COVERAGE;
 
         const drivers: DiscoveredDriver[] = profiles.map((p, i) => {
             const fresh = avail[i] === 'true';
@@ -245,7 +260,13 @@ export class OperationsDriverDiscovery {
                 const r = resolveAgainst({ lat: liveLat, lng: liveLng }, zoneSet);
                 if (r.kind === 'inside') zoneCode = r.zoneCode;
             }
-            const inRideZone = rideZoneCode ? zoneCode === rideZoneCode : null;
+            /*
+             * false — not null — when the ride is out of coverage: no driver can
+             * be in a zone the ride does not belong to, and saying "unknown"
+             * would understate it. Null remains reserved for "we could not tell".
+             */
+            const inRideZone = outOfCoverage ? false
+                : (rideZoneCode ? zoneCode === rideZoneCode : null);
 
             const assignable = eligibleSet.has(p.userId);
             const reason = assignable ? null : reasonById.get(p.userId) ?? 'not_available';
@@ -292,7 +313,7 @@ export class OperationsDriverDiscovery {
             return a.name.localeCompare(b.name);
         });
 
-        return { pickup, drivers: filtered.slice(0, limit) };
+        return { pickup, rideCoverage, drivers: filtered.slice(0, limit) };
     }
 
     private static matchesCategory(d: DiscoveredDriver, c: DriverCategory): boolean {

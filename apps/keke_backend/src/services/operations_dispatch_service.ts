@@ -30,7 +30,7 @@ import { loadOperationsDispatchConfig } from '../config/operations_dispatch_conf
 import { ContactAccessService, FullContact } from './contact_access_service';
 import { ContactPrivacyConfig } from '../config/contact_privacy_config';
 import { StaffRole } from '../config/staff_permissions';
-import { ServiceZonePolicy, logWouldRejectCandidate } from './service_zone_policy';
+import { ServiceZonePolicy, ZoneCoverage, logWouldRejectCandidate } from './service_zone_policy';
 import { resolveAgainst } from './service_zone_resolver';
 import { ServiceZoneService } from './service_zone_service';
 import { DispatchService } from './dispatch_service';
@@ -229,20 +229,44 @@ export class OperationsDispatchService {
          * safety mechanism. Reported in observe mode and refused in enforce, so
          * the two modes measure the same thing.
          */
-        const zonePolicy = await ServiceZonePolicy.forRide(ride.zoneCode ?? null);
-        if (ServiceZonePolicy.active(zonePolicy) && zonePolicy.zoneCode) {
+        const zonePolicy = await ServiceZonePolicy.forRide(
+            ride.zoneCode ?? null, ride.zoneMatchKind ?? null);
+
+        if (ServiceZonePolicy.active(zonePolicy)) {
             const driverZone = await this.zoneOfDriver(driverId);
-            if (driverZone !== zonePolicy.zoneCode) {
+            /*
+             * Two distinct refusals, and the second is the one the Kano ride
+             * walked straight through:
+             *
+             *   IN_ZONE          the driver must be in the ride's zone.
+             *   OUT_OF_COVERAGE  the ride belongs to NO service area, so there
+             *                    is no driver who could serve it. Nobody is
+             *                    assignable, and that is not a special case to
+             *                    be skipped — it is the strongest possible
+             *                    reason to refuse.
+             *
+             * The previous version guarded only the first, so a ride with a
+             * null zone reached this check and passed it without the check ever
+             * running. UNRESOLVED still passes — a fault must not refuse work.
+             */
+            const outOfCoverage = zonePolicy.coverage === ZoneCoverage.OUT_OF_COVERAGE;
+            const mismatched = zonePolicy.coverage === ZoneCoverage.IN_ZONE
+                && driverZone !== zonePolicy.zoneCode;
+
+            if (outOfCoverage || mismatched) {
                 logWouldRejectCandidate({
                     rideId, driverId, rideZone: zonePolicy.zoneCode, driverZone,
                     mode: String(zonePolicy.mode), applied: zonePolicy.constrain,
                 });
                 if (zonePolicy.constrain) {
-                    return fail(
-                        'DRIVER_OUTSIDE_RIDE_ZONE',
-                        `This driver is not currently in the ${zonePolicy.zoneCode} service area.`,
-                        { rideZone: zonePolicy.zoneCode, driverZone },
-                    );
+                    const why = outOfCoverage
+                        ? 'This pickup is outside every KekeRide service area, so no driver can be assigned.'
+                        : `This driver is not currently in the ${zonePolicy.zoneCode} service area.`;
+                    return fail('DRIVER_OUTSIDE_RIDE_ZONE', why, {
+                        rideZone: zonePolicy.zoneCode,
+                        driverZone,
+                        coverage: zonePolicy.coverage,
+                    });
                 }
             }
         }

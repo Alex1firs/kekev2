@@ -35,7 +35,9 @@ import {
 import { publishCommunicationEvent } from '../services/communication_events';
 import { DriverCandidateService } from '../services/driver_candidate_service';
 import { ServiceZoneResolver, ZoneResolution } from '../services/service_zone_resolver';
-import { ServiceZonePolicy, logWouldRefuseRequest } from '../services/service_zone_policy';
+import {
+    ServiceZonePolicy, ZonePolicy, ZoneCoverage, logWouldRefuseRequest,
+} from '../services/service_zone_policy';
 import { ServiceAreaMissService } from '../services/service_area_miss_service';
 import { ServiceZoneService } from '../services/service_zone_service';
 import { ZoneEnforcement } from '../models/ServiceZone';
@@ -751,20 +753,32 @@ export class SocketHandler {
                     rideZoneCode = zoneResolution.zoneCode;
                     rideZoneMatch = zoneResolution.match;
                 } else {
-                    // The enforcement mode of the zone this pickup is NEAREST
-                    // to. A point outside every zone has no zone of its own, so
-                    // the nearest one's policy is what decides whether we refuse.
+                    /*
+                     * A pickup outside every active zone belongs to no zone, so
+                     * there is no zone whose mode could govern it. The GLOBAL
+                     * posture governs instead — the strongest enforcement among
+                     * active zones — because if we are enforcing geography
+                     * anywhere, a ride nobody can serve must be governed too.
+                     *
+                     * The first version used the NEAREST zone's mode, which
+                     * made the answer depend on an arbitrary choice of
+                     * neighbour and produced an inert policy for a ride 666 km
+                     * from anywhere.
+                     */
                     const nearest = zoneResolution.kind === 'outside'
                         ? zoneResolution.nearestZoneCode : null;
-                    const policy = await ServiceZonePolicy.forRide(nearest);
-                    const enforcing = policy.mode === ZoneEnforcement.ENFORCE;
+                    const posture = await ServiceZonePolicy.globalPosture();
+                    const enforcing = posture === ZoneEnforcement.ENFORCE;
 
                     if (zoneResolution.kind === 'outside') {
                         rideZoneMatch = 'none';
                         logWouldRefuseRequest({
-                            passengerId, nearestZoneCode: nearest,
+                            passengerId, rideId,
+                            nearestZoneCode: nearest,
                             distanceM: zoneResolution.distanceM,
-                            mode: String(policy.mode), applied: enforcing,
+                            coverage: ZoneCoverage.OUT_OF_COVERAGE,
+                            reason: 'pickup is outside every operational service area',
+                            mode: String(posture), applied: enforcing,
                         });
                     } else {
                         // A genuine fault. Loud, and never conflated with a miss.
@@ -777,7 +791,7 @@ export class SocketHandler {
                     void ServiceAreaMissService.record({
                         passengerId, lat: pickupLat, lng: pickupLng,
                         resolution: zoneResolution,
-                        enforcementAtTime: String(policy.mode),
+                        enforcementAtTime: String(posture),
                         refused: enforcing && zoneResolution.kind === 'outside',
                     });
 
@@ -2071,18 +2085,22 @@ export class SocketHandler {
          * service zones existed. That is what makes the parity claim literal
          * rather than approximate.
          */
-        let zonePolicyPromise: Promise<{ constrain: boolean; zoneCode: string | null }> | null = null;
+        let zonePolicyPromise: Promise<ZonePolicy> | null = null;
         const zonePolicy = () => {
             if (!zonePolicyPromise) {
                 zonePolicyPromise = (async () => {
                     try {
                         const ride = await AppDataSource.getRepository(Ride).findOne({
-                            where: { rideId }, select: ['rideId', 'zoneCode'] as any,
+                            where: { rideId },
+                            select: ['rideId', 'zoneCode', 'zoneMatchKind'] as any,
                         });
-                        const policy = await ServiceZonePolicy.forRide(ride?.zoneCode ?? null);
-                        return { constrain: policy.constrain, zoneCode: policy.zoneCode };
+                        // matchKind is what separates "resolved and outside"
+                        // from "never resolved". Without it the two are the
+                        // same null and the constraint cannot tell them apart.
+                        return await ServiceZonePolicy.forRide(
+                            ride?.zoneCode ?? null, ride?.zoneMatchKind ?? null);
                     } catch {
-                        return { constrain: false, zoneCode: null };
+                        return await ServiceZonePolicy.forRide(null, null);
                     }
                 })();
             }
@@ -2103,6 +2121,11 @@ export class SocketHandler {
                         rideId,
                         // Absent unless the zone enforces, so the wake tier is
                         // untouched in Phase 1.
+                            // Wake filtering applies only under ENFORCE. Under
+                        // observe the wake tier is left untouched: waking a
+                        // driver is an outward action on a real phone, and
+                        // measuring must not cause one that would not otherwise
+                        // happen — nor suppress one that would.
                         ...(zp.constrain && zp.zoneCode ? { zoneCode: zp.zoneCode } : {}),
                     },
                 );
@@ -2127,9 +2150,15 @@ export class SocketHandler {
                 return DriverEligibilityService.filter(driverIds, {
                     isCash,
                     excluded: this.rideExclusions.get(rideId),
-                    // Undefined unless the zone is actually enforcing, so the
-                    // geographic check is not merely skipped — it is absent.
-                    rideZoneCode: zp.constrain ? zp.zoneCode : undefined,
+                    rideId,
+                    /*
+                     * Passed whenever the policy asks for ANY work — observe as
+                     * well as enforce. Under observe the eligibility service
+                     * evaluates and logs but returns the identical arrays, so
+                     * dispatch is unaffected; under off it is undefined and the
+                     * geographic branch is absent, not skipped.
+                     */
+                    zonePolicy: ServiceZonePolicy.active(zp) ? zp : undefined,
                 });
             },
 

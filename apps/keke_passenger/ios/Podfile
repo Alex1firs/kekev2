@@ -1,4 +1,15 @@
-platform :ios, '14.0'
+# Flutter's own pod requires iOS 15.0 (s.ios.deployment_target in the podspec
+# flutter_tools generates). Pinning lower than that is not a stricter setting —
+# it is an unsatisfiable one, and CocoaPods fails resolution before it reaches
+# anything else:
+#
+#   [!] CocoaPods could not find compatible versions for pod "Flutter"
+#       ... but they required a higher minimum deployment target.
+#
+# 15.0 rather than 16.0 on purpose. iOS 15 still runs on the iPhone 6s and 7,
+# which are common here; iOS 16 drops them. This is a passenger app, so the
+# floor stays as low as Flutter permits.
+platform :ios, '15.0'
 
 # CocoaPods analytics sends network stats synchronously affecting flutter build latency.
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
@@ -40,7 +51,9 @@ post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
     target.build_configurations.each do |config|
-       config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '14.0'
+      # Must not be below the platform above, or the pods are built for an
+      # older iOS than the framework they link against.
+      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
     end
   end
 end

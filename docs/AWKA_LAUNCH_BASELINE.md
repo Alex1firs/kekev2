@@ -13,7 +13,7 @@ Recording this changed no production behaviour. Everything below was read.
 | | |
 |---|---|
 | **Deployed backend commit** | `26337b4` |
-| **Serving colour** | see `/health` — blue-green alternates each deploy; never assume one |
+| **Serving colour at record time** | `blue` (started 2026-09-02 12:22:23 UTC) — blue-green alternates each deploy, so always resolve it, never assume |
 | **Previous good** | `6448a64` (image tagged `keke_backend-api_prod:previous`) |
 | **Doc-only commits after this** | do not change the deployed artifact |
 | **Backend rollback** | `infra/rollback.sh` — re-points nginx at the other colour |
@@ -138,13 +138,14 @@ Measured immediately after the deployment of this commit.
 
 | | |
 |---|---|
-| `/health` | `status ok`, `db up`, `redis up` |
-| Latency | 0.42 – 0.56 s (5 samples) |
+| `/health` | `status ok`, `db up`, `redis up`, colour `blue` |
+| Latency | 0.45 – 0.50 s (5 samples) |
 | Errors in log since cutover | 0 |
 | Firebase push | initialised, **enabled** |
-| Redis | `PONG`, ~349 keys, 82 GEO entries |
+| Redis | `PONG`, 82 GEO entries |
 | Postgres | up, connections normal |
-| Containers | one `api_prod_*` healthy; nginx, redis, postgres up |
+| Containers | `api_prod_blue` healthy; nginx, redis, postgres up |
+| Zone CLI verified live | `zone:status`, `zone:probe`, and both dry runs, against the running container |
 
 The GEO index has no TTL, so entry count is not a supply measure. Live supply is
 `driver:available:*`, which at baseline sampled 0–1 — normal for the current

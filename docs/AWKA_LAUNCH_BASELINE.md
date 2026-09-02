@@ -25,7 +25,7 @@ Recording this changed no production behaviour. Everything below was read.
 | App | Version | Status |
 |---|---|---|
 | Passenger (installed) | `1.5.0+32` | live on Play — **this is what launch runs on** |
-| Passenger (prepared) | `1.5.1+35` | built from this commit, **not submitted** — carries the out-of-coverage fix |
+| Passenger (prepared) | `1.5.1+35` | source only — version bumped and tested, **no binary built yet**; carries the out-of-coverage fix |
 | Driver | `1.5.0+50` | live on Play — **no change required** |
 | Operations console | `sw.js v5.15.0`, assets `?v=1.6` | deployed, serving the zone chips |
 
@@ -161,9 +161,9 @@ Do not conflate these. **The Awka launch does not need this release.**
 | | |
 |---|---|
 | Current, installed | `1.5.0+32` — live on Play |
-| Corrected, prepared | `1.5.1+35` — built, tested, **not submitted** |
+| Corrected, prepared | `1.5.1+35` — **version bumped and source tested; NOT yet built.** No `.aab` exists. |
 | What changed | `OUTSIDE_SERVICE_AREA` maps to its own outcome instead of falling through to a generic server failure |
-| Store submission status | **not submitted** — awaiting your decision |
+| Store submission status | **not built, not submitted.** `flutter build appbundle` still has to be run before anything can be uploaded. |
 | Needed for Awka launch | **No.** Launch runs at `enforcement = off`, where the server never emits that code, so an old binary never meets it. |
 | Needed before enforcement | **Yes.** |
 
@@ -204,7 +204,7 @@ refusing a cross-city **manual** assignment — and the Operations console now
 makes that mismatch unmistakable to the operator who would have to make it
 deliberately.
 
-**Recommendation:** submit `1.5.1+35` now so the adoption clock starts, launch
+**Recommendation:** build and submit `1.5.1+35` now so the adoption clock starts, launch
 Awka without waiting for it, and revisit enforcement as a separate decision once
 adoption is there. Check Play Console for the highest existing version code
 before uploading — this repo's codes have drifted behind Play before.

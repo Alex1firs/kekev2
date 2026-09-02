@@ -14,6 +14,21 @@ Detailed tests: [`field_test_awka_launch.md`](field_test_awka_launch.md)
 
 ---
 
+> **One thing to set up first.** Every command below runs inside the live API
+> container, and blue-green means the live colour alternates with each deploy.
+> Resolve it once per SSH session and reuse it:
+>
+> ```
+> ssh root@206.189.96.147
+> LIVE=$(docker ps --format '{{.Names}}' | grep -E '^api_prod_(blue|green)$' | head -1)
+> echo $LIVE          # sanity check: api_prod_blue or api_prod_green
+> ```
+>
+> The commands here are written as `ssh root@... 'docker exec $LIVE ...'`, which
+> resolves on the droplet — so they also work pasted from your laptop if you set
+> `LIVE` inside the same quoted command:
+> `ssh root@206.189.96.147 'LIVE=$(docker ps --format "{{.Names}}" | grep -E "^api_prod_(blue|green)$" | head -1); docker exec $LIVE npm run --silent zone:status:prod'`
+
 ## A. Before leaving for Awka
 
 - [ ] **Take these:** 1 passenger Android phone · 3 driver Android phones
@@ -30,7 +45,7 @@ Detailed tests: [`field_test_awka_launch.md`](field_test_awka_launch.md)
       and you can log in as a dispatcher.
 - [ ] Confirm the baseline is still what the record says:
       ```
-      ssh root@206.189.96.147 'cd /opt/kekev2/apps/keke_backend && docker compose exec -T api_prod_green npm run --silent zone:status:prod'
+      ssh root@206.189.96.147 'docker exec $LIVE npm run --silent zone:status:prod'
       ```
       Expect **ONI active/observe · AWK draft/off · enforcing zones 0**.
 - [ ] `curl -s https://api.kekeride.ng/health` returns `status: ok`.
@@ -58,7 +73,7 @@ handset and not the launch.
       real position, pin within ~50 m.
 - [ ] **C2 · The pickup is genuinely in the drawn zone.** On the laptop:
       ```
-      ssh root@206.189.96.147 'cd /opt/kekev2/apps/keke_backend && docker compose exec -T api_prod_green npm run --silent zone:probe:prod -- --lat=<YOUR LAT> --lng=<YOUR LNG>'
+      ssh root@206.189.96.147 'docker exec $LIVE npm run --silent zone:probe:prod -- --lat=<YOUR LAT> --lng=<YOUR LNG>'
       ```
       While AWK is draft this correctly says **OUTSIDE, nearest ONI**. What you
       are checking is the *coordinate*: it must be inside the Awka bounding box
@@ -80,11 +95,11 @@ One command. It changes `status` only, and leaves enforcement alone.
 
 - [ ] **Dry run first** (changes nothing, prints the plan):
       ```
-      ssh root@206.189.96.147 'cd /opt/kekev2/apps/keke_backend && docker compose exec -T api_prod_green npm run --silent zone:activate:prod -- --code=AWK'
+      ssh root@206.189.96.147 'docker exec $LIVE npm run --silent zone:activate:prod -- --code=AWK'
       ```
 - [ ] **Apply:**
       ```
-      ssh root@206.189.96.147 'cd /opt/kekev2/apps/keke_backend && docker compose exec -T api_prod_green npm run --silent zone:activate:prod -- --code=AWK --apply'
+      ssh root@206.189.96.147 'docker exec $LIVE npm run --silent zone:activate:prod -- --code=AWK --apply'
       ```
 
 **Expect, in the output:**
@@ -131,33 +146,36 @@ Work through [`field_test_awka_launch.md`](field_test_awka_launch.md) for the
 detail. This is the short form; tick as you go and write the `rideId` beside
 each one.
 
-| # | Test | Pass when | Ride id |
-|---|---|---|---|
-| 1 | Passenger GPS in Awka | pin within ~50 m of where you stand | |
-| 2 | Pickup classified AWK | `zoneCode = AWK`, `zoneMatchKind = exact` | |
-| 3 | Driver A online | shows ONLINE, **Awka**, live distance | |
-| 4 | Driver B online | shows ONLINE, **Awka** | |
-| 5 | Driver C online | shows ONLINE, **Awka** | |
-| 6 | Passenger requests a ride | request accepted, search starts | |
-| 7 | The nearby Awka driver is rung | the closest driver's phone rings; **no Onitsha driver is rung** | |
-| 8 | Offer arrives, app foregrounded | card appears within ~10 s | |
-| 9 | Offer arrives, app backgrounded | notification within ~30 s | |
-| 10 | Offer arrives, screen locked | audible notification on the lock screen | |
-| 11 | Cold / background wake | phone idle ≥5 min, screen off → still rings within ~60 s | |
-| 12 | Driver accepts | ride moves to `accepted`, exactly one driver wins | |
-| 13 | Passenger sees the assignment | driver name, plate, photo and ETA appear | |
-| 14 | Location tracking | driver marker moves; ETA falls as they approach | |
-| 15 | Driver arrives | `arrived`; passenger is told | |
-| 16 | Ride starts | `in_progress` after the pickup code / start action | |
-| 17 | Ride moves physically | drive ≥1 km; remaining distance falls | |
-| 18 | Ride ends | `completed`; both phones show the same fare | |
-| 19 | Fare, wallet, commission | commission = fare − fare/1.1 (₦1,100 → ₦100) | |
-| 20 | Operations shows AWK | ride row carries the **Awka** chip, start to finish | |
-| 21 | Second controlled ride, driver B | same, end to end | |
-| 22 | Cancellation | passenger cancels a third request; both phones agree, no ghost ride | |
-| 23 | Contact flow | driver can call the passenger; Operations can reveal on request | |
-| 24 | Push through the lifecycle | notifications at accept, arrive, start, complete | |
-| 25 | Onitsha still healthy | an Onitsha ride behaves exactly as before | |
+Every row: do the **action**, check the **expected result**, tick PASS or FAIL,
+and if it fails capture what the last column says **before moving on**.
+
+| # | Action | Expected result | P/F | If FAIL, capture |
+|---|---|---|---|---|
+| 1 | Open passenger app, let the map settle | Pin within ~50 m of where you stand | ☐ | Screenshot of the map; the lat/lng the app shows; whether location mode is High accuracy |
+| 2 | Request preview, then read the ride row | `zoneCode = AWK`, `zoneMatchKind = exact` | ☐ | `rideId`; run `zone:probe:prod` on the exact pickup coords and save the output |
+| 3 | Driver A → ONLINE | Console: ONLINE, chip **Awka**, live distance | ☐ | Screenshot of the driver row; `redis-cli TTL driver:available:<id>` |
+| 4 | Driver B → ONLINE | Same | ☐ | Same as 3 |
+| 5 | Driver C → ONLINE | Same | ☐ | Same as 3 |
+| 6 | Passenger requests a ride | Request accepted, searching starts | ☐ | `rideId`; passenger screenshot; backend log for that ride |
+| 7 | Watch which phones ring | Nearest Awka driver rings; **no Onitsha driver rings** | ☐ | `rideId`; which driver ids rang; console driver list screenshot |
+| 8 | Driver app in foreground | Offer card within ~10 s | ☐ | `rideId`; time from request to card; driver id |
+| 9 | Driver app backgrounded | Notification within ~30 s | ☐ | Handset make/model + Android version; battery optimisation setting; time waited |
+| 10 | Driver phone screen locked | Audible notification on the lock screen | ☐ | Handset model; notification channel settings; DND state |
+| 11 | Phone idle ≥5 min, screen off | Still rings within ~60 s | ☐ | Handset model; exact idle time; whether the app was swiped away |
+| 12 | Driver accepts | `accepted`, exactly one driver wins | ☐ | `rideId`; both driver screens; ride status in the console |
+| 13 | Look at the passenger phone | Driver name, plate, photo, ETA | ☐ | Passenger screenshot; which field is missing |
+| 14 | Driver drives toward pickup | Marker moves, ETA falls | ☐ | `rideId`; how long the marker was frozen; driver GPS permission |
+| 15 | Driver taps Arrived | `arrived`; passenger is told | ☐ | `rideId`; both screens; distance from the pin |
+| 16 | Start the trip | `in_progress` | ☐ | `rideId`; the pickup code entered; the error shown |
+| 17 | Drive ≥1 km | Remaining distance falls | ☐ | `rideId`; screenshots at two points; route shown |
+| 18 | End the trip | `completed`; both phones show the same fare | ☐ | `rideId`; both fare figures; which one disagrees |
+| 19 | Check the money | Commission = fare − fare/1.1 (₦1,100 → ₦100) | ☐ | `rideId`; fare; driver wallet before/after; ledger rows |
+| 20 | Open the ride in Operations | **Awka** chip present start to finish | ☐ | `rideId`; console screenshot; what the chip said instead |
+| 21 | Second ride, driver B | Same result, end to end | ☐ | `rideId`; which step differed from ride 1 |
+| 22 | Passenger cancels a third request | Both phones agree; no ghost ride | ☐ | `rideId`; both screens; ride status in the console |
+| 23 | Driver calls the passenger | Call connects; Operations can reveal on request | ☐ | `rideId`; the exact message shown; staff role used |
+| 24 | Watch notifications all trip | Push at accept, arrive, start, complete | ☐ | `rideId`; which lifecycle events produced nothing |
+| 25 | Onitsha ride during this window | Behaves exactly as before Awka opened | ☐ | Onitsha `rideId`; time to first offer vs normal; which driver was rung |
 
 **Test 25 is not optional and cannot be done from Awka alone** — arrange for
 somebody in Onitsha to request an ordinary ride during this window, or check the
@@ -186,7 +204,7 @@ they registered.
 - [ ] From the laptop, probe a coordinate far outside both cities — read-only,
       creates nothing:
       ```
-      ssh root@206.189.96.147 'cd /opt/kekev2/apps/keke_backend && docker compose exec -T api_prod_green npm run --silent zone:probe:prod -- --lat=12.0363 --lng=8.4731'
+      ssh root@206.189.96.147 'docker exec $LIVE npm run --silent zone:probe:prod -- --lat=12.0363 --lng=8.4731'
       ```
 - [ ] **Expected:** `OUTSIDE — nearest ONI, ~666 km`, `coverage out_of_coverage`,
       **`would refuse? no`** (enforcement is off), and the sentence enforcement
@@ -313,7 +331,7 @@ ssh root@206.189.96.147 'docker exec $(docker ps --filter name=postgres --format
 **One command. It cannot touch Onitsha.**
 
 ```
-ssh root@206.189.96.147 'cd /opt/kekev2/apps/keke_backend && docker compose exec -T api_prod_green npm run --silent zone:rollback:prod -- --code=AWK --apply'
+ssh root@206.189.96.147 'docker exec $LIVE npm run --silent zone:rollback:prod -- --code=AWK --apply'
 ```
 
 **What it does:** sets AWK to `draft` / `off`. One row in `service_zone`.

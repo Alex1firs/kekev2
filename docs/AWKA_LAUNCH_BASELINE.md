@@ -146,6 +146,7 @@ Measured immediately after the deployment of this commit.
 | Postgres | up, connections normal |
 | Containers | `api_prod_blue` healthy; nginx, redis, postgres up |
 | Zone CLI verified live | `zone:status`, `zone:probe`, and both dry runs, against the running container |
+| Availability across the deploy | **1 229 requests, 2 connection resets** — both at 12:25:26 and 12:25:50 UTC as the drained colour stopped, each recovering immediately |
 
 The GEO index has no TTL, so entry count is not a supply measure. Live supply is
 `driver:available:*`, which at baseline sampled 0–1 — normal for the current

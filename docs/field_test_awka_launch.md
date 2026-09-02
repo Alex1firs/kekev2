@@ -1,5 +1,10 @@
 # Field test: Awka launch day
 
+> **Use [`AWKA_FIELD_LAUNCH_RUNBOOK.md`](AWKA_FIELD_LAUNCH_RUNBOOK.md) as the
+> primary document on the day.** This file is the long form of its section E —
+> the same tests with more context on why each one exists and what a failure
+> means. Read it before you travel; carry the runbook.
+
 The physical test that decides whether Awka goes public. Run it in Awka, on the
 day, before you tell a single passenger the service is live.
 
